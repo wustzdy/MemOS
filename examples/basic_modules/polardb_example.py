@@ -271,10 +271,10 @@ def example_shared_db(db_name: str = "shared_travel_group_polardb"):
         config = GraphDBConfigFactory(
             backend="polardb",
             config={
-                "host": "memory.pg.polardb.rds.aliyuncs.com",
+                "host": "ccccccccm",
                 "port": 5432,
                 "user": "adimin",
-                "password": "Openmem0925",
+                "password": "ccccc",
                 "db_name": db_name,
                 "user_name": user_name,
                 "use_multi_db": False,
