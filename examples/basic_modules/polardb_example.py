@@ -365,10 +365,10 @@ def run_user_session(
     config = GraphDBConfigFactory(
         backend="polardb",
         config={
-            "host": "memory.pg.polardb.rds.aliyuncs.com",
+            "host": "xxxxxx",
             "port": 5432,
-            "user": "adimin",
-            "password": "Openmem0925",
+            "user": "xxxx",
+            "password": "xxxxx",
             "db_name": db_name,
             "user_name": user_name,
             "use_multi_db": False,
