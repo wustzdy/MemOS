@@ -29,7 +29,7 @@ def embed_memory_item(memory: str) -> list[float]:
 def example_multi_db(db_name: str = "paper_polardb"):
     """Example using PolarDB with multi-database mode (physical isolation)."""
     # Step 1: Build factory config
-        config = GraphDBConfigFactory(
+    config = GraphDBConfigFactory(
             backend="polardb",
             config={
                 "host": "memory.pg.polardb.rds.aliyuncs.com",
@@ -255,7 +255,7 @@ def example_multi_db(db_name: str = "paper_polardb"):
     nodes = graph.search_by_embedding(vector=embed_memory_item("what does FT reflect?"), top_k=1)
 
     for node_i in nodes:
-        print(f"Search result:{graph.get_node(node_i["id"])}")
+        print(f"Search result:{graph.get_node(node_i['id'])}")
 
 
 def example_shared_db(db_name: str = "shared_travel_group_polardb"):
@@ -365,10 +365,10 @@ def run_user_session(
     config = GraphDBConfigFactory(
         backend="polardb",
         config={
-            "host": "xxxxxx",
+            "host": "memory.pg.polardb.rds.aliyuncs.com",
             "port": 5432,
-            "user": "xxxx",
-            "password": "xxxxx",
+            "user": "adimin",
+            "password": "Openmem0925",
             "db_name": db_name,
             "user_name": user_name,
             "use_multi_db": False,
