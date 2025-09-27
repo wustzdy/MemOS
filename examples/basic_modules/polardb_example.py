@@ -1,4 +1,5 @@
 import os
+
 from datetime import datetime
 
 from memos.configs.embedder import EmbedderConfigFactory
@@ -30,18 +31,18 @@ def example_multi_db(db_name: str = "paper_polardb"):
     """Example using PolarDB with multi-database mode (physical isolation)."""
     # Step 1: Build factory config
     config = GraphDBConfigFactory(
-            backend="polardb",
-            config={
-                "host": "memory.pg.polardb.rds.aliyuncs.com",
-                "port": 5432,
-                "user": "adimin",
-                "password": "Openmem0925",
-                "db_name": db_name,
-                "auto_create": True,
-                "embedding_dimension": 1024,
-                "use_multi_db": True,
-            },
-        )
+        backend="polardb",
+        config={
+            "host": "memory.pg.polardb.rds.aliyuncs.com",
+            "port": 5432,
+            "user": "adimin",
+            "password": "Openmem0925",
+            "db_name": db_name,
+            "auto_create": True,
+            "embedding_dimension": 1024,
+            "use_multi_db": True,
+        },
+    )
 
     # Step 2: Instantiate the graph store
     graph = GraphStoreFactory.from_config(config)
@@ -250,18 +251,18 @@ def example_multi_db(db_name: str = "paper_polardb"):
         graph.add_edge(source_id=fact_item.id, target_id=concept_id, type="BELONGS_TO")
 
     all_graph_data = graph.export_graph()
-    print("Exported graph data:", all_graph_data)
+    print("Graph data:", all_graph_data)
 
     nodes = graph.search_by_embedding(vector=embed_memory_item("what does FT reflect?"), top_k=1)
 
     for node_i in nodes:
-        print(f"Search result:{graph.get_node(node_i['id'])}")
+        print("Search result:", graph.get_node(node_i["id"]))
 
 
 def example_shared_db(db_name: str = "shared_travel_group_polardb"):
     """
     Example: Single(Shared)-DB multi-tenant (logical isolation)
-    Multiple users' data in the same PolarDB DB with user_name as a tag.
+    Multiple users' data in the same PolarDB with user_name as a tag.
     """
     # users
     user_list = ["travel_member_alice", "travel_member_bob"]
@@ -271,10 +272,10 @@ def example_shared_db(db_name: str = "shared_travel_group_polardb"):
         config = GraphDBConfigFactory(
             backend="polardb",
             config={
-                "host": "ccccccccm",
+                "host": "memory.pg.polardb.rds.aliyuncs.com",
                 "port": 5432,
                 "user": "adimin",
-                "password": "ccccc",
+                "password": "Openmem0925",
                 "db_name": db_name,
                 "user_name": user_name,
                 "use_multi_db": False,
@@ -337,10 +338,10 @@ def example_shared_db(db_name: str = "shared_travel_group_polardb"):
     config_alice = GraphDBConfigFactory(
         backend="polardb",
         config={
-            "host": "xxxxxxx",
+            "host": "memory.pg.polardb.rds.aliyuncs.com",
             "port": 5432,
-            "user": "xxxx",
-            "password": "xxxxx",
+            "user": "adimin",
+            "password": "Openmem0925",
             "db_name": db_name,
             "user_name": user_list[0],
             "embedding_dimension": 1024,
@@ -497,11 +498,21 @@ def example_complex_shared_db(db_name: str = "poc"):
 
 
 if __name__ == "__main__":
-    print("\n=== PolarDB Example: Multi-DB ===")
-    example_multi_db(db_name="paper_polardb")
+    try:
+        # print("\n=== PolarDB Example: Multi-DB ===")
+        # example_multi_db(db_name="paper_polardb")
+        #
+        # print("\n=== PolarDB Example: Single-DB ===")
+        # example_shared_db(db_name="shared_travel_group_polardb")
 
-    print("\n=== PolarDB Example: Single-DB ===")
-    example_shared_db(db_name="shared_travel_group_polardb")
-
-    print("\n=== PolarDB Example: Single-DB-Complex ===")
-    example_complex_shared_db(db_name="poc")
+        print("\n=== PolarDB Example: Single-DB-Complex ===")
+        example_complex_shared_db(db_name="db_0927")
+    except Exception as e:
+        print(f"❌ Error running PolarDB example: {e}")
+        print("Please check:")
+        print("1. Network connectivity to PolarDB server")
+        print("2. Database credentials and permissions")
+        print("3. Apache AGE extension installation")
+        print("4. Required Python packages (psycopg2-binary)")
+        import traceback
+        traceback.print_exc()
