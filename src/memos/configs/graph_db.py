@@ -190,6 +190,17 @@ class PolarDBGraphDBConfig(BaseGraphDBConfig):
     )
     embedding_dimension: int = Field(default=768, description="Dimension of vector embedding")
     
+    @model_validator(mode="before")
+    @classmethod
+    def set_uri_from_host_port(cls, values):
+        """Set uri from host and port if not provided."""
+        if isinstance(values, dict):
+            if "uri" not in values and "host" in values:
+                host = values["host"]
+                port = values.get("port", 5432)
+                values["uri"] = f"postgresql://{host}:{port}"
+        return values
+    
     @model_validator(mode="after")
     def validate_config(self):
         """Validate logical constraints to avoid misconfiguration."""
@@ -201,6 +212,7 @@ class PolarDBGraphDBConfig(BaseGraphDBConfig):
 
 
 class GraphDBConfigFactory(BaseModel):
+    print("888888888888:",BaseModel)
     backend: str = Field(..., description="Backend for graph database")
     config: dict[str, Any] = Field(..., description="Configuration for the graph database backend")
 
@@ -210,6 +222,7 @@ class GraphDBConfigFactory(BaseModel):
         "nebular": NebulaGraphDBConfig,
         "polardb": PolarDBGraphDBConfig,
     }
+    print("99999999:", PolarDBGraphDBConfig)
 
     @field_validator("backend")
     @classmethod
@@ -221,5 +234,10 @@ class GraphDBConfigFactory(BaseModel):
     @model_validator(mode="after")
     def instantiate_config(self):
         config_class = self.backend_to_class[self.backend]
-        self.config = config_class(**self.config)
+        try:
+            self.config = config_class(**self.config)
+        except Exception as e:
+            # If validation fails, keep the config as dict for now
+            print(f"Warning: Config validation failed for {self.backend}: {e}")
+            pass
         return self

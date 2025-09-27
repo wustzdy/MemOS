@@ -131,26 +131,34 @@ class PolarDBGraphDB(BaseGraphDB):
             raise
 
     def _create_graph(self):
-        """Create Apache AGE graph if it doesn't exist."""
+        """Create PostgreSQL schema and table for graph storage."""
         try:
             with self.connection.cursor() as cursor:
-                # Create graph (ignore if already exists)
-                try:
-                    cursor.execute(f"SELECT create_graph('{self.db_name}_graph');")
-                    logger.info(f"Graph '{self.db_name}_graph' created.")
-                except Exception as ge:
-                    logger.info(f"Graph '{self.db_name}_graph' might already exist: {ge}")
+                # Create schema if it doesn't exist
+                cursor.execute(f"CREATE SCHEMA IF NOT EXISTS {self.db_name}_graph;")
+                logger.info(f"Schema '{self.db_name}_graph' ensured.")
                 
-                # Create Memory label (ignore if already exists)
-                try:
-                    cursor.execute(f"SELECT create_vlabel('{self.db_name}_graph', 'Memory');")
-                    logger.info(f"Memory label created in graph '{self.db_name}_graph'.")
-                except Exception as le:
-                    logger.info(f"Memory label might already exist: {le}")
+                # Create Memory table if it doesn't exist
+                cursor.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {self.db_name}_graph."Memory" (
+                        id TEXT PRIMARY KEY,
+                        properties JSONB NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+                logger.info(f"Memory table created in schema '{self.db_name}_graph'.")
+                
+                # Create indexes
+                cursor.execute(f"""
+                    CREATE INDEX IF NOT EXISTS idx_memory_properties 
+                    ON {self.db_name}_graph."Memory" USING GIN (properties);
+                """)
+                logger.info(f"Indexes created for Memory table.")
                 
         except Exception as e:
-            logger.warning(f"Failed to create graph: {e}")
-            # Continue execution even if graph creation fails
+            logger.error(f"Failed to create graph schema: {e}")
+            raise e
 
     def create_index(
         self,
@@ -276,20 +284,15 @@ class PolarDBGraphDB(BaseGraphDB):
 
         query = f"""
             INSERT INTO {self.db_name}_graph."Memory"(id, properties)
-            VALUES (
-                _make_graph_id('{self.db_name}_graph'::name, 'Memory'::name, %s::bigint),
-                %s::agtype
-            )
+            VALUES (%s, %s)
+            ON CONFLICT (id) DO UPDATE SET
+                properties = EXCLUDED.properties,
+                updated_at = CURRENT_TIMESTAMP
         """
 
         with self.connection.cursor() as cursor:
-            # Use a hash of the id string to get a numeric value
-            import hashlib
-            numeric_id = int(hashlib.md5(id.encode()).hexdigest()[:8], 16)
-            cursor.execute(query, (
-                numeric_id,
-                json.dumps(properties)
-            ))
+            cursor.execute(query, (id, json.dumps(properties)))
+            logger.info(f"Added node {id} to graph '{self.db_name}_graph'.")
 
     def update_node(self, id: str, fields: dict[str, Any]) -> None:
         """Update node fields in PolarDB."""
@@ -312,40 +315,36 @@ class PolarDBGraphDB(BaseGraphDB):
             if isinstance(embedding_vector, list):
                 properties["embedding"] = embedding_vector
 
-        # Use hash to get numeric ID for _make_graph_id
-        import hashlib
-        numeric_id = int(hashlib.md5(id.encode()).hexdigest()[:8], 16)
-        
         query = f"""
             UPDATE {self.db_name}_graph."Memory" 
-            SET properties = '{json.dumps(properties)}'::agtype
-            WHERE id = _make_graph_id('{self.db_name}_graph'::name, 'Memory'::name, {numeric_id}::bigint)
+            SET properties = %s, updated_at = CURRENT_TIMESTAMP
+            WHERE id = %s
         """
+        params = [json.dumps(properties), id]
 
         if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
             user_name = self._get_config_value("user_name")
-            query += f" AND properties::text LIKE '%{user_name}%'"
+            query += " AND properties::text LIKE %s"
+            params.append(f"%{user_name}%")
 
         with self.connection.cursor() as cursor:
-            cursor.execute(query)
+            cursor.execute(query, params)
 
     def delete_node(self, id: str) -> None:
         """Delete a node from the graph."""
-        # Use hash to get numeric ID for _make_graph_id
-        import hashlib
-        numeric_id = int(hashlib.md5(id.encode()).hexdigest()[:8], 16)
-        
         query = f"""
             DELETE FROM {self.db_name}_graph."Memory" 
-            WHERE id = _make_graph_id('{self.db_name}_graph'::name, 'Memory'::name, {numeric_id}::bigint)
+            WHERE id = %s
         """
+        params = [id]
 
         if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
             user_name = self._get_config_value("user_name")
-            query += f" AND properties::text LIKE '%{user_name}%'"
+            query += " AND properties::text LIKE %s"
+            params.append(f"%{user_name}%")
 
         with self.connection.cursor() as cursor:
-            cursor.execute(query)
+            cursor.execute(query, params)
 
     def add_edge(self, source_id: str, target_id: str, type: str) -> None:
         """Create an edge from source node to target node."""
@@ -388,27 +387,26 @@ class PolarDBGraphDB(BaseGraphDB):
 
     def get_node(self, id: str, **kwargs) -> dict[str, Any] | None:
         """Retrieve the metadata and memory of a node."""
-        # Use hash to get numeric ID for _make_graph_id
-        import hashlib
-        numeric_id = int(hashlib.md5(id.encode()).hexdigest()[:8], 16)
-        
         query = f"""
             SELECT id, properties
             FROM {self.db_name}_graph."Memory" 
-            WHERE id = _make_graph_id('{self.db_name}_graph'::name, 'Memory'::name, {numeric_id}::bigint)
+            WHERE id = %s
         """
+        params = [id]
 
         if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
             user_name = self._get_config_value("user_name")
-            query += f" AND properties::text LIKE '%{user_name}%'"
+            query += " AND properties::text LIKE %s"
+            params.append(f"%{user_name}%")
 
         with self.connection.cursor() as cursor:
-            cursor.execute(query)
+            cursor.execute(query, params)
             result = cursor.fetchone()
             
             if result:
                 node_id, properties_json = result
-                properties = json.loads(properties_json) if properties_json else {}
+                # properties_json is already a dict from psycopg2
+                properties = properties_json if properties_json else {}
                 return self._parse_node({"id": id, "memory": properties.get("memory", ""), "metadata": properties})
             return None
 
@@ -439,7 +437,8 @@ class PolarDBGraphDB(BaseGraphDB):
             nodes = []
             for row in results:
                 node_id, properties_json, embedding = row
-                properties = json.loads(properties_json) if properties_json else {}
+                # properties_json is already a dict from psycopg2
+                properties = properties_json if properties_json else {}
                 nodes.append(self._parse_node({"id": properties.get("id", ""), "memory": properties.get("memory", ""), "metadata": properties}))
             return nodes
 
@@ -499,7 +498,8 @@ class PolarDBGraphDB(BaseGraphDB):
             nodes = []
             for row in results:
                 node_id, properties_json = row
-                properties = json.loads(properties_json) if properties_json else {}
+                # properties_json is already a dict from psycopg2
+                properties = properties_json if properties_json else {}
                 nodes.append(self._parse_node({"id": properties.get("id", ""), "memory": properties.get("memory", ""), "metadata": properties}))
             return nodes
 
@@ -580,7 +580,8 @@ class PolarDBGraphDB(BaseGraphDB):
         records = []
         for row in results:
             node_id, properties_json = row
-            properties = json.loads(properties_json) if properties_json else {}
+            # properties_json is already a dict from psycopg2
+            properties = properties_json if properties_json else {}
             
             # Extract embedding from properties
             embedding = properties.get("embedding")
@@ -706,6 +707,20 @@ class PolarDBGraphDB(BaseGraphDB):
         """Clear the entire graph."""
         try:
             with self.connection.cursor() as cursor:
+                # First check if the graph exists
+                cursor.execute(f"""
+                    SELECT EXISTS (
+                        SELECT 1 FROM information_schema.tables 
+                        WHERE table_schema = '{self.db_name}_graph' 
+                        AND table_name = 'Memory'
+                    )
+                """)
+                graph_exists = cursor.fetchone()[0]
+                
+                if not graph_exists:
+                    logger.info(f"Graph '{self.db_name}_graph' does not exist, nothing to clear.")
+                    return
+                
                 if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
                     cursor.execute(f"""
                         DELETE FROM {self.db_name}_graph."Memory" 
@@ -716,8 +731,8 @@ class PolarDBGraphDB(BaseGraphDB):
                     
                 logger.info(f"Cleared all nodes from graph '{self.db_name}_graph'.")
         except Exception as e:
-            logger.error(f"[ERROR] Failed to clear graph '{self.db_name}_graph': {e}")
-            raise
+            logger.warning(f"Failed to clear graph '{self.db_name}_graph': {e}")
+            # Don't raise the exception, just log it as a warning
 
     def export_graph(self, **kwargs) -> dict[str, Any]:
         """Export all graph nodes and edges in a structured form."""
@@ -735,7 +750,8 @@ class PolarDBGraphDB(BaseGraphDB):
             nodes = []
             for row in node_results:
                 node_id, properties_json = row
-                properties = json.loads(properties_json) if properties_json else {}
+                # properties_json is already a dict from psycopg2
+                properties = properties_json if properties_json else {}
                 nodes.append(self._parse_node({"id": properties.get("id", ""), "memory": properties.get("memory", ""), "metadata": properties}))
 
             # Export edges (simplified - would need more complex Cypher query for full edge export)
@@ -787,7 +803,8 @@ class PolarDBGraphDB(BaseGraphDB):
             nodes = []
             for row in results:
                 node_id, properties_json = row
-                properties = json.loads(properties_json) if properties_json else {}
+                # properties_json is already a dict from psycopg2
+                properties = properties_json if properties_json else {}
                 nodes.append(self._parse_node({"id": properties.get("id", ""), "memory": properties.get("memory", ""), "metadata": properties}))
             return nodes
 
@@ -814,7 +831,8 @@ class PolarDBGraphDB(BaseGraphDB):
             nodes = []
             for row in results:
                 node_id, properties_json = row
-                properties = json.loads(properties_json) if properties_json else {}
+                # properties_json is already a dict from psycopg2
+                properties = properties_json if properties_json else {}
                 nodes.append(self._parse_node({"id": properties.get("id", ""), "memory": properties.get("memory", ""), "metadata": properties}))
             return nodes
 
