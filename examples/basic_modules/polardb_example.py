@@ -371,10 +371,10 @@ def run_user_session(
     config = GraphDBConfigFactory(
         backend="polardb",
         config={
-            "host": "memory.pg.polardb.rds.aliyuncs.com",
+            "host": "139.196.232.20",
             "port": 5432,
-            "user": "adimin",
-            "password": "Openmem0925",
+            "user": "root",
+            "password": "123456",
             "db_name": db_name,
             "user_name": user_name,
             "use_multi_db": False,
@@ -405,6 +405,7 @@ def run_user_session(
             embedding=embed_memory_item(topic_text),
         ),
     )
+    print(f"111111111opic:{topic}")
     graph.add_node(topic.id, topic.memory, topic.metadata.model_dump(exclude_none=True))
 
     # === Step 2: Create two concept nodes linked to the topic ===
@@ -456,22 +457,22 @@ def run_user_session(
     search_result = graph.search_by_embedding(vector, top_k=2)
     for r in search_result:
         node = graph.get_node(r["id"])
-        print("🔍 Search result:", node["memory"])
+        print("🔍 111111111Search result:", node["memory"])
 
     # === Step 5: Tag-based neighborhood discovery ===
     neighbors = graph.get_neighbors_by_tag(["concept"], exclude_ids=[], top_k=2)
-    print("📎 Tag-related nodes:", [neighbor["memory"] for neighbor in neighbors])
+    print("📎 222222Tag-related nodes:", [neighbor["memory"] for neighbor in neighbors])
 
     # === Step 6: Retrieve children (facts) of first concept ===
     children = graph.get_children_with_embeddings(concept_items[0].id)
-    print("📍 Children of concept:", [child["memory"] for child in children])
+    print("📍 333333Children of concept:", [child["memory"] for child in children])
 
     # === Step 7: Export a local subgraph and grouped statistics ===
     subgraph = graph.get_subgraph(topic.id, depth=2)
-    print("📌 Subgraph node count:", len(subgraph["neighbors"]))
+    print("📌444444 Subgraph node count:", len(subgraph["neighbors"]))
 
     stats = graph.get_grouped_counts(["memory_type", "status"])
-    print("📊 Grouped counts:", stats)
+    print("📊 55555Grouped counts:", stats)
 
     # === Step 8: Demonstrate updates and cleanup ===
     graph.update_node(concept_items[0].id, {"confidence": 99.0})
@@ -482,7 +483,7 @@ def run_user_session(
     # === Step 9: Export and re-import the entire graph structure ===
     exported = graph.export_graph()
     graph.import_graph(exported)
-    print("📦 Graph exported and re-imported, total nodes:", len(exported["nodes"]))
+    print("📦 666666Graph exported and re-imported, total nodes:", len(exported["nodes"]))
 
 
 def example_complex_shared_db(db_name: str = "poc"):
@@ -512,7 +513,7 @@ if __name__ == "__main__":
         # example_shared_db(db_name="shared_travel_group_polardb")
 
         print("\n=== PolarDB Example: Single-DB-Complex ===")
-        example_complex_shared_db(db_name="db_0927")
+        example_complex_shared_db(db_name="test_polardb_0928")
     except Exception as e:
         print(f"❌ Error running PolarDB example: {e}")
         print("Please check:")

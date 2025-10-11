@@ -149,11 +149,33 @@ class PolarDBGraphDB(BaseGraphDB):
                 """)
                 logger.info(f"Memory table created in schema '{self.db_name}_graph'.")
                 
+                # Add embedding column if it doesn't exist (using JSONB for compatibility)
+                try:
+                    cursor.execute(f"""
+                        ALTER TABLE {self.db_name}_graph."Memory" 
+                        ADD COLUMN IF NOT EXISTS embedding JSONB;
+                    """)
+                    logger.info(f"Embedding column added to Memory table.")
+                except Exception as e:
+                    logger.warning(f"Failed to add embedding column: {e}")
+                
                 # Create indexes
                 cursor.execute(f"""
                     CREATE INDEX IF NOT EXISTS idx_memory_properties 
                     ON {self.db_name}_graph."Memory" USING GIN (properties);
                 """)
+                
+                # Create vector index for embedding field
+                try:
+                    cursor.execute(f"""
+                        CREATE INDEX IF NOT EXISTS idx_memory_embedding 
+                        ON {self.db_name}_graph."Memory" USING ivfflat (embedding vector_cosine_ops)
+                        WITH (lists = 100);
+                    """)
+                    logger.info(f"Vector index created for Memory table.")
+                except Exception as e:
+                    logger.warning(f"Vector index creation failed (might not be supported): {e}")
+                
                 logger.info(f"Indexes created for Memory table.")
                 
         except Exception as e:
@@ -277,21 +299,22 @@ class PolarDBGraphDB(BaseGraphDB):
         if "embedding" not in properties or not properties["embedding"]:
             properties["embedding"] = generate_vector(self._get_config_value("embedding_dimension", 1024))
 
-        # Store embedding in properties instead of separate column
+        # Extract embedding for separate column
         embedding_vector = properties.pop("embedding", [])
-        if isinstance(embedding_vector, list):
-            properties["embedding"] = embedding_vector
+        if not isinstance(embedding_vector, list):
+            embedding_vector = []
 
         query = f"""
-            INSERT INTO {self.db_name}_graph."Memory"(id, properties)
-            VALUES (%s, %s)
+            INSERT INTO {self.db_name}_graph."Memory"(id, properties, embedding)
+            VALUES (%s, %s, %s)
             ON CONFLICT (id) DO UPDATE SET
                 properties = EXCLUDED.properties,
+                embedding = EXCLUDED.embedding,
                 updated_at = CURRENT_TIMESTAMP
         """
 
         with self.connection.cursor() as cursor:
-            cursor.execute(query, (id, json.dumps(properties)))
+            cursor.execute(query, (id, json.dumps(properties), json.dumps(embedding_vector)))
             logger.info(f"Added node {id} to graph '{self.db_name}_graph'.")
 
     def update_node(self, id: str, fields: dict[str, Any]) -> None:
@@ -309,18 +332,28 @@ class PolarDBGraphDB(BaseGraphDB):
         properties.update(fields)
 
         # Handle embedding separately
-        # Handle embedding update - store in properties
+        # Handle embedding update - store in separate column
+        embedding_vector = None
         if "embedding" in fields:
             embedding_vector = fields.pop("embedding")
-            if isinstance(embedding_vector, list):
-                properties["embedding"] = embedding_vector
+            if not isinstance(embedding_vector, list):
+                embedding_vector = None
 
-        query = f"""
-            UPDATE {self.db_name}_graph."Memory" 
-            SET properties = %s, updated_at = CURRENT_TIMESTAMP
-            WHERE id = %s
-        """
-        params = [json.dumps(properties), id]
+        # Build query based on whether embedding is being updated
+        if embedding_vector is not None:
+            query = f"""
+                UPDATE {self.db_name}_graph."Memory" 
+                SET properties = %s, embedding = %s, updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+            """
+            params = [json.dumps(properties), json.dumps(embedding_vector), id]
+        else:
+            query = f"""
+                UPDATE {self.db_name}_graph."Memory" 
+                SET properties = %s, updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+            """
+            params = [json.dumps(properties), id]
 
         if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
             user_name = self._get_config_value("user_name")
@@ -388,7 +421,7 @@ class PolarDBGraphDB(BaseGraphDB):
     def get_node(self, id: str, **kwargs) -> dict[str, Any] | None:
         """Retrieve the metadata and memory of a node."""
         query = f"""
-            SELECT id, properties
+            SELECT id, properties, embedding
             FROM {self.db_name}_graph."Memory" 
             WHERE id = %s
         """
@@ -404,9 +437,16 @@ class PolarDBGraphDB(BaseGraphDB):
             result = cursor.fetchone()
             
             if result:
-                node_id, properties_json = result
+                node_id, properties_json, embedding_json = result
                 # properties_json is already a dict from psycopg2
                 properties = properties_json if properties_json else {}
+                # Parse embedding from JSONB if it exists
+                if embedding_json is not None:
+                    try:
+                        embedding = json.loads(embedding_json) if isinstance(embedding_json, str) else embedding_json
+                        properties["embedding"] = embedding
+                    except (json.JSONDecodeError, TypeError):
+                        logger.warning(f"Failed to parse embedding for node {id}")
                 return self._parse_node({"id": id, "memory": properties.get("memory", ""), "metadata": properties})
             return None
 
@@ -478,7 +518,7 @@ class PolarDBGraphDB(BaseGraphDB):
         """Find top-K neighbor nodes with maximum tag overlap."""
         # This is a simplified implementation
         query = f"""
-            SELECT id, properties 
+            SELECT id, properties, embedding
             FROM {self.db_name}_graph."Memory" 
             WHERE properties::text LIKE '%activated%'
               AND properties::text NOT LIKE '%reasoning%'
@@ -497,9 +537,16 @@ class PolarDBGraphDB(BaseGraphDB):
             
             nodes = []
             for row in results:
-                node_id, properties_json = row
+                node_id, properties_json, embedding_json = row
                 # properties_json is already a dict from psycopg2
                 properties = properties_json if properties_json else {}
+                # Parse embedding from JSONB if it exists
+                if embedding_json is not None:
+                    try:
+                        embedding = json.loads(embedding_json) if isinstance(embedding_json, str) else embedding_json
+                        properties["embedding"] = embedding
+                    except (json.JSONDecodeError, TypeError):
+                        logger.warning(f"Failed to parse embedding for node {node_id}")
                 nodes.append(self._parse_node({"id": properties.get("id", ""), "memory": properties.get("memory", ""), "metadata": properties}))
             return nodes
 
@@ -556,45 +603,45 @@ class PolarDBGraphDB(BaseGraphDB):
         """
         Retrieve node IDs based on vector similarity using PostgreSQL vector operations.
         """
-        # Convert vector to string for comparison
-        vector_str = f"[{','.join(map(str, vector))}]"
-        
-        # Build query with direct string interpolation for simplicity
+        # Use Python-based vector similarity search with JSONB embeddings
         user_name = self._get_config_value("user_name")
         query = f"""
-            SELECT id, properties
+            SELECT id, properties, embedding
             FROM {self.db_name}_graph."Memory" 
-            WHERE properties::text LIKE '%embedding%'
+            WHERE embedding IS NOT NULL
         """
+        params = []
         
         if user_name:
-            query += f" AND properties::text LIKE '%{user_name}%'"
+            query += " AND properties::text LIKE %s"
+            params.append(f"%{user_name}%")
         
-        query += f" LIMIT {top_k * 10}"
-        params = []
+        query += f" LIMIT {top_k * 10}"  # Get more results for Python filtering
 
         with self.connection.cursor() as cursor:
-            cursor.execute(query)
+            cursor.execute(query, params)
             results = cursor.fetchall()
 
         records = []
         for row in results:
-            node_id, properties_json = row
+            node_id, properties_json, embedding_json = row
             # properties_json is already a dict from psycopg2
             properties = properties_json if properties_json else {}
             
-            # Extract embedding from properties
-            embedding = properties.get("embedding")
-            if embedding and isinstance(embedding, list) and len(embedding) == len(vector):
+            # Parse embedding from JSONB
+            if embedding_json is not None:
                 try:
-                    # Calculate cosine similarity
-                    dot_product = sum(a * b for a, b in zip(vector, embedding))
-                    norm_a = sum(a * a for a in vector) ** 0.5
-                    norm_b = sum(b * b for b in embedding) ** 0.5
-                    if norm_a > 0 and norm_b > 0:
-                        similarity = dot_product / (norm_a * norm_b)
-                        records.append({"id": properties.get("id", ""), "score": similarity})
-                except (TypeError, ValueError):
+                    embedding = json.loads(embedding_json) if isinstance(embedding_json, str) else embedding_json
+                    if isinstance(embedding, list) and len(embedding) == len(vector):
+                        # Calculate cosine similarity
+                        dot_product = sum(a * b for a, b in zip(vector, embedding))
+                        norm_a = sum(a * a for a in vector) ** 0.5
+                        norm_b = sum(b * b for b in embedding) ** 0.5
+                        if norm_a > 0 and norm_b > 0:
+                            similarity = dot_product / (norm_a * norm_b)
+                            properties["embedding"] = embedding
+                            records.append({"id": properties.get("id", node_id), "score": similarity})
+                except (json.JSONDecodeError, TypeError, ValueError):
                     continue
 
         # Sort by similarity score (descending)
