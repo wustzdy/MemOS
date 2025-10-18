@@ -511,53 +511,32 @@ class PolarDBGraphDB(BaseGraphDB):
                     logger.error(f"Failed to create elabel '{label_name}': {e}", exc_info=True)
 
     def add_edge(self, source_id: str, target_id: str, type: str, user_name: str | None = None) -> None:
-        """
-        Create an edge from source node to target node.
-        Args:
-            source_id: ID of the source node.
-            target_id: ID of the target node.
-            type: Relationship type (e.g., 'RELATE_TO', 'PARENT').
-            user_name (str, optional): User name for filtering in non-multi-db mode
-        """
         if not source_id or not target_id:
             raise ValueError("[add_edge] source_id and target_id must be provided")
-        
-        # 确保边表存在
-        try:
-            with self.connection.cursor() as cursor:
-                cursor.execute(f"""
-                    CREATE TABLE IF NOT EXISTS {self.db_name}_graph."Edges" (
-                        id SERIAL PRIMARY KEY,
-                        source_id TEXT NOT NULL,
-                        target_id TEXT NOT NULL,
-                        edge_type TEXT NOT NULL,
-                        properties JSONB,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    );
-                """)
-        except Exception as e:
-            logger.warning(f"Failed to ensure edges table exists: {e}")
-            return
 
-        # 检查源节点和目标节点是否存在
         source_exists = self.get_node(source_id) is not None
         target_exists = self.get_node(target_id) is not None
 
         if not source_exists or not target_exists:
-            logger.warning(f"Cannot create edge: source or target node does not exist")
-            return
+            raise ValueError("[add_edge] source_id and target_id must be provided")
 
-        # 构建边的属性
         properties = {}
         if user_name is not None:
             properties["user_name"] = user_name
-
-        # 添加边
         query = f"""
-            INSERT INTO {self.db_name}_graph."Edges" (source_id, target_id, edge_type, properties)
-            VALUES (%s, %s, %s, %s)
-            ON CONFLICT DO NOTHING
+            INSERT INTO {self.db_name}_graph."{type}"(id, start_id, end_id, properties)
+            SELECT
+                ag_catalog._next_graph_id('{self.db_name}_graph'::name, '{type}'),
+                ag_catalog._make_graph_id('{self.db_name}_graph'::name, 'Memory'::name, '{source_id}'::text::cstring),
+                ag_catalog._make_graph_id('{self.db_name}_graph'::name, 'Memory'::name, '{target_id}'::text::cstring),
+                jsonb_build_object('user_name', '{user_name}')::text::agtype
+            WHERE NOT EXISTS (
+                SELECT 1 FROM {self.db_name}_graph."{type}"
+                WHERE start_id = ag_catalog._make_graph_id('{self.db_name}_graph'::name, 'Memory'::name, '{source_id}'::text::cstring)
+                  AND end_id   = ag_catalog._make_graph_id('{self.db_name}_graph'::name, 'Memory'::name, '{target_id}'::text::cstring)
+            );
         """
+        print(f"Executing add_edge: {query}")
 
         try:
             with self.connection.cursor() as cursor:
