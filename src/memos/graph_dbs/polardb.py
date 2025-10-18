@@ -537,8 +537,9 @@ class PolarDBGraphDB(BaseGraphDB):
 
         if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
             user_name = self._get_config_value("user_name")
-            query += " AND properties::text LIKE %s"
-            params.append(f"%{user_name}%")
+            # query += " AND properties::text LIKE %s"
+            query += f""" AND ag_catalog.agtype_access_operator(properties, '"user_name"'::agtype) = %s::agtype"""
+            params.append(f'"{user_name}"')
 
         with self.connection.cursor() as cursor:
             cursor.execute(query, params)
