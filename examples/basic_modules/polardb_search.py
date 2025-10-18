@@ -108,26 +108,36 @@ def getPolarDb(db_name):
 
 def searchVector(db_name: str, vectorStr: list[float]):
     graph = getPolarDb(db_name)
+
+    # 1，查询search_by_embedding
     # nodes = graph.search_by_embedding(vector=vectorStr, top_k=1)
     # print("search_by_embedding nodes:", len(nodes))
     # for node_i in nodes:
     #     print("Search result:", graph.get_node(node_i["id"]))
 
+    # 2，查询单个get_node
     # detail = graph.get_node("bb079c5b-1937-4125-a9e5-55d4abe6c95d")
     # print("单个node:", detail)
 
+    # 3，查询多个get_nodes
     # ids = ['bb079c5b-1937-4125-a9e5-55d4abe6c95d', 'd66120af-992b-44c6-b261-a6ebe6bc57a5']
     # detail_list = graph.get_nodes(ids)
     # print("1111多个node:", len(detail_list))
     #
     # print("多个node:", detail_list)
 
+    # 4，更新 update_node
     # graph.update_node(id="000009999ef-926f-42e2-b7b5-0224daf0abcd", fields={"name": "new_name"})
     # for node_i in nodes:
     #     print("Search result:", graph.get_node(node_i["id"]))
 
+    #4，查询 get_memory_count
     count = graph.get_memory_count('UserMemory','memos07ba3d044650474c839e721f3a69d38a')
     print("user count:", count)
+
+    # 4，判断node是否存在 node_not_exist 1代表存在，
+    isNodeExist = graph.node_not_exist('UserMemory', 'memos07ba3d044650474c839e721f3a69d38a')
+    print("user isNodeExist:", isNodeExist)
 
 
 if __name__ == "__main__":

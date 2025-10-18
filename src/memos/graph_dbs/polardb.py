@@ -279,24 +279,27 @@ class PolarDBGraphDB(BaseGraphDB):
             logger.error(f"[get_memory_count] Failed: {e}")
             return -1
 
-    def node_not_exist(self, scope: str) -> int:
+    def node_not_exist(self, scope: str, user_name: str | None = None) -> int:
         """Check if a node with given scope exists."""
+        user_name = user_name if user_name else self._get_config_value("user_name")
         query = f"""
             SELECT id 
             FROM {self.db_name}_graph."Memory" 
-            WHERE properties->>'memory_type' = %s 
-            LIMIT 1
+            WHERE ag_catalog.agtype_access_operator(properties, '"memory_type"'::agtype) = %s::agtype
         """
-        params = [scope]
+        query += "\nAND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
+        query += "\nLIMIT 1"
+        params = [f'"{scope}"', f'"{user_name}"']
 
-        if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
-            query += " AND properties->>'user_name' = %s"
-            params.append(self._get_config_value("user_name"))
-
-        with self.connection.cursor() as cursor:
-            cursor.execute(query, params)
-            result = cursor.fetchone()
-            return result is None
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(query, params)
+                result = cursor.fetchone()
+                print(f"[node_not_exist] Query result: {result}")
+                return len(result)
+        except Exception as e:
+            logger.error(f"[node_not_exist] Query failed: {e}", exc_info=True)
+            raise
 
     def remove_oldest_memory(self, memory_type: str, keep_latest: int) -> None:
         """
