@@ -143,6 +143,9 @@ def searchVector(db_name: str, vectorStr: list[float]):
     # remove_oldest_memory = graph.remove_oldest_memory('UserMemory', 2,'memos07ba3d044650474c839e721f3a69d38a')
     # print("user remove_oldest_memory:", remove_oldest_memory)
 
+    isNodeExist = graph.update_node(id="bb079c5b-1937-4125-a9e5-55d4abe6c95d", fields={"status": "inactived","tags": ["yoga", "travel11111111", "local studios5667888"]})
+    print("user update_node:", isNodeExist)
+
 
 if __name__ == "__main__":
     # handler_node_edge(db_name="shared-tree-textual-memory-product-0731",type="node")

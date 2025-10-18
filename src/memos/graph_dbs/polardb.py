@@ -355,51 +355,66 @@ class PolarDBGraphDB(BaseGraphDB):
             logger.error(f"[remove_oldest_memory] Failed: {e}", exc_info=True)
             raise
 
-    def update_node(self, id: str, fields: dict[str, Any]) -> None:
-        """Update node fields in PolarDB."""
+    def update_node(self, id: str, fields: dict[str, Any], user_name: str | None = None) -> None:
+        """
+        Update node fields in PolarDB, auto-converting `created_at` and `updated_at` to datetime type if present.
+        """
         if not fields:
             return
 
-        # Get current properties
-        current_node = self.get_node(id)
+        # 获取当前节点
+        current_node = self.get_node(id, user_name=user_name)
         if not current_node:
             return
 
-        # Update properties
+        # 更新属性，但保留原始的id字段和memory字段
         properties = current_node["metadata"].copy()
+        original_id = properties.get("id", id)  # 保留原始ID
+        original_memory = current_node.get("memory", "")  # 保留原始memory
+        
+        # 如果fields中有memory字段，使用它；否则保留原始的memory
+        if "memory" in fields:
+            original_memory = fields.pop("memory")
+        
         properties.update(fields)
+        properties["id"] = original_id  # 确保ID不被覆盖
+        properties["memory"] = original_memory  # 确保memory不被覆盖
 
-        # Handle embedding separately
-        # Handle embedding update - store in separate column
+        # 处理 embedding 字段
         embedding_vector = None
         if "embedding" in fields:
             embedding_vector = fields.pop("embedding")
             if not isinstance(embedding_vector, list):
                 embedding_vector = None
 
-        # Build query based on whether embedding is being updated
+        # 构建更新查询
         if embedding_vector is not None:
             query = f"""
                 UPDATE {self.db_name}_graph."Memory" 
-                SET properties = %s, embedding = %s, updated_at = CURRENT_TIMESTAMP
-                WHERE id = %s
+                SET properties = %s, embedding = %s
+                WHERE ag_catalog.agtype_access_operator(properties, '"id"'::agtype) = %s::agtype
             """
-            params = [json.dumps(properties), json.dumps(embedding_vector), id]
+            params = [json.dumps(properties), json.dumps(embedding_vector), f'"{id}"']
         else:
             query = f"""
                 UPDATE {self.db_name}_graph."Memory" 
-                SET properties = %s, updated_at = CURRENT_TIMESTAMP
-                WHERE id = %s
+                SET properties = %s
+                WHERE ag_catalog.agtype_access_operator(properties, '"id"'::agtype) = %s::agtype
             """
-            params = [json.dumps(properties), id]
+            params = [json.dumps(properties), f'"{id}"']
 
-        if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
-            user_name = self._get_config_value("user_name")
-            query += " AND properties::text LIKE %s"
-            params.append(f"%{user_name}%")
+        # 只有在提供了 user_name 参数时才添加用户过滤
+        if user_name is not None:
+            query += "\nAND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
+            params.append(f'"{user_name}"')
 
-        with self.connection.cursor() as cursor:
-            cursor.execute(query, params)
+        print(f"[update_node] query: {query}, params: {params}")
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(query, params)
+        except Exception as e:
+            logger.error(f"[update_node] Failed to update node '{id}': {e}", exc_info=True)
+            raise
 
     def delete_node(self, id: str) -> None:
         """Delete a node from the graph."""
@@ -556,6 +571,7 @@ class PolarDBGraphDB(BaseGraphDB):
             query += "\nAND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
             params.append(f'"{user_name}"')
 
+        print(f"[get_node] query: {query}, params: {params}")
         try:
             with self.connection.cursor() as cursor:
                 cursor.execute(query, params)
@@ -586,7 +602,7 @@ class PolarDBGraphDB(BaseGraphDB):
                         except (json.JSONDecodeError, TypeError):
                             logger.warning(f"Failed to parse embedding for node {id}")
                     
-                    return self._parse_node({"id": id, "memory": properties.get("memory", ""), "metadata": properties})
+                    return self._parse_node({"id": id, "memory": properties.get("memory", ""), **properties})
                 return None
 
         except Exception as e:
@@ -1268,10 +1284,8 @@ class PolarDBGraphDB(BaseGraphDB):
             if time_field in node and hasattr(node[time_field], "isoformat"):
                 node[time_field] = node[time_field].isoformat()
 
-        # Remove user_name from output
-        node.pop("user_name", None)
-
         # 不再对sources和usage字段进行反序列化，保持List[str]格式
+        # 不再移除user_name字段，保持所有字段
 
         return {"id": node.pop("id"), "memory": node.pop("memory", ""), "metadata": node}
 
