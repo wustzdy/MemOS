@@ -259,133 +259,188 @@ class PolarDBGraphDB(BaseGraphDB):
         except Exception as e:
             logger.warning(f"Failed to create indexes: {e}")
 
-    def get_memory_count(self, memory_type: str) -> int:
+    def get_memory_count(self, memory_type: str, user_name: str | None = None) -> int:
         """Get count of memory nodes by type."""
+        user_name = user_name if user_name else self._get_config_value("user_name")
         query = f"""
             SELECT COUNT(*) 
             FROM {self.db_name}_graph."Memory" 
-            WHERE properties->>'memory_type' = %s
+            WHERE ag_catalog.agtype_access_operator(properties, '"memory_type"'::agtype) = %s::agtype
         """
-        params = [memory_type]
+        query += "\nAND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
+        params = [f'"{memory_type}"', f'"{user_name}"']
 
-        if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
-            query += " AND properties->>'user_name' = %s"
-            params.append(self._get_config_value("user_name"))
+        print(f"[get_memory_count] Query: {query}, Params: {params}")
 
-        with self.connection.cursor() as cursor:
-            cursor.execute(query, params)
-            result = cursor.fetchone()
-            return result[0] if result else 0
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(query, params)
+                result = cursor.fetchone()
+                return result[0] if result else 0
+        except Exception as e:
+            logger.error(f"[get_memory_count] Failed: {e}")
+            return -1
 
-    def node_not_exist(self, scope: str) -> int:
+    def node_not_exist(self, scope: str, user_name: str | None = None) -> int:
         """Check if a node with given scope exists."""
+        user_name = user_name if user_name else self._get_config_value("user_name")
         query = f"""
             SELECT id 
             FROM {self.db_name}_graph."Memory" 
-            WHERE properties->>'memory_type' = %s 
-            LIMIT 1
+            WHERE ag_catalog.agtype_access_operator(properties, '"memory_type"'::agtype) = %s::agtype
         """
-        params = [scope]
+        query += "\nAND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
+        query += "\nLIMIT 1"
+        params = [f'"{scope}"', f'"{user_name}"']
 
-        if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
-            query += " AND properties->>'user_name' = %s"
-            params.append(self._get_config_value("user_name"))
+        print(f"[node_not_exist] Query: {query}, Params: {params}")
 
-        with self.connection.cursor() as cursor:
-            cursor.execute(query, params)
-            result = cursor.fetchone()
-            return result is None
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(query, params)
+                result = cursor.fetchone()
+                print(f"[node_not_exist] Query result: {result}")
+                return len(result)
+        except Exception as e:
+            logger.error(f"[node_not_exist] Query failed: {e}", exc_info=True)
+            raise
 
-    def remove_oldest_memory(self, memory_type: str, keep_latest: int) -> None:
+    def remove_oldest_memory(self, memory_type: str, keep_latest: int, user_name: str | None = None) -> None:
         """
         Remove all WorkingMemory nodes except the latest `keep_latest` entries.
+
+        Args:
+            memory_type (str): Memory type (e.g., 'WorkingMemory', 'LongTermMemory').
+            keep_latest (int): Number of latest WorkingMemory entries to keep.
+            user_name (str, optional): User name for filtering in non-multi-db mode
         """
-        query = f"""
-            DELETE FROM {self.db_name}_graph."Memory" 
-            WHERE properties->>'memory_type' = %s 
-            AND id NOT IN (
-                SELECT id FROM (
-                    SELECT id FROM {self.db_name}_graph."Memory" 
-                    WHERE properties->>'memory_type' = %s
-                    ORDER BY (properties->>'updated_at')::timestamp DESC 
-                    LIMIT %s
-                ) AS keep_ids
-            )
+        user_name = user_name if user_name else self._get_config_value("user_name")
+        
+        # 使用真正的 OFFSET 逻辑，与 nebular.py 保持一致
+        # 先找到要删除的节点ID，然后删除它们
+        select_query = f"""
+            SELECT id FROM {self.db_name}_graph."Memory" 
+            WHERE ag_catalog.agtype_access_operator(properties, '"memory_type"'::agtype) = %s::agtype
+            AND ag_catalog.agtype_access_operator(properties, '"user_name"'::agtype) = %s::agtype
+            ORDER BY ag_catalog.agtype_access_operator(properties, '"updated_at"'::agtype) DESC 
+            OFFSET %s
         """
-        params = [memory_type, memory_type, keep_latest]
+        select_params = [f'"{memory_type}"', f'"{user_name}"', keep_latest]
+        print(f"[remove_oldest_memory] Select query: {select_query}")
+        print(f"[remove_oldest_memory] Select params: {select_params}")
+        
+        try:
+            with self.connection.cursor() as cursor:
+                # 执行查询获取要删除的ID列表
+                cursor.execute(select_query, select_params)
+                ids_to_delete = [row[0] for row in cursor.fetchall()]
 
-        if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
-            query = query.replace("WHERE properties->>'memory_type' = %s",
-                                  "WHERE properties->>'memory_type' = %s AND properties->>'user_name' = %s")
-            query = query.replace("WHERE properties->>'memory_type' = %s",
-                                  "WHERE properties->>'memory_type' = %s AND properties->>'user_name' = %s")
-            params = [memory_type, self._get_config_value("user_name"), memory_type,
-                      self._get_config_value("user_name"), keep_latest]
+                if not ids_to_delete:
+                    logger.info(f"No {memory_type} memories to remove for user {user_name}")
+                    return
 
-        # Simplified implementation - just log the operation
-        logger.info(f"Removing oldest {memory_type} memories, keeping {keep_latest} latest")
+                # 构建删除查询
+                placeholders = ','.join(['%s'] * len(ids_to_delete))
+                delete_query = f"""
+                    DELETE FROM {self.db_name}_graph."Memory"
+                    WHERE id IN ({placeholders})
+                """
+                delete_params = ids_to_delete
 
-    def update_node(self, id: str, fields: dict[str, Any]) -> None:
-        """Update node fields in PolarDB."""
+                # 执行删除
+                cursor.execute(delete_query, delete_params)
+                deleted_count = cursor.rowcount
+                logger.info(f"Removed {deleted_count} oldest {memory_type} memories, keeping {keep_latest} latest for user {user_name}")
+        except Exception as e:
+            logger.error(f"[remove_oldest_memory] Failed: {e}", exc_info=True)
+            raise
+
+    def update_node(self, id: str, fields: dict[str, Any], user_name: str | None = None) -> None:
+        """
+        Update node fields in PolarDB, auto-converting `created_at` and `updated_at` to datetime type if present.
+        """
         if not fields:
             return
 
-        # Get current properties
-        current_node = self.get_node(id)
+        # 获取当前节点
+        current_node = self.get_node(id, user_name=user_name)
         if not current_node:
             return
 
-        # Update properties
+        # 更新属性，但保留原始的id字段和memory字段
         properties = current_node["metadata"].copy()
+        original_id = properties.get("id", id)  # 保留原始ID
+        original_memory = current_node.get("memory", "")  # 保留原始memory
+        
+        # 如果fields中有memory字段，使用它；否则保留原始的memory
+        if "memory" in fields:
+            original_memory = fields.pop("memory")
+        
         properties.update(fields)
+        properties["id"] = original_id  # 确保ID不被覆盖
+        properties["memory"] = original_memory  # 确保memory不被覆盖
 
-        # Handle embedding separately
-        # Handle embedding update - store in separate column
+        # 处理 embedding 字段
         embedding_vector = None
         if "embedding" in fields:
             embedding_vector = fields.pop("embedding")
             if not isinstance(embedding_vector, list):
                 embedding_vector = None
 
-        # Build query based on whether embedding is being updated
+        # 构建更新查询
         if embedding_vector is not None:
             query = f"""
                 UPDATE {self.db_name}_graph."Memory" 
-                SET properties = %s, embedding = %s, updated_at = CURRENT_TIMESTAMP
-                WHERE id = %s
+                SET properties = %s, embedding = %s
+                WHERE ag_catalog.agtype_access_operator(properties, '"id"'::agtype) = %s::agtype
             """
-            params = [json.dumps(properties), json.dumps(embedding_vector), id]
+            params = [json.dumps(properties), json.dumps(embedding_vector), f'"{id}"']
         else:
             query = f"""
                 UPDATE {self.db_name}_graph."Memory" 
-                SET properties = %s, updated_at = CURRENT_TIMESTAMP
-                WHERE id = %s
+                SET properties = %s
+                WHERE ag_catalog.agtype_access_operator(properties, '"id"'::agtype) = %s::agtype
             """
-            params = [json.dumps(properties), id]
+            params = [json.dumps(properties), f'"{id}"']
 
-        if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
-            user_name = self._get_config_value("user_name")
-            query += " AND properties::text LIKE %s"
-            params.append(f"%{user_name}%")
+        # 只有在提供了 user_name 参数时才添加用户过滤
+        if user_name is not None:
+            query += "\nAND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
+            params.append(f'"{user_name}"')
 
-        with self.connection.cursor() as cursor:
-            cursor.execute(query, params)
+        print(f"[update_node] query: {query}, params: {params}")
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(query, params)
+        except Exception as e:
+            logger.error(f"[update_node] Failed to update node '{id}': {e}", exc_info=True)
+            raise
 
-    def delete_node(self, id: str) -> None:
-        """Delete a node from the graph."""
+    def delete_node(self, id: str, user_name: str | None = None) -> None:
+        """
+        Delete a node from the graph.
+        Args:
+            id: Node identifier to delete.
+            user_name (str, optional): User name for filtering in non-multi-db mode
+        """
         query = f"""
             DELETE FROM {self.db_name}_graph."Memory" 
-            WHERE id = %s
+            WHERE ag_catalog.agtype_access_operator(properties, '"id"'::agtype) = %s::agtype
         """
-        params = [id]
+        params = [f'"{id}"']
 
-        if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
-            user_name = self._get_config_value("user_name")
-            query += " AND properties::text LIKE %s"
-            params.append(f"%{user_name}%")
+        # 只有在提供了 user_name 参数时才添加用户过滤
+        if user_name is not None:
+            query += "\nAND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
+            params.append(f'"{user_name}"')
 
-        with self.connection.cursor() as cursor:
-            cursor.execute(query, params)
+        print(f"[delete_node] query: {query}, params: {params}")
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(query, params)
+        except Exception as e:
+            logger.error(f"[delete_node] Failed to delete node '{id}': {e}", exc_info=True)
+            raise
 
     def add_edge(self, source_id: str, target_id: str, type: str) -> None:
         """
@@ -496,48 +551,72 @@ class PolarDBGraphDB(BaseGraphDB):
             result = cursor.fetchone()
             return result is not None
 
-    def get_node(self, id: str, **kwargs) -> dict[str, Any] | None:
-        """Retrieve the metadata and memory of a node."""
+    def get_node(self, id: str, include_embedding: bool = False, user_name: str | None = None) -> dict[str, Any] | None:
+        """
+        Retrieve a Memory node by its unique ID.
+
+        Args:
+            id (str): Node ID (Memory.id)
+            include_embedding: with/without embedding
+            user_name (str, optional): User name for filtering in non-multi-db mode
+
+        Returns:
+            dict: Node properties as key-value pairs, or None if not found.
+        """
+        # 构建查询字段
+        if include_embedding:
+            select_fields = "id, properties, embedding"
+        else:
+            select_fields = "id, properties"
+            
         query = f"""
-            SELECT id, properties, embedding
+            SELECT {select_fields}
             FROM {self.db_name}_graph."Memory" 
             WHERE ag_catalog.agtype_access_operator(properties, '"id"'::agtype) = %s::agtype
         """
-        # 如果id已经包含引号，则直接使用；否则添加引号
-        if id.startswith('"') and id.endswith('"'):
-            params = [id]
-        else:
-            params = [f'"{id}"']
+        params = [f'"{id}"']
+        
+        # 只有在提供了 user_name 参数时才添加用户过滤
+        if user_name is not None:
+            query += "\nAND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
+            params.append(f'"{user_name}"')
 
-        if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
-            user_name = self._get_config_value("user_name")
-            query += " AND properties::text LIKE %s"
-            params.append(f"%{user_name}%")
+        print(f"[get_node] query: {query}, params: {params}")
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(query, params)
+                result = cursor.fetchone()
 
-        with self.connection.cursor() as cursor:
-            cursor.execute(query, params)
-            result = cursor.fetchone()
+                if result:
+                    if include_embedding:
+                        node_id, properties_json, embedding_json = result
+                    else:
+                        node_id, properties_json = result
+                        embedding_json = None
+                    
+                    # Parse properties from JSONB if it's a string
+                    if isinstance(properties_json, str):
+                        try:
+                            properties = json.loads(properties_json)
+                        except (json.JSONDecodeError, TypeError):
+                            logger.warning(f"Failed to parse properties for node {id}")
+                            properties = {}
+                    else:
+                        properties = properties_json if properties_json else {}
+                    
+                    # Parse embedding from JSONB if it exists and include_embedding is True
+                    if include_embedding and embedding_json is not None:
+                        try:
+                            embedding = json.loads(embedding_json) if isinstance(embedding_json, str) else embedding_json
+                            properties["embedding"] = embedding
+                        except (json.JSONDecodeError, TypeError):
+                            logger.warning(f"Failed to parse embedding for node {id}")
+                    
+                    return self._parse_node({"id": id, "memory": properties.get("memory", ""), **properties})
+                return None
 
-            if result:
-                node_id, properties_json, embedding_json = result
-                # Parse properties from JSONB if it's a string
-                if isinstance(properties_json, str):
-                    try:
-                        properties = json.loads(properties_json)
-                    except (json.JSONDecodeError, TypeError):
-                        logger.warning(f"Failed to parse properties for node {id}")
-                        properties = {}
-                else:
-                    properties = properties_json if properties_json else {}
-                
-                # Parse embedding from JSONB if it exists
-                if embedding_json is not None:
-                    try:
-                        embedding = json.loads(embedding_json) if isinstance(embedding_json, str) else embedding_json
-                        properties["embedding"] = embedding
-                    except (json.JSONDecodeError, TypeError):
-                        logger.warning(f"Failed to parse embedding for node {id}")
-                return self._parse_node({"id": id, "memory": properties.get("memory", ""), "metadata": properties})
+        except Exception as e:
+            logger.error(f"[get_node] Failed to retrieve node '{id}': {e}", exc_info=True)
             return None
 
     def get_nodes(self, ids: list[str], **kwargs) -> list[dict[str, Any]]:
@@ -1215,10 +1294,8 @@ class PolarDBGraphDB(BaseGraphDB):
             if time_field in node and hasattr(node[time_field], "isoformat"):
                 node[time_field] = node[time_field].isoformat()
 
-        # Remove user_name from output
-        node.pop("user_name", None)
-
         # 不再对sources和usage字段进行反序列化，保持List[str]格式
+        # 不再移除user_name字段，保持所有字段
 
         return {"id": node.pop("id"), "memory": node.pop("memory", ""), "metadata": node}
 
