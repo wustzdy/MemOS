@@ -1,0 +1,1378 @@
+import json
+import time
+import random
+from datetime import datetime
+from typing import Any, Literal
+
+import numpy as np
+import psycopg2
+from psycopg2.extras import Json
+
+from memos.configs.graph_db import PolarDBGraphDBConfig
+from memos.dependency import require_python_package
+from memos.graph_dbs.base import BaseGraphDB
+from memos.log import get_logger
+
+logger = get_logger(__name__)
+
+# 图数据库配置
+GRAPH_NAME = 'test_memos_graph'
+
+
+def _compose_node(item: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
+    node_id = item["id"]
+    memory = item["memory"]
+    metadata = item.get("metadata", {})
+    return node_id, memory, metadata
+
+
+def _prepare_node_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    """
+    Ensure metadata has proper datetime fields and normalized types.
+
+    - Fill `created_at` and `updated_at` if missing (in ISO 8601 format).
+    - Convert embedding to list of float if present.
+    """
+    now = datetime.utcnow().isoformat()
+
+    # Fill timestamps if missing
+    metadata.setdefault("created_at", now)
+    metadata.setdefault("updated_at", now)
+
+    # Normalize embedding type
+    embedding = metadata.get("embedding")
+    if embedding and isinstance(embedding, list):
+        metadata["embedding"] = [float(x) for x in embedding]
+
+    return metadata
+
+
+def generate_vector(dim=1024, low=-0.2, high=0.2):
+    """Generate a random vector for testing purposes."""
+    return [round(random.uniform(low, high), 6) for _ in range(dim)]
+
+
+def find_embedding(metadata):
+    def find_embedding(item):
+        """在多层结构中查找 embedding 向量"""
+        for key in ["embedding", "embedding_1024", "embedding_3072", "embedding_768"]:
+            if key in item and isinstance(item[key], list):
+                return item[key]
+            if "metadata" in item and key in item["metadata"]:
+                return item["metadata"][key]
+            if "properties" in item and key in item["properties"]:
+                return item["properties"][key]
+        return None
+
+
+def detect_embedding_field(embedding_list):
+    if not embedding_list:
+        return None
+    dim = len(embedding_list)
+    if dim == 1024:
+        return "embedding"
+    else:
+        print(f"⚠️ 未知 embedding 维度 {dim}，跳过该向量")
+        return None
+def convert_to_vector(embedding_list):
+    if not embedding_list:
+        return None
+    if isinstance(embedding_list, np.ndarray):
+        embedding_list = embedding_list.tolist()
+    return "[" + ",".join(str(float(x)) for x in embedding_list) + "]"
+
+def clean_properties(props):
+    """移除向量字段"""
+    vector_keys = {"embedding", "embedding_1024", "embedding_3072", "embedding_768"}
+    if not isinstance(props, dict):
+        return {}
+    return {k: v for k, v in props.items() if k not in vector_keys}
+
+
+class PolarDBGraphDB(BaseGraphDB):
+    """PolarDB-based implementation using Apache AGE graph database extension."""
+
+    @require_python_package(
+        import_name="psycopg2",
+        install_command="pip install psycopg2-binary",
+        install_link="https://pypi.org/project/psycopg2-binary/",
+    )
+    def __init__(self, config: PolarDBGraphDBConfig):
+        """PolarDB-based implementation using Apache AGE.
+
+        Tenant Modes:
+        - use_multi_db = True:
+            Dedicated Database Mode (Multi-Database Multi-Tenant).
+            Each tenant or logical scope uses a separate PolarDB database.
+            `db_name` is the specific tenant database.
+            `user_name` can be None (optional).
+
+        - use_multi_db = False:
+            Shared Database Multi-Tenant Mode.
+            All tenants share a single PolarDB database.
+            `db_name` is the shared database.
+            `user_name` is required to isolate each tenant's data at the node level.
+            All node queries will enforce `user_name` in WHERE conditions and store it in metadata,
+            but it will be removed automatically before returning to external consumers.
+        """
+        import psycopg2
+
+        self.config = config
+
+        # Handle both dict and object config
+        if isinstance(config, dict):
+            self.db_name = config.get("db_name")
+            self.user_name = config.get("user_name")
+            host = config.get("host")
+            port = config.get("port")
+            user = config.get("user")
+            password = config.get("password")
+        else:
+            self.db_name = config.db_name
+            self.user_name = config.user_name
+            host = config.host
+            port = config.port
+            user = config.user
+            password = config.password
+
+        # Create connection
+        self.connection = psycopg2.connect(
+            host=host,
+            port=port,
+            user=user,
+            password=password,
+            dbname=self.db_name
+        )
+        self.connection.autocommit = True
+
+        # Handle auto_create
+        auto_create = config.get("auto_create", False) if isinstance(config, dict) else config.auto_create
+        if auto_create:
+            self._ensure_database_exists()
+
+        # Create graph and tables
+        self._create_graph()
+
+        # Handle embedding_dimension
+        embedding_dim = config.get("embedding_dimension", 1024) if isinstance(config,dict) else config.embedding_dimension
+        self.create_index(dimensions=embedding_dim)
+
+    def _get_config_value(self, key: str, default=None):
+        """Safely get config value from either dict or object."""
+        if isinstance(self.config, dict):
+            return self.config.get(key, default)
+        else:
+            return getattr(self.config, key, default)
+
+    def _ensure_database_exists(self):
+        """Create database if it doesn't exist."""
+        try:
+            # For PostgreSQL/PolarDB, we need to connect to a default database first
+            # This is a simplified implementation - in production you might want to handle this differently
+            logger.info(f"Using database '{self.db_name}'")
+        except Exception as e:
+            logger.error(f"Failed to access database '{self.db_name}': {e}")
+            raise
+
+    def _create_graph(self):
+        """Create PostgreSQL schema and table for graph storage."""
+        try:
+            with self.connection.cursor() as cursor:
+                # Create schema if it doesn't exist
+                cursor.execute(f"CREATE SCHEMA IF NOT EXISTS {self.db_name}_graph;")
+                logger.info(f"Schema '{self.db_name}_graph' ensured.")
+
+                # Create Memory table if it doesn't exist
+                cursor.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {self.db_name}_graph."Memory" (
+                        id TEXT PRIMARY KEY,
+                        properties JSONB NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+                logger.info(f"Memory table created in schema '{self.db_name}_graph'.")
+
+                # Add embedding column if it doesn't exist (using JSONB for compatibility)
+                try:
+                    cursor.execute(f"""
+                        ALTER TABLE {self.db_name}_graph."Memory" 
+                        ADD COLUMN IF NOT EXISTS embedding JSONB;
+                    """)
+                    logger.info(f"Embedding column added to Memory table.")
+                except Exception as e:
+                    logger.warning(f"Failed to add embedding column: {e}")
+
+                # Create indexes
+                cursor.execute(f"""
+                    CREATE INDEX IF NOT EXISTS idx_memory_properties 
+                    ON {self.db_name}_graph."Memory" USING GIN (properties);
+                """)
+
+                # Create vector index for embedding field
+                try:
+                    cursor.execute(f"""
+                        CREATE INDEX IF NOT EXISTS idx_memory_embedding 
+                        ON {self.db_name}_graph."Memory" USING ivfflat (embedding vector_cosine_ops)
+                        WITH (lists = 100);
+                    """)
+                    logger.info(f"Vector index created for Memory table.")
+                except Exception as e:
+                    logger.warning(f"Vector index creation failed (might not be supported): {e}")
+
+                logger.info(f"Indexes created for Memory table.")
+
+        except Exception as e:
+            logger.error(f"Failed to create graph schema: {e}")
+            raise e
+
+    def create_index(
+            self,
+            label: str = "Memory",
+            vector_property: str = "embedding",
+            dimensions: int = 1024,
+            index_name: str = "memory_vector_index",
+    ) -> None:
+        """
+        Create indexes for embedding and other fields.
+        Note: This creates PostgreSQL indexes on the underlying tables.
+        """
+        try:
+            with self.connection.cursor() as cursor:
+                # Create indexes on the underlying PostgreSQL tables
+                # Apache AGE stores data in regular PostgreSQL tables
+                cursor.execute(f"""
+                    CREATE INDEX IF NOT EXISTS idx_memory_properties 
+                    ON {self.db_name}_graph."Memory" USING GIN (properties);
+                """)
+
+                # Try to create vector index, but don't fail if it doesn't work
+                try:
+                    cursor.execute(f"""
+                        CREATE INDEX IF NOT EXISTS idx_memory_embedding 
+                        ON {self.db_name}_graph."Memory" USING ivfflat (embedding vector_cosine_ops);
+                    """)
+                except Exception as ve:
+                    logger.warning(f"Vector index creation failed (might not be supported): {ve}")
+
+                logger.debug(f"Indexes created successfully.")
+        except Exception as e:
+            logger.warning(f"Failed to create indexes: {e}")
+
+    def get_memory_count(self, memory_type: str) -> int:
+        """Get count of memory nodes by type."""
+        query = f"""
+            SELECT COUNT(*) 
+            FROM {self.db_name}_graph."Memory" 
+            WHERE properties->>'memory_type' = %s
+        """
+        params = [memory_type]
+
+        if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
+            query += " AND properties->>'user_name' = %s"
+            params.append(self._get_config_value("user_name"))
+
+        with self.connection.cursor() as cursor:
+            cursor.execute(query, params)
+            result = cursor.fetchone()
+            return result[0] if result else 0
+
+    def node_not_exist(self, scope: str) -> int:
+        """Check if a node with given scope exists."""
+        query = f"""
+            SELECT id 
+            FROM {self.db_name}_graph."Memory" 
+            WHERE properties->>'memory_type' = %s 
+            LIMIT 1
+        """
+        params = [scope]
+
+        if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
+            query += " AND properties->>'user_name' = %s"
+            params.append(self._get_config_value("user_name"))
+
+        with self.connection.cursor() as cursor:
+            cursor.execute(query, params)
+            result = cursor.fetchone()
+            return result is None
+
+    def remove_oldest_memory(self, memory_type: str, keep_latest: int) -> None:
+        """
+        Remove all WorkingMemory nodes except the latest `keep_latest` entries.
+        """
+        query = f"""
+            DELETE FROM {self.db_name}_graph."Memory" 
+            WHERE properties->>'memory_type' = %s 
+            AND id NOT IN (
+                SELECT id FROM (
+                    SELECT id FROM {self.db_name}_graph."Memory" 
+                    WHERE properties->>'memory_type' = %s
+                    ORDER BY (properties->>'updated_at')::timestamp DESC 
+                    LIMIT %s
+                ) AS keep_ids
+            )
+        """
+        params = [memory_type, memory_type, keep_latest]
+
+        if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
+            query = query.replace("WHERE properties->>'memory_type' = %s",
+                                  "WHERE properties->>'memory_type' = %s AND properties->>'user_name' = %s")
+            query = query.replace("WHERE properties->>'memory_type' = %s",
+                                  "WHERE properties->>'memory_type' = %s AND properties->>'user_name' = %s")
+            params = [memory_type, self._get_config_value("user_name"), memory_type,
+                      self._get_config_value("user_name"), keep_latest]
+
+        # Simplified implementation - just log the operation
+        logger.info(f"Removing oldest {memory_type} memories, keeping {keep_latest} latest")
+
+    def update_node(self, id: str, fields: dict[str, Any]) -> None:
+        """Update node fields in PolarDB."""
+        if not fields:
+            return
+
+        # Get current properties
+        current_node = self.get_node(id)
+        if not current_node:
+            return
+
+        # Update properties
+        properties = current_node["metadata"].copy()
+        properties.update(fields)
+
+        # Handle embedding separately
+        # Handle embedding update - store in separate column
+        embedding_vector = None
+        if "embedding" in fields:
+            embedding_vector = fields.pop("embedding")
+            if not isinstance(embedding_vector, list):
+                embedding_vector = None
+
+        # Build query based on whether embedding is being updated
+        if embedding_vector is not None:
+            query = f"""
+                UPDATE {self.db_name}_graph."Memory" 
+                SET properties = %s, embedding = %s, updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+            """
+            params = [json.dumps(properties), json.dumps(embedding_vector), id]
+        else:
+            query = f"""
+                UPDATE {self.db_name}_graph."Memory" 
+                SET properties = %s, updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+            """
+            params = [json.dumps(properties), id]
+
+        if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
+            user_name = self._get_config_value("user_name")
+            query += " AND properties::text LIKE %s"
+            params.append(f"%{user_name}%")
+
+        with self.connection.cursor() as cursor:
+            cursor.execute(query, params)
+
+    def delete_node(self, id: str) -> None:
+        """Delete a node from the graph."""
+        query = f"""
+            DELETE FROM {self.db_name}_graph."Memory" 
+            WHERE id = %s
+        """
+        params = [id]
+
+        if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
+            user_name = self._get_config_value("user_name")
+            query += " AND properties::text LIKE %s"
+            params.append(f"%{user_name}%")
+
+        with self.connection.cursor() as cursor:
+            cursor.execute(query, params)
+
+    def add_edge(self, source_id: str, target_id: str, type: str) -> None:
+        """
+        Create an edge from source node to target node.
+        Args:
+            source_id: ID of the source node.
+            target_id: ID of the target node.
+            type: Relationship type (e.g., 'RELATE_TO', 'PARENT').
+        """
+        # 确保边表存在
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {self.db_name}_graph."Edges" (
+                        id SERIAL PRIMARY KEY,
+                        source_id TEXT NOT NULL,
+                        target_id TEXT NOT NULL,
+                        edge_type TEXT NOT NULL,
+                        properties JSONB,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+        except Exception as e:
+            logger.warning(f"Failed to ensure edges table exists: {e}")
+            return
+
+        # 检查源节点和目标节点是否存在
+        source_exists = self.get_node(source_id) is not None
+        target_exists = self.get_node(target_id) is not None
+
+        if not source_exists or not target_exists:
+            logger.warning(f"Cannot create edge: source or target node does not exist")
+            return
+
+        # 添加边
+        query = f"""
+            INSERT INTO {self.db_name}_graph."Edges" (source_id, target_id, edge_type)
+            VALUES (%s, %s, %s)
+            ON CONFLICT DO NOTHING
+        """
+
+        with self.connection.cursor() as cursor:
+            cursor.execute(query, (source_id, target_id, type))
+            logger.info(f"Edge created: {source_id} -[{type}]-> {target_id}")
+
+    def delete_edge(self, source_id: str, target_id: str, type: str) -> None:
+        """
+        Delete a specific edge between two nodes.
+        Args:
+            source_id: ID of the source node.
+            target_id: ID of the target node.
+            type: Relationship type to remove.
+        """
+        query = f"""
+            DELETE FROM {self.db_name}_graph."Edges"
+            WHERE source_id = %s AND target_id = %s AND edge_type = %s
+        """
+
+        with self.connection.cursor() as cursor:
+            cursor.execute(query, (source_id, target_id, type))
+            logger.info(f"Edge deleted: {source_id} -[{type}]-> {target_id}")
+
+    def edge_exists(
+            self, source_id: str, target_id: str, type: str = "ANY", direction: str = "OUTGOING"
+    ) -> bool:
+        """
+        Check if an edge exists between two nodes.
+        Args:
+            source_id: ID of the source node.
+            target_id: ID of the target node.
+            type: Relationship type. Use "ANY" to match any relationship type.
+            direction: Direction of the edge.
+                       Use "OUTGOING" (default), "INCOMING", or "ANY".
+        Returns:
+            True if the edge exists, otherwise False.
+        """
+        where_clauses = []
+        params = []
+
+        if direction == "OUTGOING":
+            where_clauses.append("source_id = %s AND target_id = %s")
+            params.extend([source_id, target_id])
+        elif direction == "INCOMING":
+            where_clauses.append("source_id = %s AND target_id = %s")
+            params.extend([target_id, source_id])
+        elif direction == "ANY":
+            where_clauses.append("((source_id = %s AND target_id = %s) OR (source_id = %s AND target_id = %s))")
+            params.extend([source_id, target_id, target_id, source_id])
+        else:
+            raise ValueError(
+                f"Invalid direction: {direction}. Must be 'OUTGOING', 'INCOMING', or 'ANY'."
+            )
+
+        if type != "ANY":
+            where_clauses.append("edge_type = %s")
+            params.append(type)
+
+        where_clause = " AND ".join(where_clauses)
+
+        query = f"""
+            SELECT 1 FROM {self.db_name}_graph."Edges"
+            WHERE {where_clause}
+            LIMIT 1
+        """
+
+        with self.connection.cursor() as cursor:
+            cursor.execute(query, params)
+            result = cursor.fetchone()
+            return result is not None
+
+    def get_node(self, id: str, **kwargs) -> dict[str, Any] | None:
+        """Retrieve the metadata and memory of a node."""
+        query = f"""
+            SELECT id, properties, embedding
+            FROM {self.db_name}_graph."Memory" 
+            WHERE ag_catalog.agtype_access_operator(properties, '"id"'::agtype) = %s::agtype
+        """
+        # 如果id已经包含引号，则直接使用；否则添加引号
+        if id.startswith('"') and id.endswith('"'):
+            params = [id]
+        else:
+            params = [f'"{id}"']
+
+        if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
+            user_name = self._get_config_value("user_name")
+            query += " AND properties::text LIKE %s"
+            params.append(f"%{user_name}%")
+
+        with self.connection.cursor() as cursor:
+            cursor.execute(query, params)
+            result = cursor.fetchone()
+
+            if result:
+                node_id, properties_json, embedding_json = result
+                # Parse properties from JSONB if it's a string
+                if isinstance(properties_json, str):
+                    try:
+                        properties = json.loads(properties_json)
+                    except (json.JSONDecodeError, TypeError):
+                        logger.warning(f"Failed to parse properties for node {id}")
+                        properties = {}
+                else:
+                    properties = properties_json if properties_json else {}
+                
+                # Parse embedding from JSONB if it exists
+                if embedding_json is not None:
+                    try:
+                        embedding = json.loads(embedding_json) if isinstance(embedding_json, str) else embedding_json
+                        properties["embedding"] = embedding
+                    except (json.JSONDecodeError, TypeError):
+                        logger.warning(f"Failed to parse embedding for node {id}")
+                return self._parse_node({"id": id, "memory": properties.get("memory", ""), "metadata": properties})
+            return None
+
+    def get_nodes(self, ids: list[str], **kwargs) -> list[dict[str, Any]]:
+        """
+        Retrieve the metadata and memory of a list of nodes.
+        Args:
+            ids: List of Node identifier.
+        Returns:
+        list[dict]: Parsed node records containing 'id', 'memory', and 'metadata'.
+
+        Notes:
+            - Assumes all provided IDs are valid and exist.
+            - Returns empty list if input is empty.
+        """
+        if not ids:
+            return []
+
+        # Build WHERE clause using agtype_access_operator like get_node method
+        where_conditions = []
+        params = []
+        
+        for id_val in ids:
+            where_conditions.append("ag_catalog.agtype_access_operator(properties, '\"id\"'::agtype) = %s::agtype")
+            params.append(f'"{id_val}"')
+        
+        where_clause = " OR ".join(where_conditions)
+        
+        query = f"""
+            SELECT id, properties, embedding
+            FROM {self.db_name}_graph."Memory" 
+            WHERE ({where_clause})
+        """
+
+        if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
+            user_name = kwargs.get("cube_name", self._get_config_value("user_name"))
+            query += " AND properties::text LIKE %s"
+            params.append(f"%{user_name}%")
+
+        with self.connection.cursor() as cursor:
+            cursor.execute(query, params)
+            results = cursor.fetchall()
+
+            nodes = []
+            for row in results:
+                node_id, properties_json, embedding_json = row
+                # Parse properties from JSONB if it's a string
+                if isinstance(properties_json, str):
+                    try:
+                        properties = json.loads(properties_json)
+                    except (json.JSONDecodeError, TypeError):
+                        logger.warning(f"Failed to parse properties for node {node_id}")
+                        properties = {}
+                else:
+                    properties = properties_json if properties_json else {}
+                
+                # Parse embedding from JSONB if it exists
+                if embedding_json is not None:
+                    try:
+                        embedding = json.loads(embedding_json) if isinstance(embedding_json, str) else embedding_json
+                        properties["embedding"] = embedding
+                    except (json.JSONDecodeError, TypeError):
+                        logger.warning(f"Failed to parse embedding for node {node_id}")
+                nodes.append(self._parse_node(
+                    {"id": properties.get("id", node_id), "memory": properties.get("memory", ""), "metadata": properties}))
+            return nodes
+
+    def get_edges(self, id: str, type: str = "ANY", direction: str = "ANY") -> list[dict[str, str]]:
+        """
+        Get edges connected to a node, with optional type and direction filter.
+
+        Args:
+            id: Node ID to retrieve edges for.
+            type: Relationship type to match, or 'ANY' to match all.
+            direction: 'OUTGOING', 'INCOMING', or 'ANY'.
+
+        Returns:
+            List of edges:
+            [
+              {"from": "source_id", "to": "target_id", "type": "RELATE"},
+              ...
+            ]
+        """
+        # 由于PolarDB没有完整的图数据库功能，这里使用简化的实现
+        # 在实际应用中，你可能需要创建专门的边表来存储关系
+
+        # 创建一个简单的边表来存储关系（如果不存在的话）
+        try:
+            with self.connection.cursor() as cursor:
+                # 创建边表
+                cursor.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {self.db_name}_graph."Edges" (
+                        id SERIAL PRIMARY KEY,
+                        source_id TEXT NOT NULL,
+                        target_id TEXT NOT NULL,
+                        edge_type TEXT NOT NULL,
+                        properties JSONB,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (source_id) REFERENCES {self.db_name}_graph."Memory"(id),
+                        FOREIGN KEY (target_id) REFERENCES {self.db_name}_graph."Memory"(id)
+                    );
+                """)
+
+                # 创建索引
+                cursor.execute(f"""
+                    CREATE INDEX IF NOT EXISTS idx_edges_source 
+                    ON {self.db_name}_graph."Edges" (source_id);
+                """)
+                cursor.execute(f"""
+                    CREATE INDEX IF NOT EXISTS idx_edges_target 
+                    ON {self.db_name}_graph."Edges" (target_id);
+                """)
+                cursor.execute(f"""
+                    CREATE INDEX IF NOT EXISTS idx_edges_type 
+                    ON {self.db_name}_graph."Edges" (edge_type);
+                """)
+        except Exception as e:
+            logger.warning(f"Failed to create edges table: {e}")
+
+        # 查询边
+        where_clauses = []
+        params = [id]
+
+        if type != "ANY":
+            where_clauses.append("edge_type = %s")
+            params.append(type)
+
+        if direction == "OUTGOING":
+            where_clauses.append("source_id = %s")
+        elif direction == "INCOMING":
+            where_clauses.append("target_id = %s")
+        else:  # ANY
+            where_clauses.append("(source_id = %s OR target_id = %s)")
+            params.append(id)  # 添加第二个参数用于ANY方向
+
+        where_clause = " AND ".join(where_clauses)
+
+        query = f"""
+            SELECT source_id, target_id, edge_type
+            FROM {self.db_name}_graph."Edges"
+            WHERE {where_clause}
+        """
+
+        with self.connection.cursor() as cursor:
+            cursor.execute(query, params)
+            results = cursor.fetchall()
+
+            edges = []
+            for row in results:
+                source_id, target_id, edge_type = row
+                edges.append({
+                    "from": source_id,
+                    "to": target_id,
+                    "type": edge_type
+                })
+            return edges
+
+    def get_neighbors(
+            self, id: str, type: str, direction: Literal["in", "out", "both"] = "out"
+    ) -> list[str]:
+        """Get connected node IDs in a specific direction and relationship type."""
+        raise NotImplementedError
+
+    def get_neighbors_by_tag(
+            self,
+            tags: list[str],
+            exclude_ids: list[str],
+            top_k: int = 5,
+            min_overlap: int = 1,
+    ) -> list[dict[str, Any]]:
+        """
+        Find top-K neighbor nodes with maximum tag overlap.
+
+        Args:
+            tags: The list of tags to match.
+            exclude_ids: Node IDs to exclude (e.g., local cluster).
+            top_k: Max number of neighbors to return.
+            min_overlap: Minimum number of overlapping tags required.
+
+        Returns:
+            List of dicts with node details and overlap count.
+        """
+        # 构建查询条件
+        where_clauses = []
+        params = []
+
+        # 排除指定的ID
+        if exclude_ids:
+            placeholders = ','.join(['%s'] * len(exclude_ids))
+            where_clauses.append(f"id NOT IN ({placeholders})")
+            params.extend(exclude_ids)
+
+        # 状态过滤
+        where_clauses.append("properties->>'status' = %s")
+        params.append('activated')
+
+        # 类型过滤
+        where_clauses.append("properties->>'type' != %s")
+        params.append('reasoning')
+
+        where_clauses.append("properties->>'memory_type' != %s")
+        params.append('WorkingMemory')
+
+        # 用户过滤
+        if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
+            where_clauses.append("properties->>'user_name' = %s")
+            params.append(self._get_config_value("user_name"))
+
+        where_clause = " AND ".join(where_clauses)
+
+        # 获取所有候选节点
+        query = f"""
+            SELECT id, properties, embedding
+            FROM {self.db_name}_graph."Memory" 
+            WHERE {where_clause}
+        """
+
+        with self.connection.cursor() as cursor:
+            cursor.execute(query, params)
+            results = cursor.fetchall()
+
+            nodes_with_overlap = []
+            for row in results:
+                node_id, properties_json, embedding_json = row
+                properties = properties_json if properties_json else {}
+
+                # 解析embedding
+                if embedding_json is not None:
+                    try:
+                        embedding = json.loads(embedding_json) if isinstance(embedding_json, str) else embedding_json
+                        properties["embedding"] = embedding
+                    except (json.JSONDecodeError, TypeError):
+                        logger.warning(f"Failed to parse embedding for node {node_id}")
+
+                # 计算标签重叠
+                node_tags = properties.get("tags", [])
+                if isinstance(node_tags, str):
+                    try:
+                        node_tags = json.loads(node_tags)
+                    except (json.JSONDecodeError, TypeError):
+                        node_tags = []
+
+                overlap_tags = [tag for tag in tags if tag in node_tags]
+                overlap_count = len(overlap_tags)
+
+                if overlap_count >= min_overlap:
+                    node_data = self._parse_node({
+                        "id": properties.get("id", node_id),
+                        "memory": properties.get("memory", ""),
+                        "metadata": properties
+                    })
+                    nodes_with_overlap.append((node_data, overlap_count))
+
+            # 按重叠数量排序并返回前top_k个
+            nodes_with_overlap.sort(key=lambda x: x[1], reverse=True)
+            return [node for node, _ in nodes_with_overlap[:top_k]]
+
+    def get_children_with_embeddings(self, id: str) -> list[dict[str, Any]]:
+        """Get children nodes with their embeddings."""
+        # 查询PARENT关系的子节点
+        query = f"""
+            SELECT m.id, m.properties, m.embedding
+            FROM {self.db_name}_graph."Memory" m
+            JOIN {self.db_name}_graph."Edges" e ON m.id = e.target_id
+            WHERE e.source_id = %s AND e.edge_type = 'PARENT'
+        """
+        params = [id]
+
+        # 添加用户过滤
+        if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
+            query += " AND m.properties->>'user_name' = %s"
+            params.append(self._get_config_value("user_name"))
+
+        with self.connection.cursor() as cursor:
+            cursor.execute(query, params)
+            results = cursor.fetchall()
+
+            children = []
+            for row in results:
+                child_id, properties_json, embedding_json = row
+                properties = properties_json if properties_json else {}
+
+                # 解析embedding
+                embedding = None
+                if embedding_json is not None:
+                    try:
+                        embedding = json.loads(embedding_json) if isinstance(embedding_json, str) else embedding_json
+                    except (json.JSONDecodeError, TypeError):
+                        logger.warning(f"Failed to parse embedding for child node {child_id}")
+
+                children.append({
+                    "id": child_id,
+                    "embedding": embedding,
+                    "memory": properties.get("memory", "")
+                })
+
+            return children
+
+    def get_path(self, source_id: str, target_id: str, max_depth: int = 3) -> list[str]:
+        """Get the path of nodes from source to target within a limited depth."""
+        raise NotImplementedError
+
+    def get_subgraph(
+            self, center_id: str, depth: int = 2, center_status: str = "activated"
+    ) -> dict[str, Any]:
+        """
+        Retrieve a local subgraph centered at a given node.
+        Args:
+            center_id: The ID of the center node.
+            depth: The hop distance for neighbors.
+            center_status: Required status for center node.
+        Returns:
+            {
+                "core_node": {...},
+                "neighbors": [...],
+                "edges": [...]
+            }
+        """
+        # 获取中心节点
+        core_node = self.get_node(center_id)
+        if not core_node:
+            return {"core_node": None, "neighbors": [], "edges": []}
+
+        # 检查中心节点状态
+        if center_status and core_node.get("metadata", {}).get("status") != center_status:
+            return {"core_node": None, "neighbors": [], "edges": []}
+
+        # 获取邻居节点（简化实现，只获取直接连接的节点）
+        edges = self.get_edges(center_id, direction="ANY")
+        neighbor_ids = set()
+        for edge in edges:
+            if edge["from"] == center_id:
+                neighbor_ids.add(edge["to"])
+            else:
+                neighbor_ids.add(edge["from"])
+
+        # 获取邻居节点详情
+        neighbors = []
+        if neighbor_ids:
+            neighbors = self.get_nodes(list(neighbor_ids))
+
+        return {"core_node": core_node, "neighbors": neighbors, "edges": edges}
+
+    def get_context_chain(self, id: str, type: str = "FOLLOWS") -> list[str]:
+        """Get the ordered context chain starting from a node."""
+        raise NotImplementedError
+
+    def search_by_embedding(
+            self,
+            vector: list[float],
+            top_k: int = 5,
+            scope: str | None = None,
+            status: str | None = None,
+            threshold: float | None = None,
+            search_filter: dict | None = None,
+            **kwargs,
+    ) -> list[dict]:
+        """
+        Retrieve node IDs based on vector similarity using PostgreSQL vector operations.
+        """
+        # Build WHERE clause dynamically like nebular.py
+        where_clauses = []
+        if scope:
+            where_clauses.append(f"ag_catalog.agtype_access_operator(properties, '\"memory_type\"'::agtype) = '\"{scope}\"'::agtype")
+        if status:
+            where_clauses.append(f"ag_catalog.agtype_access_operator(properties, '\"status\"'::agtype) = '\"{status}\"'::agtype")
+        else:
+            where_clauses.append("ag_catalog.agtype_access_operator(properties, '\"status\"'::agtype) = '\"activated\"'::agtype")
+        where_clauses.append("embedding is not null")
+        # Add user_name filter like nebular.py
+        user_name = self._get_config_value("user_name")
+        if not self.config.use_multi_db and user_name:
+            if kwargs.get("cube_name"):
+                where_clauses.append(f"ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = '\"{kwargs['cube_name']}\"'::agtype")
+            else:
+                where_clauses.append(f"ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = '\"{user_name}\"'::agtype")
+        
+        # Add search_filter conditions like nebular.py
+        if search_filter:
+            for key, value in search_filter.items():
+                if isinstance(value, str):
+                    where_clauses.append(f"ag_catalog.agtype_access_operator(properties, '\"{key}\"'::agtype) = '\"{value}\"'::agtype")
+                else:
+                    where_clauses.append(f"ag_catalog.agtype_access_operator(properties, '\"{key}\"'::agtype) = {value}::agtype")
+        
+        where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+        
+        # Keep original simple query structure but add dynamic WHERE clause
+        query = f"""
+                    WITH t AS (
+                        SELECT id,
+                               properties,
+                               timeline,
+                               embedding,
+                               ag_catalog.agtype_access_operator(properties, '"id"'::agtype) AS old_id,
+                               (1 - (embedding <=> %s::vector(1024))) AS scope
+                        FROM memtensor_memos_graph."Memory"
+                        {where_clause}
+                        ORDER BY scope DESC
+                        LIMIT {top_k}
+                    )
+                    SELECT *
+                    FROM t
+                    WHERE scope > 0.1;
+                """
+        params = [vector]
+        print(where_clause)
+        with self.connection.cursor() as cursor:
+            cursor.execute(query, params)
+            results = cursor.fetchall()
+            output = []
+            for row in results:
+                polarId = row[0]  # id
+                properties = row[1]  # properties
+                embedding = row[3]  # embedding
+                oldId = row[4]  # old_id
+                score = row[5]  # scope
+                id_val = str(oldId)
+                score_val = float(score)
+                score_val = (score_val + 1) / 2  # align to neo4j, Normalized Cosine Score
+                if threshold is None or score_val >= threshold:
+                    output.append({"id": id_val, "score": score_val})
+            return output[:top_k]
+
+    def get_by_metadata(self, filters: list[dict[str, Any]]) -> list[str]:
+        """Retrieve node IDs that match given metadata filters."""
+        where_clauses = []
+        params = []
+
+        for i, f in enumerate(filters):
+            field = f["field"]
+            op = f.get("op", "=")
+            value = f["value"]
+
+            if op == "=":
+                where_clauses.append(f"properties->>'{field}' = %s")
+                params.append(value)
+            elif op == "in":
+                placeholders = ','.join(['%s'] * len(value))
+                where_clauses.append(f"properties->>'{field}' IN ({placeholders})")
+                params.extend(value)
+            elif op == "contains":
+                where_clauses.append(f"properties->'{field}' ? %s")
+                params.append(value)
+            elif op == "starts_with":
+                where_clauses.append(f"properties->>'{field}' LIKE %s")
+                params.append(f"{value}%")
+            elif op == "ends_with":
+                where_clauses.append(f"properties->>'{field}' LIKE %s")
+                params.append(f"%{value}")
+            elif op in [">", ">=", "<", "<="]:
+                where_clauses.append(f"(properties->>'{field}')::numeric {op} %s")
+                params.append(value)
+            else:
+                raise ValueError(f"Unsupported operator: {op}")
+
+        if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
+            where_clauses.append("properties->>'user_name' = %s")
+            params.append(self._get_config_value("user_name"))
+
+        where_str = " AND ".join(where_clauses)
+        query = f"SELECT properties->>'id' as id FROM {self.db_name}_graph.\"Memory\" WHERE {where_str}"
+
+        with self.connection.cursor() as cursor:
+            cursor.execute(query, params)
+            results = cursor.fetchall()
+            return [row[0] for row in results if row[0]]
+
+    def get_grouped_counts(
+            self,
+            group_fields: list[str],
+            where_clause: str = "",
+            params: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Count nodes grouped by any fields."""
+        if not group_fields:
+            raise ValueError("group_fields cannot be empty")
+
+        final_params = params.copy() if params else {}
+
+        if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
+            user_name = self._get_config_value("user_name")
+            user_clause = f"properties::text LIKE '%{user_name}%'"
+            if where_clause:
+                where_clause = where_clause.strip()
+                if where_clause.upper().startswith("WHERE"):
+                    where_clause += f" AND {user_clause}"
+                else:
+                    where_clause = f"WHERE {where_clause} AND {user_clause}"
+            else:
+                where_clause = f"WHERE {user_clause}"
+
+        # Use text-based queries to avoid agtype issues
+        group_fields_sql = ", ".join([f"properties::text as {field}" for field in group_fields])
+        group_by_sql = ", ".join([f"properties::text" for field in group_fields])
+        query = f"""
+            SELECT {group_fields_sql}, COUNT(*) as count
+            FROM {self.db_name}_graph."Memory"
+            {where_clause}
+            GROUP BY {group_by_sql}
+        """
+
+        with self.connection.cursor() as cursor:
+            cursor.execute(query)
+            results = cursor.fetchall()
+
+            # Simplified return - just return basic counts
+            return [{"memory_type": "LongTermMemory", "status": "activated", "count": len(results)}]
+
+    def deduplicate_nodes(self) -> None:
+        """Deduplicate redundant or semantically similar nodes."""
+        raise NotImplementedError
+
+    def detect_conflicts(self) -> list[tuple[str, str]]:
+        """Detect conflicting nodes based on logical or semantic inconsistency."""
+        raise NotImplementedError
+
+    def merge_nodes(self, id1: str, id2: str) -> str:
+        """Merge two similar or duplicate nodes into one."""
+        raise NotImplementedError
+
+    def clear(self) -> None:
+        """Clear the entire graph."""
+        try:
+            with self.connection.cursor() as cursor:
+                # First check if the graph exists
+                cursor.execute(f"""
+                    SELECT EXISTS (
+                        SELECT 1 FROM information_schema.tables 
+                        WHERE table_schema = '{self.db_name}_graph' 
+                        AND table_name = 'Memory'
+                    )
+                """)
+                graph_exists = cursor.fetchone()[0]
+
+                if not graph_exists:
+                    logger.info(f"Graph '{self.db_name}_graph' does not exist, nothing to clear.")
+                    return
+
+                if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
+                    cursor.execute(f"""
+                        DELETE FROM {self.db_name}_graph."Memory" 
+                        WHERE properties::text LIKE %s
+                    """, (f"%{self._get_config_value('user_name')}%",))
+                else:
+                    cursor.execute(f'DELETE FROM {self.db_name}_graph."Memory"')
+
+                logger.info(f"Cleared all nodes from graph '{self.db_name}_graph'.")
+        except Exception as e:
+            logger.warning(f"Failed to clear graph '{self.db_name}_graph': {e}")
+            # Don't raise the exception, just log it as a warning
+
+    def export_graph(self, **kwargs) -> dict[str, Any]:
+        """Export all graph nodes and edges in a structured form."""
+        with self.connection.cursor() as cursor:
+            # Export nodes
+            node_query = f'SELECT id, properties FROM {self.db_name}_graph."Memory"'
+            params = []
+
+            if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
+                user_name = self._get_config_value("user_name")
+                node_query += f" WHERE properties::text LIKE '%{user_name}%'"
+
+            cursor.execute(node_query)
+            node_results = cursor.fetchall()
+            nodes = []
+            for row in node_results:
+                node_id, properties_json = row
+                # properties_json is already a dict from psycopg2
+                properties = properties_json if properties_json else {}
+                nodes.append(self._parse_node(
+                    {"id": properties.get("id", ""), "memory": properties.get("memory", ""), "metadata": properties}))
+
+            # Export edges (simplified - would need more complex Cypher query for full edge export)
+            edges = []
+
+            return {"nodes": nodes, "edges": edges}
+
+    def import_graph(self, data: dict[str, Any]) -> None:
+        """Import the entire graph from a serialized dictionary."""
+        with self.connection.cursor() as cursor:
+            for node in data.get("nodes", []):
+                id, memory, metadata = _compose_node(node)
+
+                if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
+                    metadata["user_name"] = self._get_config_value("user_name")
+
+                metadata = _prepare_node_metadata(metadata)
+
+                # Generate embedding if not provided
+                if "embedding" not in metadata or not metadata["embedding"]:
+                    metadata["embedding"] = generate_vector(self._get_config_value("embedding_dimension", 1024))
+
+                self.add_node(id, memory, metadata)
+
+            # Import edges
+            for edge in data.get("edges", []):
+                self.add_edge(edge["source"], edge["target"], edge["type"])
+
+    def get_all_memory_items(self, scope: str, **kwargs) -> list[dict]:
+        """Retrieve all memory items of a specific memory_type."""
+        if scope not in {"WorkingMemory", "LongTermMemory", "UserMemory", "OuterMemory"}:
+            raise ValueError(f"Unsupported memory type scope: {scope}")
+
+        query = f"""
+            SELECT id, properties 
+            FROM {self.db_name}_graph."Memory" 
+            WHERE properties->>'memory_type' = %s
+        """
+        params = [scope]
+
+        if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
+            query += " AND properties->>'user_name' = %s"
+            params.append(self._get_config_value("user_name"))
+
+        with self.connection.cursor() as cursor:
+            cursor.execute(query, params)
+            results = cursor.fetchall()
+
+            nodes = []
+            for row in results:
+                node_id, properties_json = row
+                # properties_json is already a dict from psycopg2
+                properties = properties_json if properties_json else {}
+                nodes.append(self._parse_node(
+                    {"id": properties.get("id", ""), "memory": properties.get("memory", ""), "metadata": properties}))
+            return nodes
+
+    def get_structure_optimization_candidates(self, scope: str, **kwargs) -> list[dict]:
+        """Find nodes that are likely candidates for structure optimization."""
+        # This would require more complex graph traversal queries
+        # For now, return nodes without parent relationships
+        query = f"""
+            SELECT id, properties 
+            FROM {self.db_name}_graph."Memory" 
+            WHERE properties->>'memory_type' = %s 
+              AND properties->>'status' = 'activated'
+        """
+        params = [scope]
+
+        if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
+            query += " AND properties->>'user_name' = %s"
+            params.append(self._get_config_value("user_name"))
+
+        with self.connection.cursor() as cursor:
+            cursor.execute(query, params)
+            results = cursor.fetchall()
+
+            nodes = []
+            for row in results:
+                node_id, properties_json = row
+                # properties_json is already a dict from psycopg2
+                properties = properties_json if properties_json else {}
+                nodes.append(self._parse_node(
+                    {"id": properties.get("id", ""), "memory": properties.get("memory", ""), "metadata": properties}))
+            return nodes
+
+    def drop_database(self) -> None:
+        """Permanently delete the entire graph this instance is using."""
+        if self._get_config_value("use_multi_db", True):
+            with self.connection.cursor() as cursor:
+                cursor.execute(f"SELECT drop_graph('{self.db_name}_graph', true)")
+                print(f"Graph '{self.db_name}_graph' has been dropped.")
+        else:
+            raise ValueError(
+                f"Refusing to drop graph '{self.db_name}_graph' in "
+                f"Shared Database Multi-Tenant mode"
+            )
+
+    def _parse_node(self, node_data: dict[str, Any]) -> dict[str, Any]:
+        """Parse node data from database format to standard format."""
+        node = node_data.copy()
+
+        # Convert datetime to string
+        for time_field in ("created_at", "updated_at"):
+            if time_field in node and hasattr(node[time_field], "isoformat"):
+                node[time_field] = node[time_field].isoformat()
+
+        # Remove user_name from output
+        node.pop("user_name", None)
+
+        # 不再对sources和usage字段进行反序列化，保持List[str]格式
+
+        return {"id": node.pop("id"), "memory": node.pop("memory", ""), "metadata": node}
+
+    def __del__(self):
+        """Close database connection when object is destroyed."""
+        if hasattr(self, 'connection') and self.connection:
+            self.connection.close()
+
+    #deprecated
+    def add_node_old(conn, id: str, memory: str, metadata: dict, graph_name=None):
+        """
+        添加单个节点到图数据库
+
+        Args:
+            conn: 数据库连接
+            id: 节点ID
+            memory: 内存内容
+            metadata: 元数据字典
+            graph_name: 图名称，可选
+        """
+        # 使用传入的graph_name或默认值
+        if graph_name is None:
+            graph_name = GRAPH_NAME
+
+        try:
+            # 先提取 embedding（在清理properties之前）
+            embedding = find_embedding(metadata)
+            field_name = detect_embedding_field(embedding)
+            vector_value = convert_to_vector(embedding) if field_name else None
+
+            # 提取 properties
+            properties = metadata.copy()
+            properties = clean_properties(properties)
+            properties["id"] = id
+            properties["memory"] = memory
+
+            with conn.cursor() as cursor:
+                # 先删除现有记录（如果存在）
+                delete_sql = f"""
+                    DELETE FROM "Memory" 
+                    WHERE id = ag_catalog._make_graph_id('{graph_name}'::name, 'Memory'::name, %s::text::cstring);
+                """
+                cursor.execute(delete_sql, (id,))
+
+                # 然后插入新记录
+                if field_name and vector_value:
+                    insert_sql = f"""
+                                       INSERT INTO "Memory" (id, properties, {field_name})
+                                       VALUES (
+                                         ag_catalog._make_graph_id('{graph_name}'::name, 'Memory'::name, %s::text::cstring),
+                                         %s::text::agtype,
+                                         %s::vector
+                                       );
+                                       """
+                    cursor.execute(insert_sql, (id, Json(properties), vector_value))
+                    print(f"✅ 成功插入/更新: {id} ({field_name})")
+                else:
+                    insert_sql = f"""
+                                        INSERT INTO "Memory" (id, properties)
+                                        VALUES (
+                                          ag_catalog._make_graph_id('{graph_name}'::name, 'Memory'::name, %s::text::cstring),
+                                          %s::text::agtype
+                                        );
+                                        """
+                    cursor.execute(insert_sql, (id, Json(properties)))
+                    print(f"✅ 成功插入/更新(无向量): {id}")
+
+            conn.commit()
+            return True
+
+        except Exception as e:
+            conn.rollback()
+            print(f"❌ 插入失败 (ID: {id}): {e}")
+            return False
+
+    def add_node(self, id: str, memory: str, metadata: dict[str, Any]) -> None:
+        """Add a memory node to the graph."""
+        # user_name 从 metadata 中获取，如果不存在则从配置中获取
+        if "user_name" not in metadata:
+            if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
+                metadata["user_name"] = self._get_config_value("user_name")
+
+        # Safely process metadata
+        metadata = _prepare_node_metadata(metadata)
+
+        # Merge node and set metadata
+        created_at = metadata.pop("created_at", datetime.utcnow().isoformat())
+        updated_at = metadata.pop("updated_at", datetime.utcnow().isoformat())
+
+        # Prepare properties
+        properties = {
+            "id": id,
+            "memory": memory,
+            "created_at": created_at,
+            "updated_at": updated_at,
+            **metadata
+        }
+
+        # Generate embedding if not provided
+        if "embedding" not in properties or not properties["embedding"]:
+            properties["embedding"] = generate_vector(self._get_config_value("embedding_dimension", 1024))
+
+        # serialization - 处理sources和usage字段的JSON序列化
+        for field_name in ["sources", "usage"]:
+            if field_name in properties and properties[field_name]:
+                if isinstance(properties[field_name], list):
+                    for idx in range(len(properties[field_name])):
+                        # 只有当元素不是字符串时才进行序列化
+                        if not isinstance(properties[field_name][idx], str):
+                            properties[field_name][idx] = json.dumps(properties[field_name][idx])
+                elif isinstance(properties[field_name], str):
+                    # 如果已经是字符串，保持不变
+                    pass
+
+        # Extract embedding for separate column
+        embedding_vector = properties.pop("embedding", [])
+        if not isinstance(embedding_vector, list):
+            embedding_vector = []
+
+        # 根据embedding维度选择正确的列名
+        embedding_column = "embedding"  # 默认列
+        if len(embedding_vector) == 3072:
+            embedding_column = "embedding_3072"
+        elif len(embedding_vector) == 1024:
+            embedding_column = "embedding"
+        elif len(embedding_vector) == 768:
+            embedding_column = "embedding_768"
+
+        with self.connection.cursor() as cursor:
+            # 先删除现有记录（如果存在）
+            delete_query = f"""
+                DELETE FROM {self.db_name}_graph."Memory" 
+                WHERE id = ag_catalog._make_graph_id('{self.db_name}_graph'::name, 'Memory'::name, %s::text::cstring)
+            """
+            cursor.execute(delete_query, (id,))
+
+            # 然后插入新记录
+            if embedding_vector:
+                insert_query = f"""
+                    INSERT INTO {self.db_name}_graph."Memory"(id, properties, {embedding_column})
+                    VALUES (
+                        ag_catalog._make_graph_id('{self.db_name}_graph'::name, 'Memory'::name, %s::text::cstring),
+                        %s,
+                        %s
+                    )
+                """
+                cursor.execute(insert_query, (id, json.dumps(properties), json.dumps(embedding_vector)))
+            else:
+                insert_query = f"""
+                    INSERT INTO {self.db_name}_graph."Memory"(id, properties)
+                    VALUES (
+                        ag_catalog._make_graph_id('{self.db_name}_graph'::name, 'Memory'::name, %s::text::cstring),
+                        %s
+                    )
+                """
+                cursor.execute(insert_query, (id, json.dumps(properties)))
+            logger.info(f"Added node {id} to graph '{self.db_name}_graph'.")
