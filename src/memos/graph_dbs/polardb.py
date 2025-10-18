@@ -259,23 +259,25 @@ class PolarDBGraphDB(BaseGraphDB):
         except Exception as e:
             logger.warning(f"Failed to create indexes: {e}")
 
-    def get_memory_count(self, memory_type: str) -> int:
+    def get_memory_count(self, memory_type: str, user_name: str | None = None) -> int:
         """Get count of memory nodes by type."""
+        user_name = user_name if user_name else self._get_config_value("user_name")
         query = f"""
             SELECT COUNT(*) 
             FROM {self.db_name}_graph."Memory" 
             WHERE properties->>'memory_type' = %s
         """
-        params = [memory_type]
+        query += "\nAND properties->>'user_name' = %s"
+        params = [memory_type, user_name]
 
-        if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
-            query += " AND properties->>'user_name' = %s"
-            params.append(self._get_config_value("user_name"))
-
-        with self.connection.cursor() as cursor:
-            cursor.execute(query, params)
-            result = cursor.fetchone()
-            return result[0] if result else 0
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(query, params)
+                result = cursor.fetchone()
+                return result[0] if result else 0
+        except Exception as e:
+            logger.error(f"[get_memory_count] Failed: {e}")
+            return -1
 
     def node_not_exist(self, scope: str) -> int:
         """Check if a node with given scope exists."""
