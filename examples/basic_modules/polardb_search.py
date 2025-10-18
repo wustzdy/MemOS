@@ -139,6 +139,10 @@ def searchVector(db_name: str, vectorStr: list[float]):
     isNodeExist = graph.node_not_exist('UserMemory', 'memos07ba3d044650474c839e721f3a69d38a')
     print("user isNodeExist:", isNodeExist)
 
+    # 6,删除跳过多少行之后的数据remove_oldest_memory
+    remove_oldest_memory = graph.remove_oldest_memory('UserMemory', 2,'memos07ba3d044650474c839e721f3a69d38a')
+    print("user remove_oldest_memory:", remove_oldest_memory)
+
 
 if __name__ == "__main__":
     # handler_node_edge(db_name="shared-tree-textual-memory-product-0731",type="node")

@@ -301,34 +301,55 @@ class PolarDBGraphDB(BaseGraphDB):
             logger.error(f"[node_not_exist] Query failed: {e}", exc_info=True)
             raise
 
-    def remove_oldest_memory(self, memory_type: str, keep_latest: int) -> None:
+    def remove_oldest_memory(self, memory_type: str, keep_latest: int, user_name: str | None = None) -> None:
         """
         Remove all WorkingMemory nodes except the latest `keep_latest` entries.
-        """
-        query = f"""
-            DELETE FROM {self.db_name}_graph."Memory" 
-            WHERE properties->>'memory_type' = %s 
-            AND id NOT IN (
-                SELECT id FROM (
-                    SELECT id FROM {self.db_name}_graph."Memory" 
-                    WHERE properties->>'memory_type' = %s
-                    ORDER BY (properties->>'updated_at')::timestamp DESC 
-                    LIMIT %s
-                ) AS keep_ids
-            )
-        """
-        params = [memory_type, memory_type, keep_latest]
 
-        if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
-            query = query.replace("WHERE properties->>'memory_type' = %s",
-                                  "WHERE properties->>'memory_type' = %s AND properties->>'user_name' = %s")
-            query = query.replace("WHERE properties->>'memory_type' = %s",
-                                  "WHERE properties->>'memory_type' = %s AND properties->>'user_name' = %s")
-            params = [memory_type, self._get_config_value("user_name"), memory_type,
-                      self._get_config_value("user_name"), keep_latest]
+        Args:
+            memory_type (str): Memory type (e.g., 'WorkingMemory', 'LongTermMemory').
+            keep_latest (int): Number of latest WorkingMemory entries to keep.
+            user_name (str, optional): User name for filtering in non-multi-db mode
+        """
+        user_name = user_name if user_name else self._get_config_value("user_name")
+        
+        # 使用真正的 OFFSET 逻辑，与 nebular.py 保持一致
+        # 先找到要删除的节点ID，然后删除它们
+        select_query = f"""
+            SELECT id FROM {self.db_name}_graph."Memory" 
+            WHERE ag_catalog.agtype_access_operator(properties, '"memory_type"'::agtype) = %s::agtype
+            AND ag_catalog.agtype_access_operator(properties, '"user_name"'::agtype) = %s::agtype
+            ORDER BY ag_catalog.agtype_access_operator(properties, '"updated_at"'::agtype) DESC 
+            OFFSET %s
+        """
+        select_params = [f'"{memory_type}"', f'"{user_name}"', keep_latest]
+        print(f"[remove_oldest_memory] Select query: {select_query}")
+        print(f"[remove_oldest_memory] Select params: {select_params}")
+        
+        try:
+            with self.connection.cursor() as cursor:
+                # 执行查询获取要删除的ID列表
+                cursor.execute(select_query, select_params)
+                ids_to_delete = [row[0] for row in cursor.fetchall()]
 
-        # Simplified implementation - just log the operation
-        logger.info(f"Removing oldest {memory_type} memories, keeping {keep_latest} latest")
+                if not ids_to_delete:
+                    logger.info(f"No {memory_type} memories to remove for user {user_name}")
+                    return
+
+                # 构建删除查询
+                placeholders = ','.join(['%s'] * len(ids_to_delete))
+                delete_query = f"""
+                    DELETE FROM {self.db_name}_graph."Memory"
+                    WHERE id IN ({placeholders})
+                """
+                delete_params = ids_to_delete
+
+                # 执行删除
+                cursor.execute(delete_query, delete_params)
+                deleted_count = cursor.rowcount
+                logger.info(f"Removed {deleted_count} oldest {memory_type} memories, keeping {keep_latest} latest for user {user_name}")
+        except Exception as e:
+            logger.error(f"[remove_oldest_memory] Failed: {e}", exc_info=True)
+            raise
 
     def update_node(self, id: str, fields: dict[str, Any]) -> None:
         """Update node fields in PolarDB."""
