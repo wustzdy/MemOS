@@ -416,21 +416,31 @@ class PolarDBGraphDB(BaseGraphDB):
             logger.error(f"[update_node] Failed to update node '{id}': {e}", exc_info=True)
             raise
 
-    def delete_node(self, id: str) -> None:
-        """Delete a node from the graph."""
+    def delete_node(self, id: str, user_name: str | None = None) -> None:
+        """
+        Delete a node from the graph.
+        Args:
+            id: Node identifier to delete.
+            user_name (str, optional): User name for filtering in non-multi-db mode
+        """
         query = f"""
             DELETE FROM {self.db_name}_graph."Memory" 
-            WHERE id = %s
+            WHERE ag_catalog.agtype_access_operator(properties, '"id"'::agtype) = %s::agtype
         """
-        params = [id]
+        params = [f'"{id}"']
 
-        if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
-            user_name = self._get_config_value("user_name")
-            query += " AND properties::text LIKE %s"
-            params.append(f"%{user_name}%")
+        # 只有在提供了 user_name 参数时才添加用户过滤
+        if user_name is not None:
+            query += "\nAND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
+            params.append(f'"{user_name}"')
 
-        with self.connection.cursor() as cursor:
-            cursor.execute(query, params)
+        print(f"[delete_node] query: {query}, params: {params}")
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(query, params)
+        except Exception as e:
+            logger.error(f"[delete_node] Failed to delete node '{id}': {e}", exc_info=True)
+            raise
 
     def add_edge(self, source_id: str, target_id: str, type: str) -> None:
         """

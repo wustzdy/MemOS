@@ -143,8 +143,13 @@ def searchVector(db_name: str, vectorStr: list[float]):
     # remove_oldest_memory = graph.remove_oldest_memory('UserMemory', 2,'memos07ba3d044650474c839e721f3a69d38a')
     # print("user remove_oldest_memory:", remove_oldest_memory)
 
+    # 7，更新 update_node
     isNodeExist = graph.update_node(id="bb079c5b-1937-4125-a9e5-55d4abe6c95d", fields={"status": "inactived","tags": ["yoga", "travel11111111", "local studios5667888"]})
     print("user update_node:", isNodeExist)
+
+    # 8，删除 delete_node
+    isNodeDeleted = graph.delete_node(id="bb079c5b-1937-4125-a9e5-55d4abe6c95d", user_name='memosbfb3fb32032b4077a641404dc48739cd')
+    print("user isNodeDeleted:", isNodeDeleted)
 
 
 if __name__ == "__main__":
