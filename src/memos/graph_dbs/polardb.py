@@ -265,10 +265,10 @@ class PolarDBGraphDB(BaseGraphDB):
         query = f"""
             SELECT COUNT(*) 
             FROM {self.db_name}_graph."Memory" 
-            WHERE properties->>'memory_type' = %s
+            WHERE ag_catalog.agtype_access_operator(properties, '"memory_type"'::agtype) = %s::agtype
         """
-        query += "\nAND properties->>'user_name' = %s"
-        params = [memory_type, user_name]
+        query += "\nAND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
+        params = [f'"{memory_type}"', f'"{user_name}"']
 
         try:
             with self.connection.cursor() as cursor:
