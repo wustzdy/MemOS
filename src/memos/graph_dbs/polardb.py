@@ -442,14 +442,86 @@ class PolarDBGraphDB(BaseGraphDB):
             logger.error(f"[delete_node] Failed to delete node '{id}': {e}", exc_info=True)
             raise
 
-    def add_edge(self, source_id: str, target_id: str, type: str) -> None:
+    def create_extension(self):
+        extensions = [
+            ("polar_age", "图引擎"),
+            ("vector", "向量引擎")
+        ]
+        try:
+            with self.connection.cursor() as cursor:
+                # 确保在正确的数据库上下文中
+                cursor.execute(f"SELECT current_database();")
+                current_db = cursor.fetchone()[0]
+                print(f"当前数据库上下文: {current_db}")
+                
+                for ext_name, ext_desc in extensions:
+                    try:
+                        cursor.execute(f"create extension if not exists {ext_name};")
+                        print(f"✅ Extension '{ext_name}' ({ext_desc}) ensured.")
+                    except Exception as e:
+                        if "already exists" in str(e):
+                            print(f"ℹ️ Extension '{ext_name}' ({ext_desc}) already exists.")
+                        else:
+                            print(f"⚠️ Failed to create extension '{ext_name}' ({ext_desc}): {e}")
+                            logger.error(f"Failed to create extension '{ext_name}': {e}", exc_info=True)
+        except Exception as e:
+            print(f"⚠️ Failed to access database context: {e}")
+            logger.error(f"Failed to access database context: {e}", exc_info=True)
+
+    def create_graph(self):
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(f"""
+                    SELECT COUNT(*) FROM ag_catalog.ag_graph 
+                    WHERE name = '{self.db_name}';
+                """)
+                graph_exists = cursor.fetchone()[0] > 0
+                
+                if graph_exists:
+                    print(f"ℹ️ Graph '{self.db_name}' already exists.")
+                else:
+                    cursor.execute(f"select create_graph('{self.db_name}');")
+                    print(f"✅ Graph database '{self.db_name}' created.")
+        except Exception as e:
+            print(f"⚠️ Failed to create graph '{self.db_name}': {e}")
+            logger.error(f"Failed to create graph '{self.db_name}': {e}", exc_info=True)
+
+    def create_edge(self):
+        """创建所有有效的边类型，如果不存在的话"""
+        VALID_REL_TYPES = {
+            "AGGREGATE_TO",
+            "FOLLOWS",
+            "INFERS",
+            "MERGED_TO",
+            "RELATE_TO",
+            "PARENT"
+        }
+        
+        for label_name in VALID_REL_TYPES:
+            print(f"🪶 Creating elabel: {label_name}")
+            try:
+                with self.connection.cursor() as cursor:
+                    cursor.execute(f"select create_elabel('{self.db_name}', '{label_name}');")
+                    print(f"✅ Successfully created elabel: {label_name}")
+            except Exception as e:
+                if "already exists" in str(e):
+                    print(f"ℹ️ Label '{label_name}' already exists, skipping.")
+                else:
+                    print(f"⚠️ Failed to create label {label_name}: {e}")
+                    logger.error(f"Failed to create elabel '{label_name}': {e}", exc_info=True)
+
+    def add_edge(self, source_id: str, target_id: str, type: str, user_name: str | None = None) -> None:
         """
         Create an edge from source node to target node.
         Args:
             source_id: ID of the source node.
             target_id: ID of the target node.
             type: Relationship type (e.g., 'RELATE_TO', 'PARENT').
+            user_name (str, optional): User name for filtering in non-multi-db mode
         """
+        if not source_id or not target_id:
+            raise ValueError("[add_edge] source_id and target_id must be provided")
+        
         # 确保边表存在
         try:
             with self.connection.cursor() as cursor:
@@ -475,16 +547,25 @@ class PolarDBGraphDB(BaseGraphDB):
             logger.warning(f"Cannot create edge: source or target node does not exist")
             return
 
+        # 构建边的属性
+        properties = {}
+        if user_name is not None:
+            properties["user_name"] = user_name
+
         # 添加边
         query = f"""
-            INSERT INTO {self.db_name}_graph."Edges" (source_id, target_id, edge_type)
-            VALUES (%s, %s, %s)
+            INSERT INTO {self.db_name}_graph."Edges" (source_id, target_id, edge_type, properties)
+            VALUES (%s, %s, %s, %s)
             ON CONFLICT DO NOTHING
         """
 
-        with self.connection.cursor() as cursor:
-            cursor.execute(query, (source_id, target_id, type))
-            logger.info(f"Edge created: {source_id} -[{type}]-> {target_id}")
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(query, (source_id, target_id, type, json.dumps(properties)))
+                logger.info(f"Edge created: {source_id} -[{type}]-> {target_id}")
+        except Exception as e:
+            logger.error(f"Failed to insert edge: {e}", exc_info=True)
+            raise
 
     def delete_edge(self, source_id: str, target_id: str, type: str) -> None:
         """
