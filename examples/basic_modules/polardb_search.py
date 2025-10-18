@@ -132,12 +132,12 @@ def searchVector(db_name: str, vectorStr: list[float]):
     #     print("Search result:", graph.get_node(node_i["id"]))
 
     #4，查询 get_memory_count
-    # count = graph.get_memory_count('UserMemory','memos07ba3d044650474c839e721f3a69d38a')
-    # print("user count:", count)
+    count = graph.get_memory_count('UserMemory','memos07ba3d044650474c839e721f3a69d38a')
+    print("user count:", count)
     #
     # # 4，判断node是否存在 node_not_exist 1代表存在，
-    # isNodeExist = graph.node_not_exist('UserMemory', 'memos07ba3d044650474c839e721f3a69d38a')
-    # print("user isNodeExist:", isNodeExist)
+    isNodeExist = graph.node_not_exist('UserMemory', 'memos07ba3d044650474c839e721f3a69d38a')
+    print("user isNodeExist:", isNodeExist)
     #
     # # 6,删除跳过多少行之后的数据remove_oldest_memory
     # remove_oldest_memory = graph.remove_oldest_memory('UserMemory', 2,'memos07ba3d044650474c839e721f3a69d38a')

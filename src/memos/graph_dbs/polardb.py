@@ -270,6 +270,8 @@ class PolarDBGraphDB(BaseGraphDB):
         query += "\nAND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
         params = [f'"{memory_type}"', f'"{user_name}"']
 
+        print(f"[get_memory_count] Query: {query}, Params: {params}")
+
         try:
             with self.connection.cursor() as cursor:
                 cursor.execute(query, params)
@@ -290,6 +292,8 @@ class PolarDBGraphDB(BaseGraphDB):
         query += "\nAND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
         query += "\nLIMIT 1"
         params = [f'"{scope}"', f'"{user_name}"']
+
+        print(f"[node_not_exist] Query: {query}, Params: {params}")
 
         try:
             with self.connection.cursor() as cursor:
