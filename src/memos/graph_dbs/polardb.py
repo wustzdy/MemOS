@@ -522,49 +522,71 @@ class PolarDBGraphDB(BaseGraphDB):
             result = cursor.fetchone()
             return result is not None
 
-    def get_node(self, id: str, **kwargs) -> dict[str, Any] | None:
-        """Retrieve the metadata and memory of a node."""
+    def get_node(self, id: str, include_embedding: bool = False, user_name: str | None = None) -> dict[str, Any] | None:
+        """
+        Retrieve a Memory node by its unique ID.
+
+        Args:
+            id (str): Node ID (Memory.id)
+            include_embedding: with/without embedding
+            user_name (str, optional): User name for filtering in non-multi-db mode
+
+        Returns:
+            dict: Node properties as key-value pairs, or None if not found.
+        """
+        # 构建查询字段
+        if include_embedding:
+            select_fields = "id, properties, embedding"
+        else:
+            select_fields = "id, properties"
+            
         query = f"""
-            SELECT id, properties, embedding
+            SELECT {select_fields}
             FROM {self.db_name}_graph."Memory" 
             WHERE ag_catalog.agtype_access_operator(properties, '"id"'::agtype) = %s::agtype
         """
-        # 如果id已经包含引号，则直接使用；否则添加引号
-        if id.startswith('"') and id.endswith('"'):
-            params = [id]
-        else:
-            params = [f'"{id}"']
-
-        if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
-            user_name = self._get_config_value("user_name")
-            # query += " AND properties::text LIKE %s"
-            query += f""" AND ag_catalog.agtype_access_operator(properties, '"user_name"'::agtype) = %s::agtype"""
+        params = [f'"{id}"']
+        
+        # 只有在提供了 user_name 参数时才添加用户过滤
+        if user_name is not None:
+            query += "\nAND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
             params.append(f'"{user_name}"')
 
-        with self.connection.cursor() as cursor:
-            cursor.execute(query, params)
-            result = cursor.fetchone()
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(query, params)
+                result = cursor.fetchone()
 
-            if result:
-                node_id, properties_json, embedding_json = result
-                # Parse properties from JSONB if it's a string
-                if isinstance(properties_json, str):
-                    try:
-                        properties = json.loads(properties_json)
-                    except (json.JSONDecodeError, TypeError):
-                        logger.warning(f"Failed to parse properties for node {id}")
-                        properties = {}
-                else:
-                    properties = properties_json if properties_json else {}
-                
-                # Parse embedding from JSONB if it exists
-                if embedding_json is not None:
-                    try:
-                        embedding = json.loads(embedding_json) if isinstance(embedding_json, str) else embedding_json
-                        properties["embedding"] = embedding
-                    except (json.JSONDecodeError, TypeError):
-                        logger.warning(f"Failed to parse embedding for node {id}")
-                return self._parse_node({"id": id, "memory": properties.get("memory", ""), "metadata": properties})
+                if result:
+                    if include_embedding:
+                        node_id, properties_json, embedding_json = result
+                    else:
+                        node_id, properties_json = result
+                        embedding_json = None
+                    
+                    # Parse properties from JSONB if it's a string
+                    if isinstance(properties_json, str):
+                        try:
+                            properties = json.loads(properties_json)
+                        except (json.JSONDecodeError, TypeError):
+                            logger.warning(f"Failed to parse properties for node {id}")
+                            properties = {}
+                    else:
+                        properties = properties_json if properties_json else {}
+                    
+                    # Parse embedding from JSONB if it exists and include_embedding is True
+                    if include_embedding and embedding_json is not None:
+                        try:
+                            embedding = json.loads(embedding_json) if isinstance(embedding_json, str) else embedding_json
+                            properties["embedding"] = embedding
+                        except (json.JSONDecodeError, TypeError):
+                            logger.warning(f"Failed to parse embedding for node {id}")
+                    
+                    return self._parse_node({"id": id, "memory": properties.get("memory", ""), "metadata": properties})
+                return None
+
+        except Exception as e:
+            logger.error(f"[get_node] Failed to retrieve node '{id}': {e}", exc_info=True)
             return None
 
     def get_nodes(self, ids: list[str], **kwargs) -> list[dict[str, Any]]:
