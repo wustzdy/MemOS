@@ -563,7 +563,7 @@ class PolarDBGraphDB(BaseGraphDB):
             cursor.execute(query, (source_id, target_id, type))
             logger.info(f"Edge deleted: {source_id} -[{type}]-> {target_id}")
 
-    def edge_exists(
+    def edge_exists_old(
             self, source_id: str, target_id: str, type: str = "ANY", direction: str = "OUTGOING"
     ) -> bool:
         """
@@ -619,7 +619,7 @@ class PolarDBGraphDB(BaseGraphDB):
             result = cursor.fetchone()
             return result is not None
 
-    def edge_exists_ccl(
+    def edge_exists(
             self,
             source_id: str,
             target_id: str,
@@ -642,6 +642,7 @@ class PolarDBGraphDB(BaseGraphDB):
 
         # Prepare the relationship pattern
         user_name = user_name if user_name else self.config.user_name
+        print(f"edge_exists direction: {direction}")
 
         # Prepare the match pattern with direction
         if direction == "OUTGOING":
@@ -664,6 +665,7 @@ class PolarDBGraphDB(BaseGraphDB):
         query += "\nRETURN r"
         query += "\n$$) AS (r agtype)"
 
+        print(f"edge_exists query: {query}")
         with self.connection.cursor() as cursor:
             cursor.execute(query)
             result = cursor.fetchone()
