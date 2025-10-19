@@ -146,16 +146,18 @@ class PolarDBGraphDB(BaseGraphDB):
         self.connection.autocommit = True
 
         # Handle auto_create
-        auto_create = config.get("auto_create", False) if isinstance(config, dict) else config.auto_create
-        if auto_create:
-            self._ensure_database_exists()
+        # auto_create = config.get("auto_create", False) if isinstance(config, dict) else config.auto_create
+        # if auto_create:
+        #     self._ensure_database_exists()
 
         # Create graph and tables
+        # self.create_graph()
+        # self.create_edge()
         # self._create_graph()
 
         # Handle embedding_dimension
-        embedding_dim = config.get("embedding_dimension", 1024) if isinstance(config,dict) else config.embedding_dimension
-        self.create_index(dimensions=embedding_dim)
+        # embedding_dim = config.get("embedding_dimension", 1024) if isinstance(config,dict) else config.embedding_dimension
+        # self.create_index(dimensions=embedding_dim)
 
     def _get_config_value(self, key: str, default=None):
         """Safely get config value from either dict or object."""
@@ -473,18 +475,18 @@ class PolarDBGraphDB(BaseGraphDB):
             with self.connection.cursor() as cursor:
                 cursor.execute(f"""
                     SELECT COUNT(*) FROM ag_catalog.ag_graph 
-                    WHERE name = '{self.db_name}';
+                    WHERE name = '{self.db_name}_graph';
                 """)
                 graph_exists = cursor.fetchone()[0] > 0
                 
                 if graph_exists:
-                    print(f"ℹ️ Graph '{self.db_name}' already exists.")
+                    print(f"ℹ️ Graph '{self.db_name}_graph' already exists.")
                 else:
-                    cursor.execute(f"select create_graph('{self.db_name}');")
-                    print(f"✅ Graph database '{self.db_name}' created.")
+                    cursor.execute(f"select create_graph('{self.db_name}_graph');")
+                    print(f"✅ Graph database '{self.db_name}_graph' created.")
         except Exception as e:
-            print(f"⚠️ Failed to create graph '{self.db_name}': {e}")
-            logger.error(f"Failed to create graph '{self.db_name}': {e}", exc_info=True)
+            print(f"⚠️ Failed to create graph '{self.db_name}_graph': {e}")
+            logger.error(f"Failed to create graph '{self.db_name}_graph': {e}", exc_info=True)
 
     def create_edge(self):
         """创建所有有效的边类型，如果不存在的话"""
@@ -501,7 +503,7 @@ class PolarDBGraphDB(BaseGraphDB):
             print(f"🪶 Creating elabel: {label_name}")
             try:
                 with self.connection.cursor() as cursor:
-                    cursor.execute(f"select create_elabel('{self.db_name}', '{label_name}');")
+                    cursor.execute(f"select create_elabel('{self.db_name}_graph', '{label_name}');")
                     print(f"✅ Successfully created elabel: {label_name}")
             except Exception as e:
                 if "already exists" in str(e):
