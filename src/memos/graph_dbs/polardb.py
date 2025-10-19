@@ -642,7 +642,6 @@ class PolarDBGraphDB(BaseGraphDB):
 
         # Prepare the relationship pattern
         user_name = user_name if user_name else self.config.user_name
-        rel = "r" if type == "ANY" else f"r@{type}"
 
         # Prepare the match pattern with direction
         if direction == "OUTGOING":
