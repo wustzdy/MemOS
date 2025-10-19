@@ -1659,6 +1659,7 @@ class PolarDBGraphDB(BaseGraphDB):
 
     def drop_database(self) -> None:
         """Permanently delete the entire graph this instance is using."""
+        return
         if self._get_config_value("use_multi_db", True):
             with self.connection.cursor() as cursor:
                 cursor.execute(f"SELECT drop_graph('{self.db_name}_graph', true)")
@@ -1811,17 +1812,17 @@ class PolarDBGraphDB(BaseGraphDB):
         with self.connection.cursor() as cursor:
             # 先删除现有记录（如果存在）
             delete_query = f"""
-                DELETE FROM "{self.db_name}_graph"."Memory" 
-                WHERE id = ag_catalog._make_graph_id('"{self.db_name}_graph"'::name, 'Memory'::name, %s::text::cstring)
+                DELETE FROM {self.db_name}_graph."Memory" 
+                WHERE id = ag_catalog._make_graph_id('{self.db_name}_graph'::name, 'Memory'::name, %s::text::cstring)
             """
             cursor.execute(delete_query, (id,))
 
             # 然后插入新记录
             if embedding_vector:
                 insert_query = f"""
-                    INSERT INTO "{self.db_name}_graph"."Memory"(id, properties, {embedding_column})
+                    INSERT INTO {self.db_name}_graph."Memory"(id, properties, {embedding_column})
                     VALUES (
-                        ag_catalog._make_graph_id('"{self.db_name}_graph"'::name, 'Memory'::name, %s::text::cstring),
+                        ag_catalog._make_graph_id('{self.db_name}_graph'::name, 'Memory'::name, %s::text::cstring),
                         %s,
                         %s
                     )
@@ -1829,9 +1830,9 @@ class PolarDBGraphDB(BaseGraphDB):
                 cursor.execute(insert_query, (id, json.dumps(properties), json.dumps(embedding_vector)))
             else:
                 insert_query = f"""
-                    INSERT INTO "{self.db_name}_graph"."Memory"(id, properties)
+                    INSERT INTO {self.db_name}_graph."Memory"(id, properties)
                     VALUES (
-                        ag_catalog._make_graph_id('"{self.db_name}_graph"'::name, 'Memory'::name, %s::text::cstring),
+                        ag_catalog._make_graph_id('{self.db_name}_graph'::name, 'Memory'::name, %s::text::cstring),
                         %s
                     )
                 """
