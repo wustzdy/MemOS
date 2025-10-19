@@ -777,6 +777,7 @@ class PolarDBGraphDB(BaseGraphDB):
             query += " AND properties::text LIKE %s"
             params.append(f"%{user_name}%")
 
+        print(f"[get_nodes] query: {query}, params: {params}")
         with self.connection.cursor() as cursor:
             cursor.execute(query, params)
             results = cursor.fetchall()
@@ -1766,34 +1767,91 @@ class PolarDBGraphDB(BaseGraphDB):
             
         return nodes
 
-    def get_structure_optimization_candidates(self, scope: str, **kwargs) -> list[dict]:
-        """Find nodes that are likely candidates for structure optimization."""
-        # This would require more complex graph traversal queries
-        # For now, return nodes without parent relationships
-        query = f"""
-            SELECT id, properties 
-            FROM "{self.db_name}_graph"."Memory" 
-            WHERE properties->>'memory_type' = %s 
-              AND properties->>'status' = 'activated'
+    def get_structure_optimization_candidates(
+        self, scope: str, include_embedding: bool = False, user_name: str | None = None
+    ) -> list[dict]:
         """
-        params = [scope]
+        Find nodes that are likely candidates for structure optimization:
+        - Isolated nodes, nodes with empty background, or nodes with exactly one child.
+        - Plus: the child of any parent node that has exactly one child.
+        """
+        user_name = user_name if user_name else self._get_config_value("user_name")
+        
+        # 构建返回字段，根据 include_embedding 参数决定是否包含 embedding
+        if include_embedding:
+            return_fields = "n"
+        else:
+            # 构建不包含 embedding 的字段列表
+            return_fields = ",".join([
+                "n.id AS id",
+                "n.memory AS memory", 
+                "n.user_name AS user_name",
+                "n.user_id AS user_id",
+                "n.session_id AS session_id",
+                "n.status AS status",
+                "n.key AS key",
+                "n.confidence AS confidence",
+                "n.tags AS tags",
+                "n.created_at AS created_at",
+                "n.updated_at AS updated_at",
+                "n.memory_type AS memory_type",
+                "n.sources AS sources",
+                "n.source AS source",
+                "n.node_type AS node_type",
+                "n.visibility AS visibility",
+                "n.usage AS usage",
+                "n.background AS background"
+            ])
 
-        if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
-            query += " AND properties->>'user_name' = %s"
-            params.append(self._get_config_value("user_name"))
+        # 使用 OPTIONAL MATCH 来查找孤立节点（没有父节点和子节点的节点）
+        cypher_query = f"""
+            SELECT * FROM cypher('{self.db_name}_graph', $$
+            MATCH (n:Memory)
+            WHERE n.memory_type = '{scope}'
+              AND n.status = 'activated'
+              AND n.user_name = '{user_name}'
+            OPTIONAL MATCH (n)-[:PARENT]->(c:Memory)
+            OPTIONAL MATCH (p:Memory)-[:PARENT]->(n)
+            WITH n, c, p
+            WHERE c IS NULL AND p IS NULL
+            RETURN {return_fields}
+            $$) AS (result agtype)
+        """
+        print("[get_structure_optimization_candidates] query:", cypher_query)
 
-        with self.connection.cursor() as cursor:
-            cursor.execute(query, params)
-            results = cursor.fetchall()
-
-            nodes = []
-            for row in results:
-                node_id, properties_json = row
-                # properties_json is already a dict from psycopg2
-                properties = properties_json if properties_json else {}
-                nodes.append(self._parse_node(
-                    {"id": properties.get("id", ""), "memory": properties.get("memory", ""), "metadata": properties}))
-            return nodes
+        candidates = []
+        node_ids = set()
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(cypher_query)
+                results = cursor.fetchall()
+                
+                for row in results:
+                    result_agtype = row[0]
+                    if result_agtype and hasattr(result_agtype, 'value'):
+                        if include_embedding:
+                            # 当 include_embedding=True 时，返回完整的节点对象
+                            node_props = result_agtype.value
+                            if isinstance(node_props, dict) and "properties" in node_props:
+                                node = self._parse_node(node_props["properties"])
+                                node_id = node["id"]
+                                if node_id not in node_ids:
+                                    candidates.append(node)
+                                    node_ids.add(node_id)
+                        else:
+                            # 当 include_embedding=False 时，返回字段字典
+                            props = result_agtype.value
+                            if isinstance(props, dict):
+                                node = self._parse_node(props)
+                                node_id = node["id"]
+                                if node_id not in node_ids:
+                                    candidates.append(node)
+                                    node_ids.add(node_id)
+                                
+        except Exception as e:
+            logger.error(f"Failed to get structure optimization candidates: {e}", exc_info=True)
+            
+        return candidates
 
     def drop_database(self) -> None:
         """Permanently delete the entire graph this instance is using."""
