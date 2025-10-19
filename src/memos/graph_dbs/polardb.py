@@ -179,12 +179,12 @@ class PolarDBGraphDB(BaseGraphDB):
         try:
             with self.connection.cursor() as cursor:
                 # Create schema if it doesn't exist
-                cursor.execute(f"CREATE SCHEMA IF NOT EXISTS {self.db_name}_graph;")
+                cursor.execute(f'CREATE SCHEMA IF NOT EXISTS "{self.db_name}_graph";')
                 logger.info(f"Schema '{self.db_name}_graph' ensured.")
 
                 # Create Memory table if it doesn't exist
                 cursor.execute(f"""
-                    CREATE TABLE IF NOT EXISTS {self.db_name}_graph."Memory" (
+                    CREATE TABLE IF NOT EXISTS "{self.db_name}_graph"."Memory" (
                         id TEXT PRIMARY KEY,
                         properties JSONB NOT NULL,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -196,7 +196,7 @@ class PolarDBGraphDB(BaseGraphDB):
                 # Add embedding column if it doesn't exist (using JSONB for compatibility)
                 try:
                     cursor.execute(f"""
-                        ALTER TABLE {self.db_name}_graph."Memory" 
+                        ALTER TABLE "{self.db_name}_graph"."Memory" 
                         ADD COLUMN IF NOT EXISTS embedding JSONB;
                     """)
                     logger.info(f"Embedding column added to Memory table.")
@@ -206,14 +206,14 @@ class PolarDBGraphDB(BaseGraphDB):
                 # Create indexes
                 cursor.execute(f"""
                     CREATE INDEX IF NOT EXISTS idx_memory_properties 
-                    ON {self.db_name}_graph."Memory" USING GIN (properties);
+                    ON "{self.db_name}_graph"."Memory" USING GIN (properties);
                 """)
 
                 # Create vector index for embedding field
                 try:
                     cursor.execute(f"""
                         CREATE INDEX IF NOT EXISTS idx_memory_embedding 
-                        ON {self.db_name}_graph."Memory" USING ivfflat (embedding vector_cosine_ops)
+                        ON "{self.db_name}_graph"."Memory" USING ivfflat (embedding vector_cosine_ops)
                         WITH (lists = 100);
                     """)
                     logger.info(f"Vector index created for Memory table.")
@@ -243,14 +243,14 @@ class PolarDBGraphDB(BaseGraphDB):
                 # Apache AGE stores data in regular PostgreSQL tables
                 cursor.execute(f"""
                     CREATE INDEX IF NOT EXISTS idx_memory_properties 
-                    ON {self.db_name}_graph."Memory" USING GIN (properties);
+                    ON "{self.db_name}_graph"."Memory" USING GIN (properties);
                 """)
 
                 # Try to create vector index, but don't fail if it doesn't work
                 try:
                     cursor.execute(f"""
                         CREATE INDEX IF NOT EXISTS idx_memory_embedding 
-                        ON {self.db_name}_graph."Memory" USING ivfflat (embedding vector_cosine_ops);
+                        ON "{self.db_name}_graph"."Memory" USING ivfflat (embedding vector_cosine_ops);
                     """)
                 except Exception as ve:
                     logger.warning(f"Vector index creation failed (might not be supported): {ve}")
@@ -264,7 +264,7 @@ class PolarDBGraphDB(BaseGraphDB):
         user_name = user_name if user_name else self._get_config_value("user_name")
         query = f"""
             SELECT COUNT(*) 
-            FROM {self.db_name}_graph."Memory" 
+            FROM "{self.db_name}_graph"."Memory" 
             WHERE ag_catalog.agtype_access_operator(properties, '"memory_type"'::agtype) = %s::agtype
         """
         query += "\nAND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
@@ -286,7 +286,7 @@ class PolarDBGraphDB(BaseGraphDB):
         user_name = user_name if user_name else self._get_config_value("user_name")
         query = f"""
             SELECT id 
-            FROM {self.db_name}_graph."Memory" 
+            FROM "{self.db_name}_graph"."Memory" 
             WHERE ag_catalog.agtype_access_operator(properties, '"memory_type"'::agtype) = %s::agtype
         """
         query += "\nAND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
@@ -319,7 +319,7 @@ class PolarDBGraphDB(BaseGraphDB):
         # 使用真正的 OFFSET 逻辑，与 nebular.py 保持一致
         # 先找到要删除的节点ID，然后删除它们
         select_query = f"""
-            SELECT id FROM {self.db_name}_graph."Memory" 
+            SELECT id FROM "{self.db_name}_graph"."Memory" 
             WHERE ag_catalog.agtype_access_operator(properties, '"memory_type"'::agtype) = %s::agtype
             AND ag_catalog.agtype_access_operator(properties, '"user_name"'::agtype) = %s::agtype
             ORDER BY ag_catalog.agtype_access_operator(properties, '"updated_at"'::agtype) DESC 
@@ -342,7 +342,7 @@ class PolarDBGraphDB(BaseGraphDB):
                 # 构建删除查询
                 placeholders = ','.join(['%s'] * len(ids_to_delete))
                 delete_query = f"""
-                    DELETE FROM {self.db_name}_graph."Memory"
+                    DELETE FROM "{self.db_name}_graph"."Memory"
                     WHERE id IN ({placeholders})
                 """
                 delete_params = ids_to_delete
@@ -390,14 +390,14 @@ class PolarDBGraphDB(BaseGraphDB):
         # 构建更新查询
         if embedding_vector is not None:
             query = f"""
-                UPDATE {self.db_name}_graph."Memory" 
+                UPDATE "{self.db_name}_graph"."Memory" 
                 SET properties = %s, embedding = %s
                 WHERE ag_catalog.agtype_access_operator(properties, '"id"'::agtype) = %s::agtype
             """
             params = [json.dumps(properties), json.dumps(embedding_vector), f'"{id}"']
         else:
             query = f"""
-                UPDATE {self.db_name}_graph."Memory" 
+                UPDATE "{self.db_name}_graph"."Memory" 
                 SET properties = %s
                 WHERE ag_catalog.agtype_access_operator(properties, '"id"'::agtype) = %s::agtype
             """
@@ -424,7 +424,7 @@ class PolarDBGraphDB(BaseGraphDB):
             user_name (str, optional): User name for filtering in non-multi-db mode
         """
         query = f"""
-            DELETE FROM {self.db_name}_graph."Memory" 
+            DELETE FROM "{self.db_name}_graph"."Memory" 
             WHERE ag_catalog.agtype_access_operator(properties, '"id"'::agtype) = %s::agtype
         """
         params = [f'"{id}"']
@@ -524,16 +524,16 @@ class PolarDBGraphDB(BaseGraphDB):
         if user_name is not None:
             properties["user_name"] = user_name
         query = f"""
-            INSERT INTO {self.db_name}_graph."{type}"(id, start_id, end_id, properties)
+            INSERT INTO "{self.db_name}_graph"."{type}"(id, start_id, end_id, properties)
             SELECT
-                ag_catalog._next_graph_id('{self.db_name}_graph'::name, '{type}'),
-                ag_catalog._make_graph_id('{self.db_name}_graph'::name, 'Memory'::name, '{source_id}'::text::cstring),
-                ag_catalog._make_graph_id('{self.db_name}_graph'::name, 'Memory'::name, '{target_id}'::text::cstring),
+                ag_catalog._next_graph_id('"{self.db_name}_graph"'::name, '{type}'),
+                ag_catalog._make_graph_id('"{self.db_name}_graph"'::name, 'Memory'::name, '{source_id}'::text::cstring),
+                ag_catalog._make_graph_id('"{self.db_name}_graph"'::name, 'Memory'::name, '{target_id}'::text::cstring),
                 jsonb_build_object('user_name', '{user_name}')::text::agtype
             WHERE NOT EXISTS (
-                SELECT 1 FROM {self.db_name}_graph."{type}"
-                WHERE start_id = ag_catalog._make_graph_id('{self.db_name}_graph'::name, 'Memory'::name, '{source_id}'::text::cstring)
-                  AND end_id   = ag_catalog._make_graph_id('{self.db_name}_graph'::name, 'Memory'::name, '{target_id}'::text::cstring)
+                SELECT 1 FROM "{self.db_name}_graph"."{type}"
+                WHERE start_id = ag_catalog._make_graph_id('"{self.db_name}_graph"'::name, 'Memory'::name, '{source_id}'::text::cstring)
+                  AND end_id   = ag_catalog._make_graph_id('"{self.db_name}_graph"'::name, 'Memory'::name, '{target_id}'::text::cstring)
             );
         """
         print(f"Executing add_edge: {query}")
@@ -555,7 +555,7 @@ class PolarDBGraphDB(BaseGraphDB):
             type: Relationship type to remove.
         """
         query = f"""
-            DELETE FROM {self.db_name}_graph."Edges"
+            DELETE FROM "{self.db_name}_graph"."Edges"
             WHERE source_id = %s AND target_id = %s AND edge_type = %s
         """
 
@@ -609,7 +609,7 @@ class PolarDBGraphDB(BaseGraphDB):
         where_clause = " AND ".join(where_clauses)
 
         query = f"""
-            SELECT 1 FROM {self.db_name}_graph."Edges"
+            SELECT 1 FROM "{self.db_name}_graph"."Edges"
             WHERE {where_clause}
             LIMIT 1
         """
@@ -691,7 +691,7 @@ class PolarDBGraphDB(BaseGraphDB):
             
         query = f"""
             SELECT {select_fields}
-            FROM {self.db_name}_graph."Memory" 
+            FROM "{self.db_name}_graph"."Memory" 
             WHERE ag_catalog.agtype_access_operator(properties, '"id"'::agtype) = %s::agtype
         """
         params = [f'"{id}"']
@@ -766,7 +766,7 @@ class PolarDBGraphDB(BaseGraphDB):
         
         query = f"""
             SELECT id, properties, embedding
-            FROM {self.db_name}_graph."Memory" 
+            FROM "{self.db_name}_graph"."Memory" 
             WHERE ({where_clause})
         """
 
@@ -827,30 +827,30 @@ class PolarDBGraphDB(BaseGraphDB):
             with self.connection.cursor() as cursor:
                 # 创建边表
                 cursor.execute(f"""
-                    CREATE TABLE IF NOT EXISTS {self.db_name}_graph."Edges" (
+                    CREATE TABLE IF NOT EXISTS "{self.db_name}_graph"."Edges" (
                         id SERIAL PRIMARY KEY,
                         source_id TEXT NOT NULL,
                         target_id TEXT NOT NULL,
                         edge_type TEXT NOT NULL,
                         properties JSONB,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        FOREIGN KEY (source_id) REFERENCES {self.db_name}_graph."Memory"(id),
-                        FOREIGN KEY (target_id) REFERENCES {self.db_name}_graph."Memory"(id)
+                        FOREIGN KEY (source_id) REFERENCES "{self.db_name}_graph"."Memory"(id),
+                        FOREIGN KEY (target_id) REFERENCES "{self.db_name}_graph"."Memory"(id)
                     );
                 """)
 
                 # 创建索引
                 cursor.execute(f"""
                     CREATE INDEX IF NOT EXISTS idx_edges_source 
-                    ON {self.db_name}_graph."Edges" (source_id);
+                    ON "{self.db_name}_graph"."Edges" (source_id);
                 """)
                 cursor.execute(f"""
                     CREATE INDEX IF NOT EXISTS idx_edges_target 
-                    ON {self.db_name}_graph."Edges" (target_id);
+                    ON "{self.db_name}_graph"."Edges" (target_id);
                 """)
                 cursor.execute(f"""
                     CREATE INDEX IF NOT EXISTS idx_edges_type 
-                    ON {self.db_name}_graph."Edges" (edge_type);
+                    ON "{self.db_name}_graph"."Edges" (edge_type);
                 """)
         except Exception as e:
             logger.warning(f"Failed to create edges table: {e}")
@@ -875,7 +875,7 @@ class PolarDBGraphDB(BaseGraphDB):
 
         query = f"""
             SELECT source_id, target_id, edge_type
-            FROM {self.db_name}_graph."Edges"
+            FROM "{self.db_name}_graph"."Edges"
             WHERE {where_clause}
         """
 
@@ -949,7 +949,7 @@ class PolarDBGraphDB(BaseGraphDB):
         # 获取所有候选节点
         query = f"""
             SELECT id, properties, embedding
-            FROM {self.db_name}_graph."Memory" 
+            FROM "{self.db_name}_graph"."Memory" 
             WHERE {where_clause}
         """
 
@@ -993,46 +993,69 @@ class PolarDBGraphDB(BaseGraphDB):
             nodes_with_overlap.sort(key=lambda x: x[1], reverse=True)
             return [node for node, _ in nodes_with_overlap[:top_k]]
 
-    def get_children_with_embeddings(self, id: str) -> list[dict[str, Any]]:
+    def get_children_with_embeddings(self, id: str, user_name: str | None = None) -> list[dict[str, Any]]:
         """Get children nodes with their embeddings."""
-        # 查询PARENT关系的子节点
-        query = f"""
-            SELECT m.id, m.properties, m.embedding
-            FROM {self.db_name}_graph."Memory" m
-            JOIN {self.db_name}_graph."Edges" e ON m.id = e.target_id
-            WHERE e.source_id = %s AND e.edge_type = 'PARENT'
+        user_name = user_name if user_name else self._get_config_value("user_name")
+        # where_user = f"AND p.user_name = '{user_name}' AND c.user_name = '{user_name}'"
+        where_user = f"AND p.user_name = '{user_name}'"
+
+        query1 = f"""
+            SELECT * FROM cypher('{self.db_name}_graph', $$
+            MATCH (p:Memory)-[r:PARENT]->(c:Memory)
+            WHERE p.id = '{id}' {where_user}
+            RETURN c.id AS id, c.embedding AS embedding, c.memory AS memory
+            $$) AS (id agtype, embedding agtype, memory agtype)
         """
-        params = [id]
+        query = f"""
+            WITH t as (
+                SELECT *
+                FROM cypher('{self.db_name}_graph', $$
+                MATCH (p:Memory)-[r:PARENT]->(c:Memory)
+                WHERE p.id = '{id}' {where_user} 
+                RETURN id(c) as cid, c.id AS id, c.memory AS memory
+                $$) as (cid agtype, id agtype, memory agtype)
+                )
+                SELECT t.id, m.embedding, t.memory FROM t,
+                "{self.db_name}_graph"."Memory" m
+            WHERE t.cid::graphid = m.id;
+        """
 
-        # 添加用户过滤
-        if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
-            query += " AND m.properties->>'user_name' = %s"
-            params.append(self._get_config_value("user_name"))
 
-        with self.connection.cursor() as cursor:
-            cursor.execute(query, params)
-            results = cursor.fetchall()
+        print("[get_children_with_embeddings] query:", query)
 
-            children = []
-            for row in results:
-                child_id, properties_json, embedding_json = row
-                properties = properties_json if properties_json else {}
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(query)
+                results = cursor.fetchall()
 
-                # 解析embedding
-                embedding = None
-                if embedding_json is not None:
-                    try:
-                        embedding = json.loads(embedding_json) if isinstance(embedding_json, str) else embedding_json
-                    except (json.JSONDecodeError, TypeError):
-                        logger.warning(f"Failed to parse embedding for child node {child_id}")
+                children = []
+                for row in results:
+                    child_id = row[0].value if hasattr(row[0], 'value') else str(row[0])
+                    embedding_agtype = row[1]
+                    memory = row[2].value if hasattr(row[2], 'value') else str(row[2])
 
-                children.append({
-                    "id": child_id,
-                    "embedding": embedding,
-                    "memory": properties.get("memory", "")
-                })
+                    # 解析embedding
+                    embedding = []
+                    if embedding_agtype and hasattr(embedding_agtype, 'value'):
+                        if isinstance(embedding_agtype.value, list):
+                            embedding = embedding_agtype.value
+                        else:
+                            try:
+                                embedding = json.loads(embedding_agtype.value) if isinstance(embedding_agtype.value, str) else embedding_agtype.value
+                            except (json.JSONDecodeError, TypeError, AttributeError):
+                                logger.warning(f"Failed to parse embedding for child node {child_id}")
 
-            return children
+                    children.append({
+                        "id": child_id,
+                        "embedding": embedding,
+                        "memory": memory
+                    })
+
+                return children
+
+        except Exception as e:
+            logger.error(f"[get_children_with_embeddings] Failed: {e}", exc_info=True)
+            return []
 
     def get_path(self, source_id: str, target_id: str, max_depth: int = 3) -> list[str]:
         """Get the path of nodes from source to target within a limited depth."""
@@ -1197,7 +1220,7 @@ class PolarDBGraphDB(BaseGraphDB):
             params.append(self._get_config_value("user_name"))
 
         where_str = " AND ".join(where_clauses)
-        query = f"SELECT properties->>'id' as id FROM {self.db_name}_graph.\"Memory\" WHERE {where_str}"
+        query = f"SELECT properties->>'id' as id FROM \"{self.db_name}_graph\".\"Memory\" WHERE {where_str}"
 
         with self.connection.cursor() as cursor:
             cursor.execute(query, params)
@@ -1233,7 +1256,7 @@ class PolarDBGraphDB(BaseGraphDB):
         group_by_sql = ", ".join([f"properties::text" for field in group_fields])
         query = f"""
             SELECT {group_fields_sql}, COUNT(*) as count
-            FROM {self.db_name}_graph."Memory"
+            FROM "{self.db_name}_graph"."Memory"
             {where_clause}
             GROUP BY {group_by_sql}
         """
@@ -1265,7 +1288,7 @@ class PolarDBGraphDB(BaseGraphDB):
                 cursor.execute(f"""
                     SELECT EXISTS (
                         SELECT 1 FROM information_schema.tables 
-                        WHERE table_schema = '{self.db_name}_graph' 
+                        WHERE table_schema = '"{self.db_name}_graph"' 
                         AND table_name = 'Memory'
                     )
                 """)
@@ -1277,11 +1300,11 @@ class PolarDBGraphDB(BaseGraphDB):
 
                 if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
                     cursor.execute(f"""
-                        DELETE FROM {self.db_name}_graph."Memory" 
+                        DELETE FROM "{self.db_name}_graph"."Memory" 
                         WHERE properties::text LIKE %s
                     """, (f"%{self._get_config_value('user_name')}%",))
                 else:
-                    cursor.execute(f'DELETE FROM {self.db_name}_graph."Memory"')
+                    cursor.execute(f'DELETE FROM "{self.db_name}_graph"."Memory"')
 
                 logger.info(f"Cleared all nodes from graph '{self.db_name}_graph'.")
         except Exception as e:
@@ -1292,7 +1315,7 @@ class PolarDBGraphDB(BaseGraphDB):
         """Export all graph nodes and edges in a structured form."""
         with self.connection.cursor() as cursor:
             # Export nodes
-            node_query = f'SELECT id, properties FROM {self.db_name}_graph."Memory"'
+            node_query = f'SELECT id, properties FROM "{self.db_name}_graph"."Memory"'
             params = []
 
             if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
@@ -1342,7 +1365,7 @@ class PolarDBGraphDB(BaseGraphDB):
 
         query = f"""
             SELECT id, properties 
-            FROM {self.db_name}_graph."Memory" 
+            FROM "{self.db_name}_graph"."Memory" 
             WHERE properties->>'memory_type' = %s
         """
         params = [scope]
@@ -1370,7 +1393,7 @@ class PolarDBGraphDB(BaseGraphDB):
         # For now, return nodes without parent relationships
         query = f"""
             SELECT id, properties 
-            FROM {self.db_name}_graph."Memory" 
+            FROM "{self.db_name}_graph"."Memory" 
             WHERE properties->>'memory_type' = %s 
               AND properties->>'status' = 'activated'
         """
@@ -1547,17 +1570,17 @@ class PolarDBGraphDB(BaseGraphDB):
         with self.connection.cursor() as cursor:
             # 先删除现有记录（如果存在）
             delete_query = f"""
-                DELETE FROM {self.db_name}_graph."Memory" 
-                WHERE id = ag_catalog._make_graph_id('{self.db_name}_graph'::name, 'Memory'::name, %s::text::cstring)
+                DELETE FROM "{self.db_name}_graph"."Memory" 
+                WHERE id = ag_catalog._make_graph_id('"{self.db_name}_graph"'::name, 'Memory'::name, %s::text::cstring)
             """
             cursor.execute(delete_query, (id,))
 
             # 然后插入新记录
             if embedding_vector:
                 insert_query = f"""
-                    INSERT INTO {self.db_name}_graph."Memory"(id, properties, {embedding_column})
+                    INSERT INTO "{self.db_name}_graph"."Memory"(id, properties, {embedding_column})
                     VALUES (
-                        ag_catalog._make_graph_id('{self.db_name}_graph'::name, 'Memory'::name, %s::text::cstring),
+                        ag_catalog._make_graph_id('"{self.db_name}_graph"'::name, 'Memory'::name, %s::text::cstring),
                         %s,
                         %s
                     )
@@ -1565,11 +1588,11 @@ class PolarDBGraphDB(BaseGraphDB):
                 cursor.execute(insert_query, (id, json.dumps(properties), json.dumps(embedding_vector)))
             else:
                 insert_query = f"""
-                    INSERT INTO {self.db_name}_graph."Memory"(id, properties)
+                    INSERT INTO "{self.db_name}_graph"."Memory"(id, properties)
                     VALUES (
-                        ag_catalog._make_graph_id('{self.db_name}_graph'::name, 'Memory'::name, %s::text::cstring),
+                        ag_catalog._make_graph_id('"{self.db_name}_graph"'::name, 'Memory'::name, %s::text::cstring),
                         %s
                     )
                 """
                 cursor.execute(insert_query, (id, json.dumps(properties)))
-            logger.info(f"Added node {id} to graph '{self.db_name}_graph'.")
+                logger.info(f"Added node {id} to graph '{self.db_name}_graph'.")
