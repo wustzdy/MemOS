@@ -1107,70 +1107,91 @@ class PolarDBGraphDB(BaseGraphDB):
         user_name = user_name if user_name else self._get_config_value("user_name")
 
         # 使用简化的查询获取子图（暂时只获取直接邻居）
+        query1 = f"""
+            SELECT * FROM cypher('{self.db_name}_graph', $$
+                    MATCH(center: Memory)-[r * 1..{depth}]->(neighbor:Memory)
+                    WHERE
+                    center.id = '{center_id}'
+                    AND center.status = '{center_status}'
+                    AND center.user_name = '{user_name}'
+                    RETURN
+                    collect(DISTINCT
+                    center), collect(DISTINCT
+                    neighbor), collect(DISTINCT
+                    r)
+                $$ ) as (centers agtype, neighbors agtype, rels agtype);
+            """
         query = f"""
-            WITH center AS (
-                SELECT * FROM cypher('{self.db_name}_graph', $$
-                MATCH (center:Memory)
-                WHERE center.id = '{center_id}'
-                  AND center.status = '{center_status}'
-                  AND center.user_name = '{user_name}'
-                RETURN center
-                $$) AS (center agtype)
-            ),
-            neighbors AS (
-                SELECT * FROM cypher('{self.db_name}_graph', $$
-                MATCH (center:Memory)-[e]->(neighbor:Memory)
-                WHERE center.id = '{center_id}'
-                  AND center.status = '{center_status}'
-                  AND center.user_name = '{user_name}'
-                  AND neighbor.user_name = '{user_name}'
-                RETURN neighbor, e
-                $$) AS (neighbor agtype, e agtype)
-            )
-            SELECT 
-                (SELECT center FROM center) as center,
-                ARRAY_AGG(neighbor) as neighbors,
-                ARRAY_AGG(e) as edges
-            FROM neighbors
-        """
+            SELECT * FROM cypher('{self.db_name}_graph', $$
+                    MATCH(center: Memory)-[r * 1..{depth}]->(neighbor:Memory)
+                    WHERE
+                    center.id = '{center_id}'
+                    RETURN
+                    collect(DISTINCT
+                    center), collect(DISTINCT
+                    neighbor), collect(DISTINCT
+                    r)
+                $$ ) as (centers agtype, neighbors agtype, rels agtype);
+            """
 
         try:
             with self.connection.cursor() as cursor:
                 cursor.execute(query)
                 result = cursor.fetchone()
+                print("[get_subgraph] result:", result)
                 
                 if not result or not result[0]:
                     return {"core_node": None, "neighbors": [], "edges": []}
 
                 # 解析中心节点
-                center_agtype = result[0]
-                if center_agtype and hasattr(center_agtype, 'value'):
-                    center_props = center_agtype.value
-                    core_node = self._parse_node(center_props)
-                else:
+                centers_data = result[0] if result[0] else "[]"
+                neighbors_data = result[1] if result[1] else "[]"
+                edges_data = result[2] if result[2] else "[]"
+                
+                # 解析 JSON 数据
+                try:
+                    # 清理数据中的 ::vertex 和 ::edge 后缀
+                    if isinstance(centers_data, str):
+                        centers_data = centers_data.replace('::vertex', '')
+                    if isinstance(neighbors_data, str):
+                        neighbors_data = neighbors_data.replace('::vertex', '')
+                    if isinstance(edges_data, str):
+                        edges_data = edges_data.replace('::edge', '')
+                    
+                    centers_list = json.loads(centers_data) if isinstance(centers_data, str) else centers_data
+                    neighbors_list = json.loads(neighbors_data) if isinstance(neighbors_data, str) else neighbors_data
+                    edges_list = json.loads(edges_data) if isinstance(edges_data, str) else edges_data
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse JSON data: {e}")
                     return {"core_node": None, "neighbors": [], "edges": []}
-
+                
+                # 解析中心节点
+                core_node = None
+                if centers_list and len(centers_list) > 0:
+                    center_data = centers_list[0]
+                    if isinstance(center_data, dict) and "properties" in center_data:
+                        core_node = self._parse_node(center_data["properties"])
+                
                 # 解析邻居节点
                 neighbors = []
-                neighbors_agtype = result[1] if result[1] else []
-                for neighbor_agtype in neighbors_agtype:
-                    if neighbor_agtype and hasattr(neighbor_agtype, 'value'):
-                        neighbor_props = neighbor_agtype.value
-                        neighbor_parsed = self._parse_node(neighbor_props)
-                        neighbors.append(neighbor_parsed)
+                if isinstance(neighbors_list, list):
+                    for neighbor_data in neighbors_list:
+                        if isinstance(neighbor_data, dict) and "properties" in neighbor_data:
+                            neighbor_parsed = self._parse_node(neighbor_data["properties"])
+                            neighbors.append(neighbor_parsed)
 
                 # 解析边
                 edges = []
-                edges_agtype = result[2] if result[2] else []
-                for edge_agtype in edges_agtype:
-                    if edge_agtype and hasattr(edge_agtype, 'value'):
-                        edge_data = edge_agtype.value
-                        if isinstance(edge_data, dict):
-                            edges.append({
-                                "type": edge_data.get("type", ""),
-                                "source": edge_data.get("source", ""),
-                                "target": edge_data.get("target", "")
-                            })
+                if isinstance(edges_list, list):
+                    for edge_group in edges_list:
+                        if isinstance(edge_group, list):
+                            for edge_data in edge_group:
+                                if isinstance(edge_data, dict):
+                                    edges.append({
+                                        "type": edge_data.get("label", ""),
+                                        "source": edge_data.get("start_id", ""),
+                                        "target": edge_data.get("end_id", "")
+                                    })
 
                 return {"core_node": core_node, "neighbors": neighbors, "edges": edges}
 
@@ -1346,6 +1367,10 @@ class PolarDBGraphDB(BaseGraphDB):
                 if isinstance(value, str):
                     value = f"'{value}'"
                 where_clause = where_clause.replace(f"${key}", str(value))
+        
+        # 处理 where_clause 中的 user_name 参数
+        if "user_name = %s" in where_clause:
+            where_clause = where_clause.replace("user_name = %s", f"ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = '\"{user_name}\"'::agtype")
 
         # Build return fields and group by fields
         return_fields = []
@@ -1573,55 +1598,48 @@ class PolarDBGraphDB(BaseGraphDB):
         if scope not in {"WorkingMemory", "LongTermMemory", "UserMemory", "OuterMemory"}:
             raise ValueError(f"Unsupported memory type scope: {scope}")
 
-        where_clause = f"ag_catalog.agtype_access_operator(properties, '\"memory_type\"'::agtype) = '\"{scope}\"'::agtype"
-        where_clause += f" AND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = '\"{user_name}\"'::agtype"
-
-        # Build return fields
+        # 使用 cypher 查询获取记忆项
         if include_embedding:
-            return_fields = "id, properties, embedding"
+            cypher_query = f"""
+                SELECT * FROM cypher('{self.db_name}_graph', $$
+                MATCH (n:Memory)
+                WHERE n.memory_type = '{scope}' AND n.user_name = '{user_name}'
+                RETURN n
+                LIMIT 100
+                $$) AS (n agtype)
+            """
         else:
-            return_fields = "id, properties"
-
-        query = f"""
-            SELECT {return_fields}
-            FROM "{self.db_name}_graph"."Memory"
-            WHERE {where_clause}
-            LIMIT 100
-        """
+            cypher_query = f"""
+                SELECT * FROM cypher('{self.db_name}_graph', $$
+                MATCH (n:Memory)
+                WHERE n.memory_type = '{scope}' AND n.user_name = '{user_name}'
+                RETURN n
+                LIMIT 100
+                $$) AS (n agtype)
+            """
 
         nodes = []
         try:
             with self.connection.cursor() as cursor:
-                cursor.execute(query)
+                cursor.execute(cypher_query)
                 results = cursor.fetchall()
                 
                 for row in results:
-                    if include_embedding:
-                        node_id, properties_json, embedding_json = row
-                    else:
-                        node_id, properties_json = row
-                        embedding_json = None
-                    
-                    # Parse properties from JSONB if it's a string
-                    if isinstance(properties_json, str):
-                        try:
-                            properties = json.loads(properties_json)
-                        except json.JSONDecodeError:
-                            properties = {}
-                    else:
-                        properties = properties_json if properties_json else {}
-                    
-                    # Build node data
-                    node_data = {
-                        "id": properties.get("id", node_id),
-                        "memory": properties.get("memory", ""),
-                        "metadata": properties
-                    }
-                    
-                    if include_embedding and embedding_json is not None:
-                        node_data["embedding"] = embedding_json
-                    
-                    nodes.append(self._parse_node(node_data))
+                    node_agtype = row[0]
+                    if node_agtype and hasattr(node_agtype, 'value'):
+                        node_props = node_agtype.value
+                        if isinstance(node_props, dict):
+                            # 解析节点属性
+                            node_data = {
+                                "id": node_props.get("id", ""),
+                                "memory": node_props.get("memory", ""),
+                                "metadata": node_props
+                            }
+                            
+                            if include_embedding and "embedding" in node_props:
+                                node_data["embedding"] = node_props["embedding"]
+                            
+                            nodes.append(self._parse_node(node_data))
                     
         except Exception as e:
             logger.error(f"Failed to get memories: {e}", exc_info=True)
