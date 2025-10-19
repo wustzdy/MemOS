@@ -1281,48 +1281,92 @@ class PolarDBGraphDB(BaseGraphDB):
             return output[:top_k]
 
     def get_by_metadata(self, filters: list[dict[str, Any]], user_name: str | None = None) -> list[str]:
-        """Retrieve node IDs that match given metadata filters."""
-        where_clauses = []
-        params = []
+        """
+        Retrieve node IDs that match given metadata filters.
+        Supports exact match.
 
-        for i, f in enumerate(filters):
+        Args:
+        filters: List of filter dicts like:
+            [
+                {"field": "key", "op": "in", "value": ["A", "B"]},
+                {"field": "confidence", "op": ">=", "value": 80},
+                {"field": "tags", "op": "contains", "value": "AI"},
+                ...
+            ]
+        user_name (str, optional): User name for filtering in non-multi-db mode
+
+        Returns:
+            list[str]: Node IDs whose metadata match the filter conditions. (AND logic).
+        """
+        user_name = user_name if user_name else self._get_config_value("user_name")
+        
+        # 构建 cypher 查询的 WHERE 条件
+        where_conditions = []
+        
+        for f in filters:
             field = f["field"]
             op = f.get("op", "=")
             value = f["value"]
-
+            
+            # 格式化值
+            if isinstance(value, str):
+                escaped_value = f"'{value}'"
+            elif isinstance(value, list):
+                # 处理列表值
+                list_items = []
+                for v in value:
+                    if isinstance(v, str):
+                        list_items.append(f"'{v}'")
+                    else:
+                        list_items.append(str(v))
+                escaped_value = f"[{', '.join(list_items)}]"
+            else:
+                escaped_value = f"'{value}'" if isinstance(value, str) else str(value)
+            
+            # 构建 WHERE 条件
             if op == "=":
-                where_clauses.append(f"properties->>'{field}' = %s")
-                params.append(value)
+                where_conditions.append(f"n.{field} = {escaped_value}")
             elif op == "in":
-                placeholders = ','.join(['%s'] * len(value))
-                where_clauses.append(f"properties->>'{field}' IN ({placeholders})")
-                params.extend(value)
+                where_conditions.append(f"n.{field} IN {escaped_value}")
             elif op == "contains":
-                where_clauses.append(f"properties->'{field}' ? %s")
-                params.append(value)
+                where_conditions.append(f"size(filter(n.{field}, t -> t IN {escaped_value})) > 0")
             elif op == "starts_with":
-                where_clauses.append(f"properties->>'{field}' LIKE %s")
-                params.append(f"{value}%")
+                where_conditions.append(f"n.{field} STARTS WITH {escaped_value}")
             elif op == "ends_with":
-                where_clauses.append(f"properties->>'{field}' LIKE %s")
-                params.append(f"%{value}")
+                where_conditions.append(f"n.{field} ENDS WITH {escaped_value}")
             elif op in [">", ">=", "<", "<="]:
-                where_clauses.append(f"(properties->>'{field}')::numeric {op} %s")
-                params.append(value)
+                where_conditions.append(f"n.{field} {op} {escaped_value}")
             else:
                 raise ValueError(f"Unsupported operator: {op}")
-
-        if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
-            where_clauses.append("properties->>'user_name' = %s")
-            params.append(self._get_config_value("user_name"))
-
-        where_str = " AND ".join(where_clauses)
-        query = f"SELECT properties->>'id' as id FROM \"{self.db_name}_graph\".\"Memory\" WHERE {where_str}"
-
-        with self.connection.cursor() as cursor:
-            cursor.execute(query, params)
-            results = cursor.fetchall()
-            return [row[0] for row in results if row[0]]
+        
+        # 添加用户名称过滤
+        where_conditions.append(f"n.user_name = '{user_name}'")
+        
+        where_str = " AND ".join(where_conditions)
+        
+        # 使用 cypher 查询
+        cypher_query = f"""
+            SELECT * FROM cypher('{self.db_name}_graph', $$
+            MATCH (n:Memory)
+            WHERE {where_str}
+            RETURN n.id AS id
+            $$) AS (id agtype)
+        """
+        
+        ids = []
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(cypher_query)
+                results = cursor.fetchall()
+                for row in results:
+                    if row[0] and hasattr(row[0], 'value'):
+                        ids.append(row[0].value)
+                    elif row[0]:
+                        ids.append(str(row[0]))
+        except Exception as e:
+            logger.error(f"Failed to get metadata: {e}, query is {cypher_query}")
+            
+        return ids
 
     def get_grouped_counts_ccl(
         self,
