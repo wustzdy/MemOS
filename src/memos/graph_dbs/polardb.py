@@ -1079,7 +1079,11 @@ class PolarDBGraphDB(BaseGraphDB):
         raise NotImplementedError
 
     def get_subgraph(
-            self, center_id: str, depth: int = 2, center_status: str = "activated"
+        self,
+        center_id: str,
+        depth: int = 2,
+        center_status: str = "activated",
+        user_name: str | None = None,
     ) -> dict[str, Any]:
         """
         Retrieve a local subgraph centered at a given node.
@@ -1087,6 +1091,7 @@ class PolarDBGraphDB(BaseGraphDB):
             center_id: The ID of the center node.
             depth: The hop distance for neighbors.
             center_status: Required status for center node.
+            user_name (str, optional): User name for filtering in non-multi-db mode
         Returns:
             {
                 "core_node": {...},
@@ -1094,30 +1099,82 @@ class PolarDBGraphDB(BaseGraphDB):
                 "edges": [...]
             }
         """
-        # 获取中心节点
-        core_node = self.get_node(center_id)
-        if not core_node:
+        if not 1 <= depth <= 5:
+            raise ValueError("depth must be 1-5")
+
+        user_name = user_name if user_name else self._get_config_value("user_name")
+
+        # 使用 cypher 查询获取子图
+        query = f"""
+            WITH center AS (
+                SELECT * FROM cypher('{self.db_name}_graph', $$
+                MATCH (center:Memory)
+                WHERE center.id = '{center_id}'
+                  AND center.status = '{center_status}'
+                  AND center.user_name = '{user_name}'
+                RETURN center
+                $$) AS (center agtype)
+            ),
+            neighbors AS (
+                SELECT * FROM cypher('{self.db_name}_graph', $$
+                MATCH (center:Memory)-[e]->{{1,{depth}}}(neighbor:Memory)
+                WHERE center.id = '{center_id}'
+                  AND center.status = '{center_status}'
+                  AND center.user_name = '{user_name}'
+                  AND neighbor.user_name = '{user_name}'
+                RETURN neighbor, e
+                $$) AS (neighbor agtype, e agtype)
+            )
+            SELECT 
+                (SELECT center FROM center) as center,
+                ARRAY_AGG(neighbor) as neighbors,
+                ARRAY_AGG(e) as edges
+            FROM neighbors
+        """
+
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(query)
+                result = cursor.fetchone()
+                
+                if not result or not result[0]:
+                    return {"core_node": None, "neighbors": [], "edges": []}
+
+                # 解析中心节点
+                center_agtype = result[0]
+                if center_agtype and hasattr(center_agtype, 'value'):
+                    center_props = center_agtype.value
+                    core_node = self._parse_node(center_props)
+                else:
+                    return {"core_node": None, "neighbors": [], "edges": []}
+
+                # 解析邻居节点
+                neighbors = []
+                neighbors_agtype = result[1] if result[1] else []
+                for neighbor_agtype in neighbors_agtype:
+                    if neighbor_agtype and hasattr(neighbor_agtype, 'value'):
+                        neighbor_props = neighbor_agtype.value
+                        neighbor_parsed = self._parse_node(neighbor_props)
+                        neighbors.append(neighbor_parsed)
+
+                # 解析边
+                edges = []
+                edges_agtype = result[2] if result[2] else []
+                for edge_agtype in edges_agtype:
+                    if edge_agtype and hasattr(edge_agtype, 'value'):
+                        edge_data = edge_agtype.value
+                        if isinstance(edge_data, dict):
+                            edges.append({
+                                "type": edge_data.get("type", ""),
+                                "source": edge_data.get("source", ""),
+                                "target": edge_data.get("target", "")
+                            })
+
+                return {"core_node": core_node, "neighbors": neighbors, "edges": edges}
+
+        except Exception as e:
+            logger.error(f"Failed to get subgraph: {e}", exc_info=True)
             return {"core_node": None, "neighbors": [], "edges": []}
-
-        # 检查中心节点状态
-        if center_status and core_node.get("metadata", {}).get("status") != center_status:
-            return {"core_node": None, "neighbors": [], "edges": []}
-
-        # 获取邻居节点（简化实现，只获取直接连接的节点）
-        edges = self.get_edges(center_id, direction="ANY")
-        neighbor_ids = set()
-        for edge in edges:
-            if edge["from"] == center_id:
-                neighbor_ids.add(edge["to"])
-            else:
-                neighbor_ids.add(edge["from"])
-
-        # 获取邻居节点详情
-        neighbors = []
-        if neighbor_ids:
-            neighbors = self.get_nodes(list(neighbor_ids))
-
-        return {"core_node": core_node, "neighbors": neighbors, "edges": edges}
 
     def get_context_chain(self, id: str, type: str = "FOLLOWS") -> list[str]:
         """Get the ordered context chain starting from a node."""

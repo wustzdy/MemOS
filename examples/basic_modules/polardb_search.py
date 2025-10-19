@@ -173,6 +173,12 @@ def get_children_with_embeddings(db_name: str, id: str, user_name: str = None):
     print("get_children_with_embedding:", children)
 
 
+def get_subgraph(db_name, center_id, depth, center_status, user_name):
+    graph = getPolarDb(db_name)
+    subgraph = graph.get_subgraph(center_id, depth, center_status, user_name)
+    print("get_subgraph:", subgraph)
+
+
 if __name__ == "__main__":
     # handler_node_edge(db_name="shared-tree-textual-memory-product-0731",type="node")
     # handler_node_edge(db_name="shared-tree-textual-memory-product-0731",type="edge")
@@ -323,3 +329,5 @@ if __name__ == "__main__":
     #             user_name="memosbfb3fb32032b4077a641404dc48739cd")
 
     # get_children_with_embeddings(db_name="memtensor_memos", id="13bb9df6-0609-4442-8bed-bba77dadac92",user_name="memos07ea708ac7eb412887c5c283f874ea30")
+
+    get_subgraph(db_name="memtensor_memos", center_id="13bb9df6-0609-4442-8bed-bba77dadac92", depth=2, center_status="activated", user_name="memos07ea708ac7eb412887c5c283f874ea30")
