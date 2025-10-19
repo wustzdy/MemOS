@@ -579,6 +579,14 @@ class PolarDBGraphDB(BaseGraphDB):
         """
         where_clauses = []
         params = []
+        # SELECT * FROM
+        # cypher('memtensor_memos_graph', $$
+        # MATCH(a: Memory
+        # {id: "13bb9df6-0609-4442-8bed-bba77dadac92"})-[r] - (b:Memory {id: "2dd03a5b-5d5f-49c9-9e0a-9a2a2899b98d"})
+        # RETURN
+        # r
+        # $$) AS(r
+        # agtype);
 
         if direction == "OUTGOING":
             where_clauses.append("source_id = %s AND target_id = %s")
@@ -610,6 +618,54 @@ class PolarDBGraphDB(BaseGraphDB):
             cursor.execute(query, params)
             result = cursor.fetchone()
             return result is not None
+
+    def edge_exists_ccl(
+            self,
+            source_id: str,
+            target_id: str,
+            type: str = "ANY",
+            direction: str = "OUTGOING",
+            user_name: str | None = None,
+    ) -> bool:
+        """
+        Check if an edge exists between two nodes.
+        Args:
+            source_id: ID of the source node.
+            target_id: ID of the target node.
+            type: Relationship type. Use "ANY" to match any relationship type.
+            direction: Direction of the edge.
+                       Use "OUTGOING" (default), "INCOMING", or "ANY".
+            user_name (str, optional): User name for filtering in non-multi-db mode
+        Returns:
+            True if the edge exists, otherwise False.
+        """
+
+        # Prepare the relationship pattern
+        user_name = user_name if user_name else self.config.user_name
+        rel = "r" if type == "ANY" else f"r@{type}"
+
+        # Prepare the match pattern with direction
+        if direction == "OUTGOING":
+            pattern = f"(a:Memory)-[r]->(b:Memory)"
+        elif direction == "INCOMING":
+            pattern = f"(a:Memory)<-[r]-(b:Memory)"
+        elif direction == "ANY":
+            pattern = f"(a:Memory)-[r]-(b:Memory)"
+        else:
+            raise ValueError(
+                f"Invalid direction: {direction}. Must be 'OUTGOING', 'INCOMING', or 'ANY'."
+            )
+        query = f"SELECT * FROM cypher('{self.db_name}_graph', $$"
+        query += f"\nMATCH {pattern}"
+        query += f"\nWHERE a.user_name = '{user_name}' AND b.user_name = '{user_name}'"
+        query += f"\nAND a.id = '{source_id}' AND b.id = '{target_id}'"
+        query += "\nRETURN r"
+        query += "\n$$) AS (r agtype)"
+
+        with self.connection.cursor() as cursor:
+            cursor.execute(query)
+            result = cursor.fetchone()
+            return result is not None and result[0] is not None
 
     def get_node(self, id: str, include_embedding: bool = False, user_name: str | None = None) -> dict[str, Any] | None:
         """
