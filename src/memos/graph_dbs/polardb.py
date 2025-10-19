@@ -996,16 +996,8 @@ class PolarDBGraphDB(BaseGraphDB):
     def get_children_with_embeddings(self, id: str, user_name: str | None = None) -> list[dict[str, Any]]:
         """Get children nodes with their embeddings."""
         user_name = user_name if user_name else self._get_config_value("user_name")
-        # where_user = f"AND p.user_name = '{user_name}' AND c.user_name = '{user_name}'"
-        where_user = f"AND p.user_name = '{user_name}'"
+        where_user = f"AND p.user_name = '{user_name}' AND c.user_name = '{user_name}'"
 
-        query1 = f"""
-            SELECT * FROM cypher('{self.db_name}_graph', $$
-            MATCH (p:Memory)-[r:PARENT]->(c:Memory)
-            WHERE p.id = '{id}' {where_user}
-            RETURN c.id AS id, c.embedding AS embedding, c.memory AS memory
-            $$) AS (id agtype, embedding agtype, memory agtype)
-        """
         query = f"""
             WITH t as (
                 SELECT *
@@ -1030,20 +1022,45 @@ class PolarDBGraphDB(BaseGraphDB):
 
                 children = []
                 for row in results:
-                    child_id = row[0].value if hasattr(row[0], 'value') else str(row[0])
-                    embedding_agtype = row[1]
-                    memory = row[2].value if hasattr(row[2], 'value') else str(row[2])
-
-                    # 解析embedding
-                    embedding = []
-                    if embedding_agtype and hasattr(embedding_agtype, 'value'):
-                        if isinstance(embedding_agtype.value, list):
-                            embedding = embedding_agtype.value
+                    # 处理 child_id - 移除可能的引号
+                    child_id_raw = row[0].value if hasattr(row[0], 'value') else str(row[0])
+                    if isinstance(child_id_raw, str):
+                        # 如果字符串以引号开始和结束，去掉引号
+                        if child_id_raw.startswith('"') and child_id_raw.endswith('"'):
+                            child_id = child_id_raw[1:-1]
                         else:
-                            try:
-                                embedding = json.loads(embedding_agtype.value) if isinstance(embedding_agtype.value, str) else embedding_agtype.value
-                            except (json.JSONDecodeError, TypeError, AttributeError):
-                                logger.warning(f"Failed to parse embedding for child node {child_id}")
+                            child_id = child_id_raw
+                    else:
+                        child_id = str(child_id_raw)
+
+                    # 处理 embedding - 从数据库的embedding列获取
+                    embedding_raw = row[1]
+                    embedding = []
+                    if embedding_raw is not None:
+                        try:
+                            if isinstance(embedding_raw, str):
+                                # 如果是JSON字符串，解析它
+                                embedding = json.loads(embedding_raw)
+                            elif isinstance(embedding_raw, list):
+                                # 如果已经是列表，直接使用
+                                embedding = embedding_raw
+                            else:
+                                # 尝试转换为列表
+                                embedding = list(embedding_raw)
+                        except (json.JSONDecodeError, TypeError, ValueError) as e:
+                            logger.warning(f"Failed to parse embedding for child node {child_id}: {e}")
+                            embedding = []
+
+                    # 处理 memory - 移除可能的引号
+                    memory_raw = row[2].value if hasattr(row[2], 'value') else str(row[2])
+                    if isinstance(memory_raw, str):
+                        # 如果字符串以引号开始和结束，去掉引号
+                        if memory_raw.startswith('"') and memory_raw.endswith('"'):
+                            memory = memory_raw[1:-1]
+                        else:
+                            memory = memory_raw
+                    else:
+                        memory = str(memory_raw)
 
                     children.append({
                         "id": child_id,
