@@ -658,6 +658,9 @@ class PolarDBGraphDB(BaseGraphDB):
         query += f"\nMATCH {pattern}"
         query += f"\nWHERE a.user_name = '{user_name}' AND b.user_name = '{user_name}'"
         query += f"\nAND a.id = '{source_id}' AND b.id = '{target_id}'"
+        if type != "ANY":
+            query += f"\n AND type(r) = '{type}'"
+
         query += "\nRETURN r"
         query += "\n$$) AS (r agtype)"
 
