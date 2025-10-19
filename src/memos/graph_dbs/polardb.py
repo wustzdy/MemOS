@@ -771,9 +771,11 @@ class PolarDBGraphDB(BaseGraphDB):
             FROM "{self.db_name}_graph"."Memory" 
             WHERE ({where_clause})
         """
+
         user_name = user_name if user_name else self.config.user_name
         query += " AND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
-        params.append(f"{user_name}")
+        params.append(f'"{user_name}"')
+
         # if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
         #     user_name = kwargs.get("cube_name", self._get_config_value("user_name"))
         #     query += " AND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
