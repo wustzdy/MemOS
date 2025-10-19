@@ -315,10 +315,11 @@ if __name__ == "__main__":
               0.0482484, -0.027038634, -0.004882823, 0.06152357, -0.003881463, -0.036041338, -0.0075645614, 0.020660445,
               -0.07250992, -0.024429375, -0.036377035]
     searchVector(db_name="memtensor_memos", vectorStr=vector)
+    # searchVector(db_name="test_1020_02", vectorStr=vector)
 
     # add_edge(db_name="memtensor_memos",source_id="13bb9df6-0609-4442-8bed-bba77dadac92", target_id="2dd03a5b-5d5f-49c9-9e0a-9a2a2899b98d", edge_type="PARENT", user_name="memosbfb3fb32032b4077a641404dc48739cd")
     # edge_exists(db_name="memtensor_memos", source_id="13bb9df6-0609-4442-8bed-bba77dadac92",
     #             target_id="2dd03a5b-5d5f-49c9-9e0a-9a2a2899b98d", type="PARENT", direction="OUTGOING",
     #             user_name="memosbfb3fb32032b4077a641404dc48739cd")
 
-    get_children_with_embeddings(db_name="memtensor_memos", id="13bb9df6-0609-4442-8bed-bba77dadac92",user_name="memos07ea708ac7eb412887c5c283f874ea30")
+    # get_children_with_embeddings(db_name="memtensor_memos", id="13bb9df6-0609-4442-8bed-bba77dadac92",user_name="memos07ea708ac7eb412887c5c283f874ea30")

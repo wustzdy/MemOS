@@ -1172,7 +1172,7 @@ class PolarDBGraphDB(BaseGraphDB):
                                embedding,
                                ag_catalog.agtype_access_operator(properties, '"id"'::agtype) AS old_id,
                                (1 - (embedding <=> %s::vector(1024))) AS scope
-                        FROM memtensor_memos_graph."Memory"
+                        FROM "{self.db_name}_graph"."Memory"
                         {where_clause}
                         ORDER BY scope DESC
                         LIMIT {top_k}
