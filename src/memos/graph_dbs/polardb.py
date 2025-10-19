@@ -1363,7 +1363,7 @@ class PolarDBGraphDB(BaseGraphDB):
 
         # Force RETURN field AS field to guarantee key match
         group_fields_cypher = ", ".join([f"n.{field} AS {field}" for field in group_fields])
-        group_fields_cypher_polardb = ", agtype".join([f"n.{field} AS {field}" for field in group_fields])
+        group_fields_cypher_polardb = "agtype, ".join([f"n.{field} AS {field}" for field in group_fields])
 
         query = f"""
         SELECT * FROM cypher('{self.db_name}_graph', $$
