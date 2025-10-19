@@ -186,6 +186,12 @@ def get_grouped_counts(db_name, user_name):
     print("get_grouped_counts:", grouped_counts)
 
 
+def export_graph(db_name, include_embedding, user_name):
+    graph = getPolarDb(db_name)
+    export_graphlist = graph.export_graph(include_embedding=include_embedding, user_name=user_name)
+    print("export_graph:", export_graphlist)
+
+
 if __name__ == "__main__":
     # handler_node_edge(db_name="shared-tree-textual-memory-product-0731",type="node")
     # handler_node_edge(db_name="shared-tree-textual-memory-product-0731",type="edge")
@@ -337,7 +343,9 @@ if __name__ == "__main__":
 
     # get_children_with_embeddings(db_name="memtensor_memos", id="13bb9df6-0609-4442-8bed-bba77dadac92",user_name="memos07ea708ac7eb412887c5c283f874ea30")
 
-    get_subgraph(db_name="memtensor_memos", center_id="13bb9df6-0609-4442-8bed-bba77dadac92", depth=2,
-                 center_status="activated", user_name="memos07ea708ac7eb412887c5c283f874ea30")
+    # get_subgraph(db_name="memtensor_memos", center_id="13bb9df6-0609-4442-8bed-bba77dadac92", depth=2,
+    #              center_status="activated", user_name="memos07ea708ac7eb412887c5c283f874ea30")
+    #
+    # get_grouped_counts(db_name="memtensor_memos", user_name="memos07ea708ac7eb412887c5c283f874ea30")
 
-    get_grouped_counts(db_name="memtensor_memos", user_name="memos07ea708ac7eb412887c5c283f874ea30")
+    export_graph(db_name="memtensor_memos", include_embedding=False, user_name="memos8698ecb1f76940ff9adc12494c4d57a6")

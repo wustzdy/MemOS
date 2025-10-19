@@ -1362,6 +1362,8 @@ class PolarDBGraphDB(BaseGraphDB):
             GROUP BY {", ".join(group_by_fields)}
         """
 
+        print("[get_grouped_counts] query:", query)
+
         try:
             with self.connection.cursor() as cursor:
                 # 处理参数化查询
@@ -1432,31 +1434,103 @@ class PolarDBGraphDB(BaseGraphDB):
             logger.warning(f"Failed to clear graph '{self.db_name}_graph': {e}")
             # Don't raise the exception, just log it as a warning
 
-    def export_graph(self, **kwargs) -> dict[str, Any]:
-        """Export all graph nodes and edges in a structured form."""
-        with self.connection.cursor() as cursor:
+    def export_graph(
+        self, include_embedding: bool = False, user_name: str | None = None
+    ) -> dict[str, Any]:
+        """
+        Export all graph nodes and edges in a structured form.
+        Args:
+        include_embedding (bool): Whether to include the large embedding field.
+        user_name (str, optional): User name for filtering in non-multi-db mode
+
+        Returns:
+            {
+                "nodes": [ { "id": ..., "memory": ..., "metadata": {...} }, ... ],
+                "edges": [ { "source": ..., "target": ..., "type": ... }, ... ]
+            }
+        """
+        user_name = user_name if user_name else self._get_config_value("user_name")
+        
+        try:
             # Export nodes
-            node_query = f'SELECT id, properties FROM "{self.db_name}_graph"."Memory"'
-            params = []
+            if include_embedding:
+                node_query = f"""
+                    SELECT id, properties, embedding
+                    FROM "{self.db_name}_graph"."Memory"
+                    WHERE ag_catalog.agtype_access_operator(properties, '"user_name"'::agtype) = '\"{user_name}\"'::agtype
+                """
+            else:
+                node_query = f"""
+                    SELECT id, properties
+                    FROM "{self.db_name}_graph"."Memory"
+                    WHERE ag_catalog.agtype_access_operator(properties, '"user_name"'::agtype) = '\"{user_name}\"'::agtype
+                """
+            
+            with self.connection.cursor() as cursor:
+                cursor.execute(node_query)
+                node_results = cursor.fetchall()
+                nodes = []
+                
+                for row in node_results:
+                    if include_embedding:
+                        node_id, properties_json, embedding_json = row
+                    else:
+                        node_id, properties_json = row
+                        embedding_json = None
+                    
+                    # Parse properties from JSONB if it's a string
+                    if isinstance(properties_json, str):
+                        try:
+                            properties = json.loads(properties_json)
+                        except json.JSONDecodeError:
+                            properties = {}
+                    else:
+                        properties = properties_json if properties_json else {}
+                    
+                    # Build node data
+                    node_data = {
+                        "id": properties.get("id", node_id),
+                        "memory": properties.get("memory", ""),
+                        "metadata": properties
+                    }
+                    
+                    if include_embedding and embedding_json is not None:
+                        node_data["embedding"] = embedding_json
+                    
+                    nodes.append(self._parse_node(node_data))
+                    
+        except Exception as e:
+            logger.error(f"[EXPORT GRAPH - NODES] Exception: {e}", exc_info=True)
+            raise RuntimeError(f"[EXPORT GRAPH - NODES] Exception: {e}") from e
 
-            if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
-                user_name = self._get_config_value("user_name")
-                node_query += f" WHERE properties::text LIKE '%{user_name}%'"
+        try:
+            # Export edges using cypher query
+            edge_query = f"""
+                SELECT * FROM cypher('{self.db_name}_graph', $$
+                MATCH (a:Memory)-[r]->(b:Memory)
+                WHERE a.user_name = '{user_name}' AND b.user_name = '{user_name}'
+                RETURN a.id AS source, b.id AS target, type(r) as edge
+                $$) AS (source agtype, target agtype, edge agtype)
+            """
+            
+            with self.connection.cursor() as cursor:
+                cursor.execute(edge_query)
+                edge_results = cursor.fetchall()
+                edges = []
+                
+                for row in edge_results:
+                    source_agtype, target_agtype, edge_agtype = row
+                    edges.append({
+                        "source": source_agtype.value if hasattr(source_agtype, 'value') else str(source_agtype),
+                        "target": target_agtype.value if hasattr(target_agtype, 'value') else str(target_agtype),
+                        "type": edge_agtype.value if hasattr(edge_agtype, 'value') else str(edge_agtype)
+                    })
+                    
+        except Exception as e:
+            logger.error(f"[EXPORT GRAPH - EDGES] Exception: {e}", exc_info=True)
+            raise RuntimeError(f"[EXPORT GRAPH - EDGES] Exception: {e}") from e
 
-            cursor.execute(node_query)
-            node_results = cursor.fetchall()
-            nodes = []
-            for row in node_results:
-                node_id, properties_json = row
-                # properties_json is already a dict from psycopg2
-                properties = properties_json if properties_json else {}
-                nodes.append(self._parse_node(
-                    {"id": properties.get("id", ""), "memory": properties.get("memory", ""), "metadata": properties}))
-
-            # Export edges (simplified - would need more complex Cypher query for full edge export)
-            edges = []
-
-            return {"nodes": nodes, "edges": edges}
+        return {"nodes": nodes, "edges": edges}
 
     def import_graph(self, data: dict[str, Any]) -> None:
         """Import the entire graph from a serialized dictionary."""
