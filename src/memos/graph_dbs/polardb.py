@@ -1774,12 +1774,13 @@ class PolarDBGraphDB(BaseGraphDB):
             print(f"❌ 插入失败 (ID: {id}): {e}")
             return False
 
-    def add_node(self, id: str, memory: str, metadata: dict[str, Any]) -> None:
+    def add_node(self, id: str, memory: str, metadata: dict[str, Any], user_name: str | None = None) -> None:
         """Add a memory node to the graph."""
         # user_name 从 metadata 中获取，如果不存在则从配置中获取
-        if "user_name" not in metadata:
-            if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
-                metadata["user_name"] = self._get_config_value("user_name")
+        metadata["user_name"] = user_name if user_name else self.config.user_name
+        # if "user_name" not in metadata:
+        #     if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
+        #         metadata["user_name"] = self._get_config_value("user_name")
 
         # Safely process metadata
         metadata = _prepare_node_metadata(metadata)
