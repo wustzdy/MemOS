@@ -1368,7 +1368,7 @@ class PolarDBGraphDB(BaseGraphDB):
             
         return ids
 
-    def get_grouped_counts_ccl(
+    def get_grouped_counts(
         self,
         group_fields: list[str],
         where_clause: str = "",
@@ -1416,13 +1416,35 @@ class PolarDBGraphDB(BaseGraphDB):
             RETURN {group_fields_cypher}, COUNT(n) AS count
         $$ ) as ({group_fields_cypher_polardb}, count agtype); 
         """
-        with self.connection.cursor() as cursor:
-            cursor.execute(query)
-            results = cursor.fetchall()
-            print(results)
+        try:
+            with self.connection.cursor() as cursor:
+                # 处理参数化查询
+                if params and isinstance(params, list):
+                    cursor.execute(query, final_params)
+                else:
+                    cursor.execute(query)
+                results = cursor.fetchall()
+
+                output = []
+                for row in results:
+                    group_values = {}
+                    for i, field in enumerate(group_fields):
+                        value = row[i]
+                        if hasattr(value, 'value'):
+                            group_values[field] = value.value
+                        else:
+                            group_values[field] = str(value)
+                    count_value = row[-1]  # Last column is count
+                    output.append({**group_values, "count": count_value})
+
+                return output
+
+        except Exception as e:
+            logger.error(f"Failed to get grouped counts: {e}", exc_info=True)
+            return []
 
 
-    def get_grouped_counts(
+    def get_grouped_counts_old(
         self,
         group_fields: list[str],
         where_clause: str = "",
