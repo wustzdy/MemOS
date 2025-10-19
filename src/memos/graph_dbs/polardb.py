@@ -151,7 +151,7 @@ class PolarDBGraphDB(BaseGraphDB):
             self._ensure_database_exists()
 
         # Create graph and tables
-        self._create_graph()
+        # self._create_graph()
 
         # Handle embedding_dimension
         embedding_dim = config.get("embedding_dimension", 1024) if isinstance(config,dict) else config.embedding_dimension
@@ -1104,7 +1104,7 @@ class PolarDBGraphDB(BaseGraphDB):
 
         user_name = user_name if user_name else self._get_config_value("user_name")
 
-        # 使用 cypher 查询获取子图
+        # 使用简化的查询获取子图（暂时只获取直接邻居）
         query = f"""
             WITH center AS (
                 SELECT * FROM cypher('{self.db_name}_graph', $$
@@ -1117,7 +1117,7 @@ class PolarDBGraphDB(BaseGraphDB):
             ),
             neighbors AS (
                 SELECT * FROM cypher('{self.db_name}_graph', $$
-                MATCH (center:Memory)-[e]->{{1,{depth}}}(neighbor:Memory)
+                MATCH (center:Memory)-[e]->(neighbor:Memory)
                 WHERE center.id = '{center_id}'
                   AND center.status = '{center_status}'
                   AND center.user_name = '{user_name}'
@@ -1338,7 +1338,7 @@ class PolarDBGraphDB(BaseGraphDB):
             where_clause = f"WHERE {user_clause}"
 
         # Inline parameters if provided
-        if params:
+        if params and isinstance(params, dict):
             for key, value in params.items():
                 # Handle different value types appropriately
                 if isinstance(value, str):
@@ -1364,7 +1364,11 @@ class PolarDBGraphDB(BaseGraphDB):
 
         try:
             with self.connection.cursor() as cursor:
-                cursor.execute(query)
+                # 处理参数化查询
+                if params and isinstance(params, list):
+                    cursor.execute(query, params)
+                else:
+                    cursor.execute(query)
                 results = cursor.fetchall()
 
                 output = []
@@ -1475,34 +1479,78 @@ class PolarDBGraphDB(BaseGraphDB):
             for edge in data.get("edges", []):
                 self.add_edge(edge["source"], edge["target"], edge["type"])
 
-    def get_all_memory_items(self, scope: str, **kwargs) -> list[dict]:
-        """Retrieve all memory items of a specific memory_type."""
+    def get_all_memory_items(
+        self, scope: str, include_embedding: bool = False, user_name: str | None = None
+    ) -> list[dict]:
+        """
+        Retrieve all memory items of a specific memory_type.
+
+        Args:
+            scope (str): Must be one of 'WorkingMemory', 'LongTermMemory', or 'UserMemory'.
+            include_embedding: with/without embedding
+            user_name (str, optional): User name for filtering in non-multi-db mode
+
+        Returns:
+            list[dict]: Full list of memory items under this scope.
+        """
+        user_name = user_name if user_name else self._get_config_value("user_name")
         if scope not in {"WorkingMemory", "LongTermMemory", "UserMemory", "OuterMemory"}:
             raise ValueError(f"Unsupported memory type scope: {scope}")
 
+        where_clause = f"ag_catalog.agtype_access_operator(properties, '\"memory_type\"'::agtype) = '\"{scope}\"'::agtype"
+        where_clause += f" AND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = '\"{user_name}\"'::agtype"
+
+        # Build return fields
+        if include_embedding:
+            return_fields = "id, properties, embedding"
+        else:
+            return_fields = "id, properties"
+
         query = f"""
-            SELECT id, properties 
-            FROM "{self.db_name}_graph"."Memory" 
-            WHERE properties->>'memory_type' = %s
+            SELECT {return_fields}
+            FROM "{self.db_name}_graph"."Memory"
+            WHERE {where_clause}
+            LIMIT 100
         """
-        params = [scope]
 
-        if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
-            query += " AND properties->>'user_name' = %s"
-            params.append(self._get_config_value("user_name"))
-
-        with self.connection.cursor() as cursor:
-            cursor.execute(query, params)
-            results = cursor.fetchall()
-
-            nodes = []
-            for row in results:
-                node_id, properties_json = row
-                # properties_json is already a dict from psycopg2
-                properties = properties_json if properties_json else {}
-                nodes.append(self._parse_node(
-                    {"id": properties.get("id", ""), "memory": properties.get("memory", ""), "metadata": properties}))
-            return nodes
+        nodes = []
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(query)
+                results = cursor.fetchall()
+                
+                for row in results:
+                    if include_embedding:
+                        node_id, properties_json, embedding_json = row
+                    else:
+                        node_id, properties_json = row
+                        embedding_json = None
+                    
+                    # Parse properties from JSONB if it's a string
+                    if isinstance(properties_json, str):
+                        try:
+                            properties = json.loads(properties_json)
+                        except json.JSONDecodeError:
+                            properties = {}
+                    else:
+                        properties = properties_json if properties_json else {}
+                    
+                    # Build node data
+                    node_data = {
+                        "id": properties.get("id", node_id),
+                        "memory": properties.get("memory", ""),
+                        "metadata": properties
+                    }
+                    
+                    if include_embedding and embedding_json is not None:
+                        node_data["embedding"] = embedding_json
+                    
+                    nodes.append(self._parse_node(node_data))
+                    
+        except Exception as e:
+            logger.error(f"Failed to get memories: {e}", exc_info=True)
+            
+        return nodes
 
     def get_structure_optimization_candidates(self, scope: str, **kwargs) -> list[dict]:
         """Find nodes that are likely candidates for structure optimization."""
