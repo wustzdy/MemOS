@@ -1302,45 +1302,88 @@ class PolarDBGraphDB(BaseGraphDB):
             return [row[0] for row in results if row[0]]
 
     def get_grouped_counts(
-            self,
-            group_fields: list[str],
-            where_clause: str = "",
-            params: dict[str, Any] | None = None,
+        self,
+        group_fields: list[str],
+        where_clause: str = "",
+        params: dict[str, Any] | None = None,
+        user_name: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Count nodes grouped by any fields."""
+        """
+        Count nodes grouped by any fields.
+
+        Args:
+            group_fields (list[str]): Fields to group by, e.g., ["memory_type", "status"]
+            where_clause (str, optional): Extra WHERE condition. E.g.,
+            "WHERE n.status = 'activated'"
+            params (dict, optional): Parameters for WHERE clause.
+            user_name (str, optional): User name for filtering in non-multi-db mode
+
+        Returns:
+            list[dict]: e.g., [{ 'memory_type': 'WorkingMemory', 'status': 'active', 'count': 10 }, ...]
+        """
         if not group_fields:
             raise ValueError("group_fields cannot be empty")
-
-        final_params = params.copy() if params else {}
-
-        if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
-            user_name = self._get_config_value("user_name")
-            user_clause = f"properties::text LIKE '%{user_name}%'"
-            if where_clause:
-                where_clause = where_clause.strip()
-                if where_clause.upper().startswith("WHERE"):
-                    where_clause += f" AND {user_clause}"
-                else:
-                    where_clause = f"WHERE {where_clause} AND {user_clause}"
+        
+        user_name = user_name if user_name else self._get_config_value("user_name")
+        
+        # Build user clause
+        user_clause = f"ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = '\"{user_name}\"'::agtype"
+        if where_clause:
+            where_clause = where_clause.strip()
+            if where_clause.upper().startswith("WHERE"):
+                where_clause += f" AND {user_clause}"
             else:
-                where_clause = f"WHERE {user_clause}"
+                where_clause = f"WHERE {where_clause} AND {user_clause}"
+        else:
+            where_clause = f"WHERE {user_clause}"
 
-        # Use text-based queries to avoid agtype issues
-        group_fields_sql = ", ".join([f"properties::text as {field}" for field in group_fields])
-        group_by_sql = ", ".join([f"properties::text" for field in group_fields])
+        # Inline parameters if provided
+        if params:
+            for key, value in params.items():
+                # Handle different value types appropriately
+                if isinstance(value, str):
+                    value = f"'{value}'"
+                where_clause = where_clause.replace(f"${key}", str(value))
+
+        # Build return fields and group by fields
+        return_fields = []
+        group_by_fields = []
+
+        for field in group_fields:
+            alias = field.replace(".", "_")
+            return_fields.append(f"ag_catalog.agtype_access_operator(properties, '\"{field}\"'::agtype) AS {alias}")
+            group_by_fields.append(alias)
+
+        # Full SQL query construction
         query = f"""
-            SELECT {group_fields_sql}, COUNT(*) as count
+            SELECT {", ".join(return_fields)}, COUNT(*) AS count
             FROM "{self.db_name}_graph"."Memory"
             {where_clause}
-            GROUP BY {group_by_sql}
+            GROUP BY {", ".join(group_by_fields)}
         """
 
-        with self.connection.cursor() as cursor:
-            cursor.execute(query)
-            results = cursor.fetchall()
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(query)
+                results = cursor.fetchall()
 
-            # Simplified return - just return basic counts
-            return [{"memory_type": "LongTermMemory", "status": "activated", "count": len(results)}]
+                output = []
+                for row in results:
+                    group_values = {}
+                    for i, field in enumerate(group_fields):
+                        value = row[i]
+                        if hasattr(value, 'value'):
+                            group_values[field] = value.value
+                        else:
+                            group_values[field] = str(value)
+                    count_value = row[-1]  # Last column is count
+                    output.append({**group_values, "count": count_value})
+
+                return output
+
+        except Exception as e:
+            logger.error(f"Failed to get grouped counts: {e}", exc_info=True)
+            return []
 
     def deduplicate_nodes(self) -> None:
         """Deduplicate redundant or semantically similar nodes."""

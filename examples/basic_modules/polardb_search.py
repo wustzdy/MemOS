@@ -179,6 +179,13 @@ def get_subgraph(db_name, center_id, depth, center_status, user_name):
     print("get_subgraph:", subgraph)
 
 
+def get_grouped_counts(db_name, user_name):
+    graph = getPolarDb(db_name)
+    grouped_counts = graph.get_grouped_counts(group_fields=["status"], where_clause="user_name = %s",
+                                              params=[user_name], user_name=user_name)
+    print("get_grouped_counts:", grouped_counts)
+
+
 if __name__ == "__main__":
     # handler_node_edge(db_name="shared-tree-textual-memory-product-0731",type="node")
     # handler_node_edge(db_name="shared-tree-textual-memory-product-0731",type="edge")
@@ -330,4 +337,7 @@ if __name__ == "__main__":
 
     # get_children_with_embeddings(db_name="memtensor_memos", id="13bb9df6-0609-4442-8bed-bba77dadac92",user_name="memos07ea708ac7eb412887c5c283f874ea30")
 
-    get_subgraph(db_name="memtensor_memos", center_id="13bb9df6-0609-4442-8bed-bba77dadac92", depth=2, center_status="activated", user_name="memos07ea708ac7eb412887c5c283f874ea30")
+    get_subgraph(db_name="memtensor_memos", center_id="13bb9df6-0609-4442-8bed-bba77dadac92", depth=2,
+                 center_status="activated", user_name="memos07ea708ac7eb412887c5c283f874ea30")
+
+    get_grouped_counts(db_name="memtensor_memos", user_name="memos07ea708ac7eb412887c5c283f874ea30")
