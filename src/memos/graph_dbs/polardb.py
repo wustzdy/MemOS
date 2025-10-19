@@ -1324,6 +1324,60 @@ class PolarDBGraphDB(BaseGraphDB):
             results = cursor.fetchall()
             return [row[0] for row in results if row[0]]
 
+    def get_grouped_counts_ccl(
+        self,
+        group_fields: list[str],
+        where_clause: str = "",
+        params: dict[str, Any] | None = None,
+        user_name: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """
+        Count nodes grouped by any fields.
+
+        Args:
+            group_fields (list[str]): Fields to group by, e.g., ["memory_type", "status"]
+            where_clause (str, optional): Extra WHERE condition. E.g.,
+            "WHERE n.status = 'activated'"
+            params (dict, optional): Parameters for WHERE clause.
+
+        Returns:
+            list[dict]: e.g., [{ 'memory_type': 'WorkingMemory', 'status': 'active', 'count': 10 }, ...]
+        """
+        user_name = user_name if user_name else self.config.user_name
+        if not group_fields:
+            raise ValueError("group_fields cannot be empty")
+
+        final_params = params.copy() if params else {}
+
+        if not self.config.use_multi_db and (self.config.user_name or user_name):
+            user_clause = "n.user_name = $user_name"
+            final_params["user_name"] = user_name
+            if where_clause:
+                where_clause = where_clause.strip()
+                if where_clause.upper().startswith("WHERE"):
+                    where_clause += f" AND {user_clause}"
+                else:
+                    where_clause = f"WHERE {where_clause} AND {user_clause}"
+            else:
+                where_clause = f"WHERE {user_clause}"
+
+        # Force RETURN field AS field to guarantee key match
+        group_fields_cypher = ", ".join([f"n.{field} AS {field}" for field in group_fields])
+        group_fields_cypher_polardb = ", agtype".join([f"n.{field} AS {field}" for field in group_fields])
+
+        query = f"""
+        SELECT * FROM cypher('{self.db_name}_graph', $$
+            MATCH (n:Memory)
+            {where_clause}
+            RETURN {group_fields_cypher}, COUNT(n) AS count
+        $$ ) as ({group_fields_cypher_polardb}, count agtype); 
+        """
+        with self.connection.cursor() as cursor:
+            cursor.execute(query)
+            results = cursor.fetchall()
+            print(results)
+
+
     def get_grouped_counts(
         self,
         group_fields: list[str],
