@@ -526,16 +526,16 @@ class PolarDBGraphDB(BaseGraphDB):
         if user_name is not None:
             properties["user_name"] = user_name
         query = f"""
-            INSERT INTO "{self.db_name}_graph"."{type}"(id, start_id, end_id, properties)
+            INSERT INTO {self.db_name}_graph."{type}"(id, start_id, end_id, properties)
             SELECT
-                ag_catalog._next_graph_id('"{self.db_name}_graph"'::name, '{type}'),
-                ag_catalog._make_graph_id('"{self.db_name}_graph"'::name, 'Memory'::name, '{source_id}'::text::cstring),
-                ag_catalog._make_graph_id('"{self.db_name}_graph"'::name, 'Memory'::name, '{target_id}'::text::cstring),
+                ag_catalog._next_graph_id('{self.db_name}_graph'::name, '{type}'),
+                ag_catalog._make_graph_id('{self.db_name}_graph'::name, 'Memory'::name, '{source_id}'::text::cstring),
+                ag_catalog._make_graph_id('{self.db_name}_graph'::name, 'Memory'::name, '{target_id}'::text::cstring),
                 jsonb_build_object('user_name', '{user_name}')::text::agtype
             WHERE NOT EXISTS (
-                SELECT 1 FROM "{self.db_name}_graph"."{type}"
-                WHERE start_id = ag_catalog._make_graph_id('"{self.db_name}_graph"'::name, 'Memory'::name, '{source_id}'::text::cstring)
-                  AND end_id   = ag_catalog._make_graph_id('"{self.db_name}_graph"'::name, 'Memory'::name, '{target_id}'::text::cstring)
+                SELECT 1 FROM {self.db_name}_graph."{type}"
+                WHERE start_id = ag_catalog._make_graph_id('{self.db_name}_graph'::name, 'Memory'::name, '{source_id}'::text::cstring)
+                  AND end_id   = ag_catalog._make_graph_id('{self.db_name}_graph'::name, 'Memory'::name, '{target_id}'::text::cstring)
             );
         """
         print(f"Executing add_edge: {query}")
