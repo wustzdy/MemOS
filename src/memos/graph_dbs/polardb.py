@@ -1750,16 +1750,25 @@ class PolarDBGraphDB(BaseGraphDB):
                    WHERE t.id1 = m.id;
                    """
             nodes = []
+            node_ids = set()
+            print("[get_all_memory_items embedding true ] cypher_query:", cypher_query)
             try:
                 with self.connection.cursor() as cursor:
                     cursor.execute(cypher_query)
                     results = cursor.fetchall()
-                    print("[get_all_memory_items] results:", results)
 
                     for row in results:
-                        print("row----------:" + row)
-                        node_agtype = row[0]
-                        # print(f"[get_all_memory_items] Processing row: {type(node_agtype)} = {node_agtype}")
+                        if isinstance(row, (list, tuple)) and len(row) >= 2:
+                            embedding_val, node_val = row[0], row[1]
+                        else:
+                            embedding_val, node_val = None, row[0]
+
+                        node = self._build_node_from_agtype(node_val, embedding_val)
+                        if node:
+                            node_id = node["id"]
+                            if node_id not in node_ids:
+                                nodes.append(node)
+                                node_ids.add(node_id)
 
 
             except Exception as e:
@@ -1775,7 +1784,7 @@ class PolarDBGraphDB(BaseGraphDB):
                    LIMIT 100
                    $$) AS (nprops agtype)
                """
-            print("[get_all_memory_items] cypher_query:", cypher_query)
+            print("[get_all_memory_items embedding false ] cypher_query:", cypher_query)
 
             nodes = []
             try:
