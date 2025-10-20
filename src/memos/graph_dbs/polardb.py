@@ -1824,8 +1824,8 @@ class PolarDBGraphDB(BaseGraphDB):
         
         # 构建返回字段，根据 include_embedding 参数决定是否包含 embedding
         if include_embedding:
-            return_fields = "n"
-            return_fields_agtype =" n agtype"
+            return_fields = "id(n) as id1,n"
+            return_fields_agtype = " id1 agtype,n agtype"
         else:
             # 构建不包含 embedding 的字段列表
             return_fields = ",".join([
@@ -1885,6 +1885,18 @@ class PolarDBGraphDB(BaseGraphDB):
             RETURN {return_fields}
             $$) AS ({return_fields_agtype})
         """
+        if include_embedding:
+            cypher_query = f"""
+                    WITH t as (
+                        {cypher_query}
+                    )
+                        SELECT 
+                        m.embedding, 
+                        t.n
+                        FROM t,
+                             {self.db_name}_graph."Memory" m
+                        WHERE t.id1 = m.id
+                    """
         print("[get_structure_optimization_candidates] query:", cypher_query)
 
         candidates = []
