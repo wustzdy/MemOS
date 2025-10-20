@@ -1757,68 +1757,68 @@ class PolarDBGraphDB(BaseGraphDB):
                 LIMIT 100
                 $$) AS (n agtype)
             """
-        print("[get_all_memory_items] cypher_query:", cypher_query)
+            print("[get_all_memory_items] cypher_query:", cypher_query)
 
-        nodes = []
-        try:
-            with self.connection.cursor() as cursor:
-                cursor.execute(cypher_query)
-                results = cursor.fetchall()
-                print("[get_all_memory_items] results:", results)
-                
-                for row in results:
-                    node_agtype = row[0]
-                    # print(f"[get_all_memory_items] Processing row: {type(node_agtype)} = {node_agtype}")
-                    
-                    # 处理字符串格式的数据
-                    if isinstance(node_agtype, str):
-                        try:
-                            # 移除 ::vertex 后缀
-                            json_str = node_agtype.replace('::vertex', '')
-                            node_data = json.loads(json_str)
-                            
-                            if isinstance(node_data, dict) and "properties" in node_data:
-                                properties = node_data["properties"]
-                                # 构建节点数据
-                                parsed_node_data = {
-                                    "id": properties.get("id", ""),
-                                    "memory": properties.get("memory", ""),
-                                    "metadata": properties
+            nodes = []
+            try:
+                with self.connection.cursor() as cursor:
+                    cursor.execute(cypher_query)
+                    results = cursor.fetchall()
+                    print("[get_all_memory_items] results:", results)
+
+                    for row in results:
+                        node_agtype = row[0]
+                        # print(f"[get_all_memory_items] Processing row: {type(node_agtype)} = {node_agtype}")
+
+                        # 处理字符串格式的数据
+                        if isinstance(node_agtype, str):
+                            try:
+                                # 移除 ::vertex 后缀
+                                json_str = node_agtype.replace('::vertex', '')
+                                node_data = json.loads(json_str)
+
+                                if isinstance(node_data, dict) and "properties" in node_data:
+                                    properties = node_data["properties"]
+                                    # 构建节点数据
+                                    parsed_node_data = {
+                                        "id": properties.get("id", ""),
+                                        "memory": properties.get("memory", ""),
+                                        "metadata": properties
+                                    }
+
+                                    if include_embedding and "embedding" in properties:
+                                        parsed_node_data["embedding"] = properties["embedding"]
+
+                                    nodes.append(self._parse_node(parsed_node_data))
+                                    print(f"[get_all_memory_items] ✅ 成功解析节点: {properties.get('id', '')}")
+                                else:
+                                    print(f"[get_all_memory_items] ❌ 节点数据格式不正确: {node_data}")
+
+                            except (json.JSONDecodeError, TypeError) as e:
+                                print(f"[get_all_memory_items] ❌ JSON 解析失败: {e}")
+                        elif node_agtype and hasattr(node_agtype, 'value'):
+                            # 处理 agtype 对象
+                            node_props = node_agtype.value
+                            if isinstance(node_props, dict):
+                                # 解析节点属性
+                                node_data = {
+                                    "id": node_props.get("id", ""),
+                                    "memory": node_props.get("memory", ""),
+                                    "metadata": node_props
                                 }
-                                
-                                if include_embedding and "embedding" in properties:
-                                    parsed_node_data["embedding"] = properties["embedding"]
-                                
-                                nodes.append(self._parse_node(parsed_node_data))
-                                print(f"[get_all_memory_items] ✅ 成功解析节点: {properties.get('id', '')}")
-                            else:
-                                print(f"[get_all_memory_items] ❌ 节点数据格式不正确: {node_data}")
-                                
-                        except (json.JSONDecodeError, TypeError) as e:
-                            print(f"[get_all_memory_items] ❌ JSON 解析失败: {e}")
-                    elif node_agtype and hasattr(node_agtype, 'value'):
-                        # 处理 agtype 对象
-                        node_props = node_agtype.value
-                        if isinstance(node_props, dict):
-                            # 解析节点属性
-                            node_data = {
-                                "id": node_props.get("id", ""),
-                                "memory": node_props.get("memory", ""),
-                                "metadata": node_props
-                            }
-                            
-                            if include_embedding and "embedding" in node_props:
-                                node_data["embedding"] = node_props["embedding"]
-                            
-                            nodes.append(self._parse_node(node_data))
-                            print(f"[get_all_memory_items] ✅ 成功解析 agtype 节点: {node_props.get('id', '')}")
-                    else:
-                        print(f"[get_all_memory_items] ❌ 未知的数据格式: {type(node_agtype)}")
-                    
-        except Exception as e:
-            logger.error(f"Failed to get memories: {e}", exc_info=True)
-            
-        return nodes
+
+                                if include_embedding and "embedding" in node_props:
+                                    node_data["embedding"] = node_props["embedding"]
+
+                                nodes.append(self._parse_node(node_data))
+                                print(f"[get_all_memory_items] ✅ 成功解析 agtype 节点: {node_props.get('id', '')}")
+                        else:
+                            print(f"[get_all_memory_items] ❌ 未知的数据格式: {type(node_agtype)}")
+
+            except Exception as e:
+                logger.error(f"Failed to get memories: {e}", exc_info=True)
+
+            return nodes
 
     def get_structure_optimization_candidates(
         self, scope: str, include_embedding: bool = False, user_name: str | None = None
