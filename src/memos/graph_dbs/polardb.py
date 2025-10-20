@@ -1753,9 +1753,9 @@ class PolarDBGraphDB(BaseGraphDB):
                 SELECT * FROM cypher('{self.db_name}_graph', $$
                 MATCH (n:Memory)
                 WHERE n.memory_type = '{scope}' AND n.user_name = '{user_name}'
-                RETURN n
+                RETURN properties(n) as props
                 LIMIT 100
-                $$) AS (n agtype)
+                $$) AS (nprops agtype)
             """
             print("[get_all_memory_items] cypher_query:", cypher_query)
 
