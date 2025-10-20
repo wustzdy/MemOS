@@ -1789,6 +1789,7 @@ class PolarDBGraphDB(BaseGraphDB):
         # 构建返回字段，根据 include_embedding 参数决定是否包含 embedding
         if include_embedding:
             return_fields = "n"
+            return_fields_agtype =" n agtype"
         else:
             # 构建不包含 embedding 的字段列表
             return_fields = ",".join([
@@ -1810,6 +1811,26 @@ class PolarDBGraphDB(BaseGraphDB):
                 "n.visibility AS visibility",
                 "n.usage AS usage",
                 "n.background AS background"
+            ])
+            return_fields_agtype = " agtype,".join([
+                "id ",
+                "memory",
+                "user_name",
+                "user_id",
+                "session_id",
+                "status",
+                "key",
+                "confidence",
+                "tags",
+                "created_at",
+                "updated_at",
+                "memory_type",
+                "sources",
+                "source",
+                "node_type",
+                "visibility",
+                "usage",
+                "background"
             ])
 
         # 保留写法
@@ -1839,7 +1860,7 @@ class PolarDBGraphDB(BaseGraphDB):
             WITH n, c, p
             WHERE c IS NULL AND p IS NULL
             RETURN {return_fields}
-            $$) AS (result agtype)
+            $$) AS ({return_fields_agtype})
         """
         print("[get_structure_optimization_candidates] query:", cypher_query)
 
