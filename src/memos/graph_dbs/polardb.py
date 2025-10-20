@@ -1811,6 +1811,21 @@ class PolarDBGraphDB(BaseGraphDB):
                 "n.background AS background"
             ])
 
+        # 保留写法
+        cypher_query_1 = f"""
+            SELECT m.*
+            FROM memtensor_memos_graph."Memory" m
+            WHERE 
+              ag_catalog.agtype_access_operator(m.properties, '"memory_type"'::ag_catalog.agtype) = '"LongTermMemory"'::ag_catalog.agtype
+              AND ag_catalog.agtype_access_operator(m.properties, '"status"'::ag_catalog.agtype) = '"activated"'::ag_catalog.agtype
+              AND ag_catalog.agtype_access_operator(m.properties, '"user_name"'::ag_catalog.agtype) = '"activated"'::ag_catalog.agtype
+                AND NOT EXISTS (
+                SELECT 1 
+                FROM memtensor_memos_graph."PARENT" p 
+                WHERE m.id = p.start_id OR m.id = p.end_id 
+              ); 
+        """
+
         # 使用 OPTIONAL MATCH 来查找孤立节点（没有父节点和子节点的节点）
         cypher_query = f"""
             SELECT * FROM cypher('{self.db_name}_graph', $$
