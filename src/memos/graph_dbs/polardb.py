@@ -1748,6 +1748,23 @@ class PolarDBGraphDB(BaseGraphDB):
                         {self.db_name}_graph."Memory" m
                    WHERE t.id1 = m.id;
                    """
+            nodes = []
+            try:
+                with self.connection.cursor() as cursor:
+                    cursor.execute(cypher_query)
+                    results = cursor.fetchall()
+                    print("[get_all_memory_items] results:", results)
+
+                    for row in results:
+                        print("row----------:" + row)
+                        node_agtype = row[0]
+                        # print(f"[get_all_memory_items] Processing row: {type(node_agtype)} = {node_agtype}")
+
+
+            except Exception as e:
+                logger.error(f"Failed to get memories: {e}", exc_info=True)
+
+            return nodes
         else:
             cypher_query = f"""
                    SELECT * FROM cypher('{self.db_name}_graph', $$
