@@ -1859,10 +1859,10 @@ class PolarDBGraphDB(BaseGraphDB):
                 results = cursor.fetchall()
                 print("result------",len(results))
                 for row in results:
-                    result_agtype = row[0]
-                    if result_agtype and hasattr(result_agtype, 'value'):
-                        if include_embedding:
-                            # 当 include_embedding=True 时，返回完整的节点对象
+                    if include_embedding:
+                        # 当 include_embedding=True 时，返回完整的节点对象
+                        result_agtype = row[0]
+                        if result_agtype and hasattr(result_agtype, 'value'):
                             node_props = result_agtype.value
                             if isinstance(node_props, dict) and "properties" in node_props:
                                 node = self._parse_node(node_props["properties"])
@@ -1870,15 +1870,42 @@ class PolarDBGraphDB(BaseGraphDB):
                                 if node_id not in node_ids:
                                     candidates.append(node)
                                     node_ids.add(node_id)
-                        else:
-                            # 当 include_embedding=False 时，返回字段字典
-                            props = result_agtype.value
-                            if isinstance(props, dict):
-                                node = self._parse_node(props)
-                                node_id = node["id"]
-                                if node_id not in node_ids:
-                                    candidates.append(node)
-                                    node_ids.add(node_id)
+                    else:
+                        # 当 include_embedding=False 时，返回字段字典
+                        # 定义字段名称（与查询中的 RETURN 字段对应）
+                        field_names = [
+                            "id", "memory", "user_name", "user_id", "session_id", "status", 
+                            "key", "confidence", "tags", "created_at", "updated_at", 
+                            "memory_type", "sources", "source", "node_type", "visibility", 
+                            "usage", "background"
+                        ]
+                        
+                        # 将行数据转换为字典
+                        node_data = {}
+                        for i, field_name in enumerate(field_names):
+                            if i < len(row):
+                                value = row[i]
+                                # 处理特殊字段
+                                if field_name in ["tags", "sources", "usage"] and isinstance(value, str):
+                                    try:
+                                        # 尝试解析 JSON 字符串
+                                        node_data[field_name] = json.loads(value)
+                                    except (json.JSONDecodeError, TypeError):
+                                        node_data[field_name] = value
+                                else:
+                                    node_data[field_name] = value
+                        
+                        # 使用 _parse_node 方法解析
+                        try:
+                            node = self._parse_node(node_data)
+                            node_id = node["id"]
+                            
+                            if node_id not in node_ids:
+                                candidates.append(node)
+                                node_ids.add(node_id)
+                                print(f"✅ 成功解析节点: {node_id}")
+                        except Exception as e:
+                            print(f"❌ 解析节点失败: {e}")
                                 
         except Exception as e:
             logger.error(f"Failed to get structure optimization candidates: {e}", exc_info=True)
