@@ -121,10 +121,10 @@ def searchVector(db_name: str, vectorStr: list[float], user_name: str = None):
     # print("单个node:", detail)
     #
     # # 3，查询多个get_nodes
-    # ids = ['bb079c5b-1937-4125-a9e5-55d4abe6c95d', 'd66120af-992b-44c6-b261-a6ebe6bc57a5']
-    # ids = ['bfde036f-6276-4485-9dc6-3c64eab3e132']
-    # detail_list = graph.get_nodes(ids=ids,user_name='memos7a9f9fbbb61c412f94f77fbaa8103c35')
-    # print("1111多个node:", len(detail_list))
+    ids = ['bb079c5b-1937-4125-a9e5-55d4abe6c95d', 'd66120af-992b-44c6-b261-a6ebe6bc57a5']
+    ids = ['"bfde036f-6276-4485-9dc6-3c64eab3e132"']
+    detail_list = graph.get_nodes(ids=ids,user_name='memos7a9f9fbbb61c412f94f77fbaa8103c35')
+    print("1111多个node:", len(detail_list))
     #
     # print("多个node:", detail_list)
 

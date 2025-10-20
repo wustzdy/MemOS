@@ -764,7 +764,7 @@ class PolarDBGraphDB(BaseGraphDB):
         
         for id_val in ids:
             where_conditions.append("ag_catalog.agtype_access_operator(properties, '\"id\"'::agtype) = %s::agtype")
-            params.append(f'"{id_val}"')
+            params.append(f'{id_val}')
         
         where_clause = " OR ".join(where_conditions)
         
@@ -1239,8 +1239,9 @@ class PolarDBGraphDB(BaseGraphDB):
         #         where_clauses.append(f"ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = '\"{kwargs['cube_name']}\"'::agtype")
         #     else:
         #         where_clauses.append(f"ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = '\"{user_name}\"'::agtype")
-        if user_name:
-            where_clauses.append(f"ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = '\"{user_name}\"'::agtype")
+        user_name = user_name if user_name else self.config.user_name
+        where_clauses.append(f"ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = '\"{user_name}\"'::agtype")
+
         # Add search_filter conditions like nebular.py
         if search_filter:
             for key, value in search_filter.items():
