@@ -91,12 +91,12 @@ def getPolarDb(db_name):
     config = GraphDBConfigFactory(
         backend="polardb",
         config={
-            "host": "xxx",
+            "host": "memory.pg.polardb.rds.aliyuncs.com",
             "port": 5432,
-            "user": "xxxx",
-            "password": "xxxx",
+            "user": "adimin",
+            "password": "Openmem0925",
             "db_name": db_name,
-            "user_name": 'xxxx',
+            "user_name": 'adimin',
             "use_multi_db": True,  # 设置为True，不添加user_name过滤条件
             "auto_create": True,
             "embedding_dimension": 1024,
@@ -195,6 +195,12 @@ def get_structure_optimization_candidates(db_name, scope, include_embedding, use
     graph = getPolarDb(db_name)
     candidates = graph.get_structure_optimization_candidates(scope=scope, include_embedding=include_embedding, user_name=user_name)
     print("get_structure_optimization_candidates:", candidates)
+
+
+def get_all_memory_items(db_name, scope, include_embedding, user_name):
+    graph = getPolarDb(db_name)
+    memory_items = graph.get_all_memory_items(scope=scope, include_embedding=include_embedding, user_name=user_name)
+    print("get_all_memory_items:", memory_items)
 
 
 if __name__ == "__main__":
@@ -338,7 +344,9 @@ if __name__ == "__main__":
               -0.01335147, -0.040344328, 0.029144352, -0.04174814, 0.023315482, -0.02227788, -0.0022716573, -0.03152473,
               0.0482484, -0.027038634, -0.004882823, 0.06152357, -0.003881463, -0.036041338, -0.0075645614, 0.020660445,
               -0.07250992, -0.024429375, -0.036377035]
-    searchVector(db_name="memtensor_memos", vectorStr=vector, user_name="memos7a9f9fbbb61c412f94f77fbaa8103c35")
+    # searchVector(db_name="memtensor_memos", vectorStr=vector, user_name="memos7a9f9fbbb61c412f94f77fbaa8103c35")
+
+
     # searchVector(db_name="test_1020_02", vectorStr=vector)
 
     # add_edge(db_name="memtensor_memos",source_id="13bb9df6-0609-4442-8bed-bba77dadac92", target_id="2dd03a5b-5d5f-49c9-9e0a-9a2a2899b98d", edge_type="PARENT", user_name="memosbfb3fb32032b4077a641404dc48739cd")
@@ -356,4 +364,6 @@ if __name__ == "__main__":
 
     # export_graph(db_name="memtensor_memos", include_embedding=False, user_name="memos8698ecb1f76940ff9adc12494c4d57a6")
 
-    # get_structure_optimization_candidates(db_name="memtensor_memos", scope='UserMemory', include_embedding=True, user_name="memose62f1a2ef8c54ccfadf329d11d1e31ad")
+    # get_structure_optimization_candidates(db_name="memtensor_memos", scope='UserMemory', include_embedding=False, user_name="memos8f5530534d9b413bb8981ffc3d48a495")
+
+    get_all_memory_items(db_name="memtensor_memos", scope='UserMemory', include_embedding=False, user_name="memos8f5530534d9b413bb8981ffc3d48a495")
