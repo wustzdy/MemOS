@@ -1917,15 +1917,17 @@ class PolarDBGraphDB(BaseGraphDB):
                 for row in results:
                     if include_embedding:
                         # 当 include_embedding=True 时，返回完整的节点对象
-                        result_agtype = row[0]
-                        if result_agtype and hasattr(result_agtype, 'value'):
-                            node_props = result_agtype.value
-                            if isinstance(node_props, dict) and "properties" in node_props:
-                                node = self._parse_node_new(node_props["properties"])
-                                node_id = node["id"]
-                                if node_id not in node_ids:
-                                    candidates.append(node)
-                                    node_ids.add(node_id)
+                        if isinstance(row, (list, tuple)) and len(row) >= 2:
+                            embedding_val, node_val = row[0], row[1]
+                        else:
+                            embedding_val, node_val = None, row[0]
+
+                        node = self._build_node_from_agtype(node_val, embedding_val)
+                        if node:
+                            node_id = node["id"]
+                            if node_id not in node_ids:
+                                candidates.append(node)
+                                node_ids.add(node_id)
                     else:
                         # 当 include_embedding=False 时，返回字段字典
                         # 定义字段名称（与查询中的 RETURN 字段对应）
@@ -2175,3 +2177,33 @@ class PolarDBGraphDB(BaseGraphDB):
                 """
                 cursor.execute(insert_query, (id, json.dumps(properties)))
                 logger.info(f"Added node {id} to graph '{self.db_name}_graph'.")
+
+    def _build_node_from_agtype(self, node_agtype, embedding=None):
+        """
+        将 cypher 返回的 n 列（agtype 或 JSON 字符串）解析为标准节点，
+        并把 embedding 合并进 properties 里。
+        """
+        try:
+            # 字符串场景: '{"id":...,"label":[...],"properties":{...}}::vertex'
+            if isinstance(node_agtype, str):
+                json_str = node_agtype.replace('::vertex', '')
+                obj = json.loads(json_str)
+                if not (isinstance(obj, dict) and "properties" in obj):
+                    return None
+                props = obj["properties"]
+            # agtype 场景: 带 value 属性
+            elif node_agtype and hasattr(node_agtype, "value"):
+                val = node_agtype.value
+                if not (isinstance(val, dict) and "properties" in val):
+                    return None
+                props = val["properties"]
+            else:
+                return None
+
+            if embedding is not None:
+                props["embedding"] = embedding
+
+            node_data = {"id": props.get("id", ""), "memory": props.get("memory", ""), "metadata": props}
+            return self._parse_node_new(node_data)
+        except Exception:
+            return None
