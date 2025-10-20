@@ -1913,7 +1913,7 @@ class PolarDBGraphDB(BaseGraphDB):
                         if result_agtype and hasattr(result_agtype, 'value'):
                             node_props = result_agtype.value
                             if isinstance(node_props, dict) and "properties" in node_props:
-                                node = self._parse_node(node_props["properties"])
+                                node = self._parse_node_new(node_props["properties"])
                                 node_id = node["id"]
                                 if node_id not in node_ids:
                                     candidates.append(node)
@@ -1945,7 +1945,7 @@ class PolarDBGraphDB(BaseGraphDB):
                         
                         # 使用 _parse_node 方法解析
                         try:
-                            node = self._parse_node(node_data)
+                            node = self._parse_node_new(node_data)
                             node_id = node["id"]
                             
                             if node_id not in node_ids:
@@ -1976,6 +1976,31 @@ class PolarDBGraphDB(BaseGraphDB):
     def _parse_node(self, node_data: dict[str, Any]) -> dict[str, Any]:
         """Parse node data from database format to standard format."""
         node = node_data.copy()
+
+        # Convert datetime to string
+        for time_field in ("created_at", "updated_at"):
+            if time_field in node and hasattr(node[time_field], "isoformat"):
+                node[time_field] = node[time_field].isoformat()
+
+        # 不再对sources和usage字段进行反序列化，保持List[str]格式
+        # 不再移除user_name字段，保持所有字段
+
+        return {"id": node.pop("id"), "memory": node.pop("memory", ""), "metadata": node}
+
+    def _parse_node_new(self, node_data: dict[str, Any]) -> dict[str, Any]:
+        """Parse node data from database format to standard format."""
+        node = node_data.copy()
+
+        # Normalize string values that may arrive as quoted literals (e.g., '"abc"')
+        def _strip_wrapping_quotes(value: Any) -> Any:
+            if isinstance(value, str) and len(value) >= 2:
+                if value[0] == value[-1] and value[0] in ("'", '"'):
+                    return value[1:-1]
+            return value
+
+        for k, v in list(node.items()):
+            if isinstance(v, str):
+                node[k] = _strip_wrapping_quotes(v)
 
         # Convert datetime to string
         for time_field in ("created_at", "updated_at"):
