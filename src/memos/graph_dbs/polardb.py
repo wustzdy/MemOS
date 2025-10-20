@@ -1216,6 +1216,7 @@ class PolarDBGraphDB(BaseGraphDB):
             status: str | None = None,
             threshold: float | None = None,
             search_filter: dict | None = None,
+            user_name: str | None = None,
             **kwargs,
     ) -> list[dict]:
         """
@@ -1231,13 +1232,15 @@ class PolarDBGraphDB(BaseGraphDB):
             where_clauses.append("ag_catalog.agtype_access_operator(properties, '\"status\"'::agtype) = '\"activated\"'::agtype")
         where_clauses.append("embedding is not null")
         # Add user_name filter like nebular.py
-        user_name = self._get_config_value("user_name")
-        if not self.config.use_multi_db and user_name:
-            if kwargs.get("cube_name"):
-                where_clauses.append(f"ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = '\"{kwargs['cube_name']}\"'::agtype")
-            else:
-                where_clauses.append(f"ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = '\"{user_name}\"'::agtype")
-        
+
+        # user_name = self._get_config_value("user_name")
+        # if not self.config.use_multi_db and user_name:
+        #     if kwargs.get("cube_name"):
+        #         where_clauses.append(f"ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = '\"{kwargs['cube_name']}\"'::agtype")
+        #     else:
+        #         where_clauses.append(f"ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = '\"{user_name}\"'::agtype")
+        if user_name:
+            where_clauses.append(f"ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = '\"{user_name}\"'::agtype")
         # Add search_filter conditions like nebular.py
         if search_filter:
             for key, value in search_filter.items():
@@ -1267,7 +1270,8 @@ class PolarDBGraphDB(BaseGraphDB):
                     WHERE scope > 0.1;
                 """
         params = [vector]
-        print(where_clause)
+
+        print(f"[search_by_embedding] query: {query}, params: {params}, where_clause: {where_clause}")
         with self.connection.cursor() as cursor:
             cursor.execute(query, params)
             results = cursor.fetchall()

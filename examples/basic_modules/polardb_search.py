@@ -106,31 +106,30 @@ def getPolarDb(db_name):
     return graph
 
 
-def searchVector(db_name: str, vectorStr: list[float]):
+def searchVector(db_name: str, vectorStr: list[float], user_name: str = None):
     graph = getPolarDb(db_name)
 
     # 1，查询search_by_embedding
-    nodes = graph.search_by_embedding(vector=vectorStr, top_k=1)
+    nodes = graph.search_by_embedding(vector=vectorStr, top_k=1, user_name=user_name)
     print("search_by_embedding nodes:", len(nodes))
     for node_i in nodes:
         print("Search result:", graph.get_node(node_i["id"][1:-1]))
 
     # 2，查询单个get_node
-    detail = graph.get_node(id="194f1e30-44d2-4e3f-bc58-c950343c56b7",
-                            user_name='memos231a22c655fd4b859ca4143b97d2b808')
-    print("单个node:", detail)
+    # detail = graph.get_node(id="194f1e30-44d2-4e3f-bc58-c950343c56b7",
+    #                         user_name='memos231a22c655fd4b859ca4143b97d2b808')
+    # print("单个node:", detail)
     #
     # # 3，查询多个get_nodes
     # ids = ['bb079c5b-1937-4125-a9e5-55d4abe6c95d', 'd66120af-992b-44c6-b261-a6ebe6bc57a5']
-    # detail_list = graph.get_nodes(ids)
+    # ids = ['bfde036f-6276-4485-9dc6-3c64eab3e132']
+    # detail_list = graph.get_nodes(ids=ids,user_name='memos7a9f9fbbb61c412f94f77fbaa8103c35')
     # print("1111多个node:", len(detail_list))
     #
     # print("多个node:", detail_list)
 
     # 4，更新 update_node
     # graph.update_node(id="000009999ef-926f-42e2-b7b5-0224daf0abcd", fields={"name": "new_name"})
-    # for node_i in nodes:
-    #     print("Search result:", graph.get_node(node_i["id"]))
 
     # 4，查询 get_memory_count
     # count = graph.get_memory_count('UserMemory','memos07ba3d044650474c839e721f3a69d38a')
@@ -176,7 +175,7 @@ def get_children_with_embeddings(db_name: str, id: str, user_name: str = None):
 def get_subgraph(db_name, center_id, depth, center_status, user_name):
     graph = getPolarDb(db_name)
     subgraph = graph.get_subgraph(center_id, depth, center_status, user_name)
-    print("get_subgraph:", subgraph)
+    print("111111get_subgraph:", subgraph)
 
 
 def get_grouped_counts(db_name, user_name):
@@ -190,6 +189,12 @@ def export_graph(db_name, include_embedding, user_name):
     graph = getPolarDb(db_name)
     export_graphlist = graph.export_graph(include_embedding=include_embedding, user_name=user_name)
     print("export_graph:", export_graphlist)
+
+
+def get_structure_optimization_candidates(db_name, scope, include_embedding, user_name):
+    graph = getPolarDb(db_name)
+    candidates = graph.get_structure_optimization_candidates(scope=scope, include_embedding=include_embedding, user_name=user_name)
+    print("get_structure_optimization_candidates:", candidates)
 
 
 if __name__ == "__main__":
@@ -333,7 +338,7 @@ if __name__ == "__main__":
               -0.01335147, -0.040344328, 0.029144352, -0.04174814, 0.023315482, -0.02227788, -0.0022716573, -0.03152473,
               0.0482484, -0.027038634, -0.004882823, 0.06152357, -0.003881463, -0.036041338, -0.0075645614, 0.020660445,
               -0.07250992, -0.024429375, -0.036377035]
-    searchVector(db_name="memtensor_memos", vectorStr=vector)
+    searchVector(db_name="memtensor_memos", vectorStr=vector, user_name="memos7a9f9fbbb61c412f94f77fbaa8103c35")
     # searchVector(db_name="test_1020_02", vectorStr=vector)
 
     # add_edge(db_name="memtensor_memos",source_id="13bb9df6-0609-4442-8bed-bba77dadac92", target_id="2dd03a5b-5d5f-49c9-9e0a-9a2a2899b98d", edge_type="PARENT", user_name="memosbfb3fb32032b4077a641404dc48739cd")
@@ -343,9 +348,12 @@ if __name__ == "__main__":
 
     # get_children_with_embeddings(db_name="memtensor_memos", id="13bb9df6-0609-4442-8bed-bba77dadac92",user_name="memos07ea708ac7eb412887c5c283f874ea30")
 
-    # get_subgraph(db_name="memtensor_memos", center_id="13bb9df6-0609-4442-8bed-bba77dadac92", depth=2,
+    # get_subgraph(db_name="memtensor_memos", center_id="13bb9df6-0609-4442-8bed-bba77dadac92", depth=1,
     #              center_status="activated", user_name="memos07ea708ac7eb412887c5c283f874ea30")
+
     #
     # get_grouped_counts(db_name="memtensor_memos", user_name="memos07ea708ac7eb412887c5c283f874ea30")
 
-    export_graph(db_name="memtensor_memos", include_embedding=False, user_name="memos8698ecb1f76940ff9adc12494c4d57a6")
+    # export_graph(db_name="memtensor_memos", include_embedding=False, user_name="memos8698ecb1f76940ff9adc12494c4d57a6")
+
+    # get_structure_optimization_candidates(db_name="memtensor_memos", scope='UserMemory', include_embedding=True, user_name="memose62f1a2ef8c54ccfadf329d11d1e31ad")
