@@ -1784,11 +1784,11 @@ class PolarDBGraphDB(BaseGraphDB):
                     print("[get_all_memory_items] results:", results)
 
                     for row in results:
-                        print("row----------:"+row)
-                        node_agtype = row[0]
-                        # print(f"[get_all_memory_items] Processing row: {type(node_agtype)} = {node_agtype}")
-
-
+                        if isinstance(row[0], str):
+                            memory_data = json.loads(row[0])
+                        else:
+                            memory_data = row[0]  # 如果已经是字典，直接使用
+                        nodes.append(self._parse_node(memory_data))
             except Exception as e:
                 logger.error(f"Failed to get memories: {e}", exc_info=True)
 
