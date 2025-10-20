@@ -1733,13 +1733,21 @@ class PolarDBGraphDB(BaseGraphDB):
         # 使用 cypher 查询获取记忆项
         if include_embedding:
             cypher_query = f"""
-                SELECT * FROM cypher('{self.db_name}_graph', $$
-                MATCH (n:Memory)
-                WHERE n.memory_type = '{scope}' AND n.user_name = '{user_name}'
-                RETURN n
-                LIMIT 100
-                $$) AS (n agtype)
-            """
+                WITH t as (
+                    SELECT * FROM cypher('{self.db_name}_graph', $$
+                    MATCH (n:Memory)
+                    WHERE n.memory_type = '{scope}' AND n.user_name = '{user_name}'
+                    RETURN id(n) as id1,n
+                    LIMIT 100
+                    $$) AS (id1 agtype,n agtype)
+                )
+                SELECT 
+                    m.embedding, 
+                    t.n
+                FROM t,
+                     {self.db_name}_graph."Memory" m
+                WHERE t.id1 = m.id;
+                """
         else:
             cypher_query = f"""
                 SELECT * FROM cypher('{self.db_name}_graph', $$
