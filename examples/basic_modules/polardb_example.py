@@ -38,10 +38,10 @@ def example_multi_db(db_name: str = "paper_polardb"):
     config = GraphDBConfigFactory(
         backend="polardb",
         config={
-            "host": "139.196.232.20",
+            "host": "xxxxxxx",
             "port": 5432,
-            "user": "root",
-            "password": "123456",
+            "user": "xxxx",
+            "password": "xxxx",
             "db_name": db_name,
             "auto_create": True,
             "embedding_dimension": 1024,
@@ -277,10 +277,10 @@ def example_shared_db(db_name: str = "shared_travel_group_polardb"):
         config = GraphDBConfigFactory(
             backend="polardb",
             config={
-                "host": "139.196.232.20",
+                "host": "xxxxxxx",
                 "port": 5432,
-                "user": "root",
-                "password": "123456",
+                "user": "xxxx",
+                "password": "xxxx",
                 "db_name": db_name,
                 "user_name": user_name,
                 "use_multi_db": False,
@@ -343,10 +343,10 @@ def example_shared_db(db_name: str = "shared_travel_group_polardb"):
     config_alice = GraphDBConfigFactory(
         backend="polardb",
         config={
-            "host": "139.196.232.20",
+            "host": "xxxxxxx",
             "port": 5432,
-            "user": "root",
-            "password": "123456",
+            "user": "xxxx",
+            "password": "xxxx",
             "db_name": db_name,
             "user_name": user_list[0],
             "embedding_dimension": 1024,
@@ -371,10 +371,10 @@ def run_user_session(
     config = GraphDBConfigFactory(
         backend="polardb",
         config={
-            "host": "139.196.232.20",
+            "host": "xxxxxxx",
             "port": 5432,
-            "user": "root",
-            "password": "123456",
+            "user": "xxxx",
+            "password": "xxxx",
             "db_name": db_name,
             "user_name": user_name,
             "use_multi_db": False,
@@ -513,7 +513,7 @@ if __name__ == "__main__":
         # example_shared_db(db_name="shared_travel_group_polardb")
 
         print("\n=== PolarDB Example: Single-DB-Complex ===")
-        example_complex_shared_db(db_name="test_memos_1011")
+        example_complex_shared_db(db_name="memtensor_memos")
     except Exception as e:
         print(f"❌ Error running111111 PolarDB example: {e}")
         print("Please check:")

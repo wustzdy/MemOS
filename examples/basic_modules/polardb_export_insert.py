@@ -16,15 +16,15 @@ from memos.graph_dbs.factory import GraphStoreFactory
 
 
 DB_CONFIG = {
-    'host': 'memory.pg.polardb.rds.aliyuncs.com',
+    'host': 'xxxxxxx',
     'port': 5432,
-    'database': 'test_memos',
-    'user': 'adimin',
-    'password': 'Openmem0925'
+    'database': 'xxxxx',
+    'user': 'xxxx',
+    'password': 'xxxx'
 }
 
 # 图数据库配置
-GRAPH_NAME = 'test_memos_graph'
+GRAPH_NAME = 'memtensor_memos_graph'
 
 
 def create_vector_extension(conn):
@@ -199,14 +199,14 @@ def insert_data(conn, data_list, graph_name=None):
     config = GraphDBConfigFactory(
         backend="polardb",
         config={
-            "host": "memory.pg.polardb.rds.aliyuncs.com",
+            "host": "xxxxxxx",
             "port": 5432,
-            "user": "adimin",
-            "password": "Openmem0925",
-            "db_name": "memtensor_memos",
-            "user_name": 'adimin',
+            "user": "xxxx",
+            "password": "xxxx",
+            "db_name": "xxxxx",
+            "user_name": 'xxxx',
             "use_multi_db": False,
-            "auto_create": True,
+            "auto_create": False,
             "embedding_dimension": 1024,
         },
     )

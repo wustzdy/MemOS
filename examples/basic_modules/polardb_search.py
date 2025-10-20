@@ -24,11 +24,11 @@ def handler_node_edge(db_name: str = "shared-traval-group-complex", type: str = 
 
 
 DB_CONFIG = {
-    'host': 'memory.pg.polardb.rds.aliyuncs.com',
+    'host': 'xxxxxxx',
     'port': 5432,
-    'database': 'test_memos',
-    'user': 'adimin',
-    'password': 'Openmem0925'
+    'database': 'xxxxx',
+    'user': 'xxxx',
+    'password': 'xxxx'
 }
 
 
@@ -91,12 +91,12 @@ def getPolarDb(db_name):
     config = GraphDBConfigFactory(
         backend="polardb",
         config={
-            "host": "memory.pg.polardb.rds.aliyuncs.com",
+            "host": "xxx",
             "port": 5432,
-            "user": "adimin",
-            "password": "Openmem0925",
+            "user": "xxxx",
+            "password": "xxxx",
             "db_name": db_name,
-            "user_name": 'adimin',
+            "user_name": 'xxxx',
             "use_multi_db": True,  # 设置为True，不添加user_name过滤条件
             "auto_create": True,
             "embedding_dimension": 1024,

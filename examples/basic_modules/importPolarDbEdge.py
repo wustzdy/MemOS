@@ -4,11 +4,11 @@ import psycopg2
 
 # 数据库连接配置
 DB_CONFIG = {
-    'host': 'memory.pg.polardb.rds.aliyuncs.com',
+    'host': 'xxxxx',
     'port': 5432,
-    'database': 'memtensor_memos',
-    'user': 'adimin',
-    'password': 'Openmem0925'
+    'database': 'xxxxx',
+    'user': 'xxxx',
+    'password': 'xxxx'
 }
 
 # 顶层目录

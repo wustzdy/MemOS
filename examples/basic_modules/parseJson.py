@@ -9,11 +9,11 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from polardb_export_insert import insert_data
 
 DB_CONFIG = {
-    'host': 'memory.pg.polardb.rds.aliyuncs.com',
+    'host': 'xxxxxxx',
     'port': 5432,
-    'database': 'memtensor_memos',
-    'user': 'adimin',
-    'password': 'Openmem0925'
+    'database': 'xxxxx',
+    'user': 'xxxx',
+    'password': 'xxxx'
 }
 conn = psycopg2.connect(**DB_CONFIG)
 
@@ -77,5 +77,5 @@ def process_folder(folder_path, batch_size=1000):
 
 
 if __name__ == "__main__":
-    folder_path = r"C:\Users\13282\Desktop\nebular\export13\Memory"
+    folder_path = r"/Users/zhudayang/python/github/1/MemOS/examples/basic_modules"
     process_folder(folder_path, batch_size=1000)
