@@ -804,8 +804,10 @@ class PolarDBGraphDB(BaseGraphDB):
                 # Parse embedding from JSONB if it exists
                 if embedding_json is not None:
                     try:
-                        embedding = json.loads(embedding_json) if isinstance(embedding_json, str) else embedding_json
-                        properties["embedding"] = embedding
+                        print("embedding_json:", embedding_json)
+                        # remove embedding
+                        # embedding = json.loads(embedding_json) if isinstance(embedding_json, str) else embedding_json
+                        # properties["embedding"] = embedding
                     except (json.JSONDecodeError, TypeError):
                         logger.warning(f"Failed to parse embedding for node {node_id}")
                 nodes.append(self._parse_node(
@@ -1758,7 +1760,7 @@ class PolarDBGraphDB(BaseGraphDB):
                 
                 for row in results:
                     node_agtype = row[0]
-                    print(f"[get_all_memory_items] Processing row: {type(node_agtype)} = {node_agtype}")
+                    # print(f"[get_all_memory_items] Processing row: {type(node_agtype)} = {node_agtype}")
                     
                     # 处理字符串格式的数据
                     if isinstance(node_agtype, str):
