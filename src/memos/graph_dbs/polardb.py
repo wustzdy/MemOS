@@ -364,6 +364,8 @@ class PolarDBGraphDB(BaseGraphDB):
         if not fields:
             return
 
+        user_name = user_name if user_name else self.config.user_name
+
         # 获取当前节点
         current_node = self.get_node(id, user_name=user_name)
         if not current_node:
