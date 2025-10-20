@@ -1812,26 +1812,13 @@ class PolarDBGraphDB(BaseGraphDB):
                 "n.usage AS usage",
                 "n.background AS background"
             ])
-            return_fields_agtype = " agtype,".join([
-                "id ",
-                "memory",
-                "user_name",
-                "user_id",
-                "session_id",
-                "status",
-                "key",
-                "confidence",
-                "tags",
-                "created_at",
-                "updated_at",
-                "memory_type",
-                "sources",
-                "source",
-                "node_type",
-                "visibility",
-                "usage",
-                "background"
-            ])
+            fields = [
+                "id", "memory", "user_name", "user_id", "session_id", "status",
+                "key", "confidence", "tags", "created_at", "updated_at",
+                "memory_type", "sources", "source", "node_type", "visibility",
+                "usage", "background"
+            ]
+            return_fields_agtype = ", ".join([f"{field} agtype" for field in fields])
 
         # 保留写法
         cypher_query_1 = f"""
