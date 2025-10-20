@@ -1404,7 +1404,7 @@ class PolarDBGraphDB(BaseGraphDB):
             raise ValueError("group_fields cannot be empty")
 
         final_params = params.copy() if params else {}
-
+        print("username:"+user_name)
         if not self.config.use_multi_db and (self.config.user_name or user_name):
             user_clause = "n.user_name = $user_name"
             final_params["user_name"] = user_name
@@ -1428,6 +1428,7 @@ class PolarDBGraphDB(BaseGraphDB):
             RETURN {group_fields_cypher}, COUNT(n) AS count
         $$ ) as ({group_fields_cypher_polardb}, count agtype); 
         """
+        print("get_grouped_counts:"+query)
         try:
             with self.connection.cursor() as cursor:
                 # 处理参数化查询
@@ -1764,7 +1765,6 @@ class PolarDBGraphDB(BaseGraphDB):
                 with self.connection.cursor() as cursor:
                     cursor.execute(cypher_query)
                     results = cursor.fetchall()
-                    print("[get_all_memory_items] results:", results)
 
                     for row in results:
                         if isinstance(row[0], str):
@@ -1772,6 +1772,8 @@ class PolarDBGraphDB(BaseGraphDB):
                         else:
                             memory_data = row[0]  # 如果已经是字典，直接使用
                         nodes.append(self._parse_node(memory_data))
+                        json_list = [json.loads(row[0]) if isinstance(row[0], str) else row[0] for row in results]
+                        return json_list
             except Exception as e:
                 logger.error(f"Failed to get memories: {e}", exc_info=True)
 
