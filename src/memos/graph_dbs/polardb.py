@@ -1713,6 +1713,71 @@ class PolarDBGraphDB(BaseGraphDB):
                 self.add_edge(edge["source"], edge["target"], edge["type"])
 
     def get_all_memory_items(
+            self, scope: str, include_embedding: bool = False, user_name: str | None = None
+    ) -> list[dict]:
+        """
+        Retrieve all memory items of a specific memory_type.
+
+        Args:
+            scope (str): Must be one of 'WorkingMemory', 'LongTermMemory', or 'UserMemory'.
+            include_embedding: with/without embedding
+            user_name (str, optional): User name for filtering in non-multi-db mode
+
+        Returns:
+            list[dict]: Full list of memory items under this scope.
+        """
+        user_name = user_name if user_name else self._get_config_value("user_name")
+        if scope not in {"WorkingMemory", "LongTermMemory", "UserMemory", "OuterMemory"}:
+            raise ValueError(f"Unsupported memory type scope: {scope}")
+
+        # 使用 cypher 查询获取记忆项
+        if include_embedding:
+            cypher_query = f"""
+                   WITH t as (
+                       SELECT * FROM cypher('{self.db_name}_graph', $$
+                       MATCH (n:Memory)
+                       WHERE n.memory_type = '{scope}' AND n.user_name = '{user_name}'
+                       RETURN id(n) as id1,n
+                       LIMIT 100
+                       $$) AS (id1 agtype,n agtype)
+                   )
+                   SELECT 
+                       m.embedding, 
+                       t.n
+                   FROM t,
+                        {self.db_name}_graph."Memory" m
+                   WHERE t.id1 = m.id;
+                   """
+        else:
+            cypher_query = f"""
+                   SELECT * FROM cypher('{self.db_name}_graph', $$
+                   MATCH (n:Memory)
+                   WHERE n.memory_type = '{scope}' AND n.user_name = '{user_name}'
+                   RETURN properties(n) as props
+                   LIMIT 100
+                   $$) AS (nprops agtype)
+               """
+            print("[get_all_memory_items] cypher_query:", cypher_query)
+
+            nodes = []
+            try:
+                with self.connection.cursor() as cursor:
+                    cursor.execute(cypher_query)
+                    results = cursor.fetchall()
+                    print("[get_all_memory_items] results:", results)
+
+                    for row in results:
+                        print("row----------:"+row)
+                        node_agtype = row[0]
+                        # print(f"[get_all_memory_items] Processing row: {type(node_agtype)} = {node_agtype}")
+
+
+            except Exception as e:
+                logger.error(f"Failed to get memories: {e}", exc_info=True)
+
+            return nodes
+
+    def get_all_memory_items_old(
         self, scope: str, include_embedding: bool = False, user_name: str | None = None
     ) -> list[dict]:
         """
