@@ -110,10 +110,10 @@ def searchVector(db_name: str, vectorStr: list[float], user_name: str = None):
     graph = getPolarDb(db_name)
 
     # 1，查询search_by_embedding
-    nodes = graph.search_by_embedding(vector=vectorStr, top_k=1, user_name=user_name)
-    print("search_by_embedding nodes:", len(nodes))
-    for node_i in nodes:
-        print("Search result:", graph.get_node(node_i["id"][1:-1]))
+    # nodes = graph.search_by_embedding(vector=vectorStr, top_k=1, user_name=user_name)
+    # print("search_by_embedding nodes:", len(nodes))
+    # for node_i in nodes:
+    #     print("Search result:", graph.get_node(node_i["id"][1:-1]))
 
     # 2，查询单个get_node
     # detail = graph.get_node(id="194f1e30-44d2-4e3f-bc58-c950343c56b7",
@@ -126,7 +126,7 @@ def searchVector(db_name: str, vectorStr: list[float], user_name: str = None):
     detail_list = graph.get_nodes(ids=ids,user_name='memos7a9f9fbbb61c412f94f77fbaa8103c35')
     print("1111多个node:", len(detail_list))
     #
-    # print("多个node:", detail_list)
+    print("多个node:", detail_list)
 
     # 4，更新 update_node
     # graph.update_node(id="000009999ef-926f-42e2-b7b5-0224daf0abcd", fields={"name": "new_name"})
@@ -200,7 +200,7 @@ def get_structure_optimization_candidates(db_name, scope, include_embedding, use
 def get_all_memory_items(db_name, scope, include_embedding, user_name):
     graph = getPolarDb(db_name)
     memory_items = graph.get_all_memory_items(scope=scope, include_embedding=include_embedding, user_name=user_name)
-    print("get_all_memory_items:", memory_items)
+    # print("get_all_memory_items:", memory_items)
 
 
 if __name__ == "__main__":
@@ -366,4 +366,4 @@ if __name__ == "__main__":
 
     # get_structure_optimization_candidates(db_name="memtensor_memos", scope='UserMemory', include_embedding=False, user_name="memos8f5530534d9b413bb8981ffc3d48a495")
 
-    get_all_memory_items(db_name="memtensor_memos", scope='UserMemory', include_embedding=False, user_name="memos8f5530534d9b413bb8981ffc3d48a495")
+    get_all_memory_items(db_name="memtensor_memos", scope='UserMemory', include_embedding=True, user_name="memos8f5530534d9b413bb8981ffc3d48a495")
