@@ -1857,7 +1857,7 @@ class PolarDBGraphDB(BaseGraphDB):
             with self.connection.cursor() as cursor:
                 cursor.execute(cypher_query)
                 results = cursor.fetchall()
-                
+                print("result------",len(results))
                 for row in results:
                     result_agtype = row[0]
                     if result_agtype and hasattr(result_agtype, 'value'):
