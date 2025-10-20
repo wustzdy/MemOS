@@ -1823,7 +1823,7 @@ class PolarDBGraphDB(BaseGraphDB):
         # 保留写法
         cypher_query_1 = f"""
             SELECT m.*
-            FROM memtensor_memos_graph."Memory" m
+            FROM {self.db_name}_graph."Memory" m
             WHERE 
               ag_catalog.agtype_access_operator(m.properties, '"memory_type"'::ag_catalog.agtype) = '"LongTermMemory"'::ag_catalog.agtype
               AND ag_catalog.agtype_access_operator(m.properties, '"status"'::ag_catalog.agtype) = '"activated"'::ag_catalog.agtype
