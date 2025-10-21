@@ -2302,7 +2302,7 @@ class PolarDBGraphDB(BaseGraphDB):
             if embedding is not None:
                 props["embedding"] = embedding
 
-            node_data = {"id": props.get("id", ""), "memory": props.get("memory", ""), "metadata": props}
-            return self._parse_node_new(node_data)
+            # 直接返回标准格式，不需要再次调用 _parse_node_new
+            return {"id": props.get("id", ""), "memory": props.get("memory", ""), "metadata": props}
         except Exception:
             return None
