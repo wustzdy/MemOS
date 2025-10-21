@@ -1339,9 +1339,11 @@ class PolarDBGraphDB(BaseGraphDB):
             if op == "=":
                 where_conditions.append(f"n.{field} = {escaped_value}")
             elif op == "in":
-                where_conditions.append(f"n.{field} IN {escaped_value}")
+                # where_conditions.append(f"n.{field} IN {escaped_value}")
+                where_conditions.append(f"{escaped_value} IN n.{field}")
             elif op == "contains":
-                where_conditions.append(f"size(filter(n.{field}, t -> t IN {escaped_value})) > 0")
+                where_conditions.append(f"{escaped_value} IN n.{field}")
+                # where_conditions.append(f"size(filter(n.{field}, t -> t IN {escaped_value})) > 0")
             elif op == "starts_with":
                 where_conditions.append(f"n.{field} STARTS WITH {escaped_value}")
             elif op == "ends_with":
