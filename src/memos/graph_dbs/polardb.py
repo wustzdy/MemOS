@@ -2349,10 +2349,11 @@ class PolarDBGraphDB(BaseGraphDB):
 
         user_name = user_name if user_name else self._get_config_value("user_name")
 
-        # 构建查询条件
+        # 构建查询条件 - 更宽松的过滤条件
         where_clauses = []
         params = []
 
+        # 排除指定的ID - 使用 properties 中的 id 字段
         if exclude_ids:
             exclude_conditions = []
             for exclude_id in exclude_ids:
@@ -2361,20 +2362,20 @@ class PolarDBGraphDB(BaseGraphDB):
                 params.append(f'"{exclude_id}"')
             where_clauses.append(f"({' AND '.join(exclude_conditions)})")
 
-        # 状态过滤
+        # 状态过滤 - 只保留 activated 状态
         where_clauses.append(
             "ag_catalog.agtype_access_operator(properties, '\"status\"'::agtype) = '\"activated\"'::agtype")
 
-        # 类型过滤
+        # 类型过滤 - 排除 reasoning 类型
         where_clauses.append(
             "ag_catalog.agtype_access_operator(properties, '\"node_type\"'::agtype) != '\"reasoning\"'::agtype")
-
-        where_clauses.append(
-            "ag_catalog.agtype_access_operator(properties, '\"memory_type\"'::agtype) != '\"WorkingMemory\"'::agtype")
 
         # 用户过滤
         where_clauses.append("ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype")
         params.append(f'"{user_name}"')
+
+        # 测试无数据，需要注释
+        where_clauses.append("ag_catalog.agtype_access_operator(properties, '\"memory_type\"'::agtype) != '\"WorkingMemory\"'::agtype")
 
         where_clause = " AND ".join(where_clauses)
 
@@ -2384,6 +2385,7 @@ class PolarDBGraphDB(BaseGraphDB):
             FROM "{self.db_name}_graph"."Memory" 
             WHERE {where_clause}
         """
+
         print(f"[get_neighbors_by_tag] query: {query}, params: {params}")
 
         try:
