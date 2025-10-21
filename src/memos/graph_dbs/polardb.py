@@ -1720,6 +1720,22 @@ class PolarDBGraphDB(BaseGraphDB):
         return {"nodes": nodes, "edges": edges}
 
     @timed
+    def count_nodes(self, scope: str, user_name: str | None = None) -> int:
+        user_name = user_name if user_name else self.config.user_name
+
+        query = f"""
+            SELECT * FROM cypher('{self.db_name}_graph', $$
+                MATCH (n:Memory)
+                WHERE n.memory_type = '{scope}' 
+                AND n.user_name = '{user_name}'
+                RETURN count(n)
+            $$) AS (count agtype)
+        """
+
+        result = self.execute_query(query)
+        return int(result.one_or_none()["count"].value)
+
+    @timed
     def import_graph(self, data: dict[str, Any]) -> None:
         """Import the entire graph from a serialized dictionary."""
         with self.connection.cursor() as cursor:
