@@ -1628,7 +1628,7 @@ class PolarDBGraphDB(BaseGraphDB):
                 """
             
             with self.connection.cursor() as cursor:
-                cursor.execute(node_query)
+                cursor.execute(node_query+"limit 5")
                 node_results = cursor.fetchall()
                 nodes = []
                 
@@ -1648,17 +1648,17 @@ class PolarDBGraphDB(BaseGraphDB):
                     else:
                         properties = properties_json if properties_json else {}
                     
-                    # Build node data
-                    node_data = {
-                        "id": properties.get("id", node_id),
-                        "memory": properties.get("memory", ""),
-                        "metadata": properties
-                    }
+                    # # Build node data
+                    # node_data = {
+                    #     "id": properties.get("id", node_id),
+                    #     "memory": properties.get("memory", ""),
+                    #     "metadata": properties
+                    # }
                     
                     if include_embedding and embedding_json is not None:
-                        node_data["embedding"] = embedding_json
+                        properties["embedding"] = embedding_json
                     
-                    nodes.append(self._parse_node(node_data))
+                    nodes.append(self._parse_node(properties))
                     
         except Exception as e:
             logger.error(f"[EXPORT GRAPH - NODES] Exception: {e}", exc_info=True)
@@ -1670,7 +1670,7 @@ class PolarDBGraphDB(BaseGraphDB):
                 SELECT * FROM cypher('{self.db_name}_graph', $$
                 MATCH (a:Memory)-[r]->(b:Memory)
                 WHERE a.user_name = '{user_name}' AND b.user_name = '{user_name}'
-                RETURN a.id AS source, b.id AS target, type(r) as edge
+                RETURN a.id AS source, b.id AS target, type(r) as edge limit 5
                 $$) AS (source agtype, target agtype, edge agtype)
             """
             
