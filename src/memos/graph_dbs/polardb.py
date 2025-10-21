@@ -2622,3 +2622,39 @@ class PolarDBGraphDB(BaseGraphDB):
         except Exception as e:
             logger.error(f"Failed to get neighbors by tag: {e}", exc_info=True)
             return []
+    @timed
+    def import_graph(self, data: dict[str, Any], user_name: str | None = None) -> None:
+        """
+        Import the entire graph from a serialized dictionary.
+
+        Args:
+            data: A dictionary containing all nodes and edges to be loaded.
+            user_name (str, optional): User name for filtering in non-multi-db mode
+        """
+        user_name = user_name if user_name else self._get_config_value("user_name")
+
+        # Import nodes
+        for node in data.get("nodes", []):
+            try:
+                id, memory, metadata = _compose_node(node)
+                metadata["user_name"] = user_name
+                metadata = _prepare_node_metadata(metadata)
+                metadata.update({"id": id, "memory": memory})
+
+                # 使用 add_node 方法添加节点
+                self.add_node(id, memory, metadata)
+
+            except Exception as e:
+                logger.error(f"Fail to load node: {node}, error: {e}")
+
+        # Import edges
+        for edge in data.get("edges", []):
+            try:
+                source_id, target_id = edge["source"], edge["target"]
+                edge_type = edge["type"]
+
+                # 使用 add_edge 方法添加边
+                self.add_edge(source_id, target_id, edge_type, user_name)
+
+            except Exception as e:
+                logger.error(f"Fail to load edge: {edge}, error: {e}")
