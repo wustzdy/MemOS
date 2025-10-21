@@ -1589,36 +1589,30 @@ class PolarDBGraphDB(BaseGraphDB):
         raise NotImplementedError
 
     @timed
-    def clear(self) -> None:
-        """Clear the entire graph."""
+    def clear(self, user_name: str | None = None) -> None:
+        """
+        Clear the entire graph if the target database exists.
+
+        Args:
+            user_name (str, optional): User name for filtering in non-multi-db mode
+        """
+        user_name = user_name if user_name else self._get_config_value("user_name")
+
         try:
+            query = f"""
+                SELECT * FROM cypher('{self.db_name}_graph', $$
+                MATCH (n:Memory) 
+                WHERE n.user_name = '{user_name}' 
+                DETACH DELETE n
+                $$) AS (result agtype)
+            """
+
             with self.connection.cursor() as cursor:
-                # First check if the graph exists
-                cursor.execute(f"""
-                    SELECT EXISTS (
-                        SELECT 1 FROM information_schema.tables 
-                        WHERE table_schema = '"{self.db_name}_graph"' 
-                        AND table_name = 'Memory'
-                    )
-                """)
-                graph_exists = cursor.fetchone()[0]
+                cursor.execute(query)
+                logger.info("Cleared all nodes from database.")
 
-                if not graph_exists:
-                    logger.info(f"Graph '{self.db_name}_graph' does not exist, nothing to clear.")
-                    return
-
-                if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
-                    cursor.execute(f"""
-                        DELETE FROM "{self.db_name}_graph"."Memory" 
-                        WHERE properties::text LIKE %s
-                    """, (f"%{self._get_config_value('user_name')}%",))
-                else:
-                    cursor.execute(f'DELETE FROM "{self.db_name}_graph"."Memory"')
-
-                logger.info(f"Cleared all nodes from graph '{self.db_name}_graph'.")
         except Exception as e:
-            logger.warning(f"Failed to clear graph '{self.db_name}_graph': {e}")
-            # Don't raise the exception, just log it as a warning
+            logger.error(f"[ERROR] Failed to clear database: {e}")
 
     @timed
     def export_graph(
