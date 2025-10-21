@@ -1380,7 +1380,7 @@ class PolarDBGraphDB(BaseGraphDB):
             
         return ids
 
-    def get_grouped_counts(
+    def get_grouped_counts1(
         self,
         group_fields: list[str],
         where_clause: str = "",
@@ -1457,7 +1457,7 @@ class PolarDBGraphDB(BaseGraphDB):
             return []
 
 
-    def get_grouped_counts_old(
+    def get_grouped_counts(
         self,
         group_fields: list[str],
         where_clause: str = "",
