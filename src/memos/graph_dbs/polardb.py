@@ -1799,8 +1799,6 @@ class PolarDBGraphDB(BaseGraphDB):
                         else:
                             memory_data = row[0]  # 如果已经是字典，直接使用
                         nodes.append(self._parse_node(memory_data))
-                        json_list = [json.loads(row[0]) if isinstance(row[0], str) else row[0] for row in results]
-                        return json_list
             except Exception as e:
                 logger.error(f"Failed to get memories: {e}", exc_info=True)
 
