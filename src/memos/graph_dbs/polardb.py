@@ -1416,19 +1416,20 @@ class PolarDBGraphDB(BaseGraphDB):
                     where_clause = f"WHERE {where_clause} AND {user_clause}"
             else:
                 where_clause = f"WHERE {user_clause}"
-
+        print("where_clause:" + where_clause)
         # Force RETURN field AS field to guarantee key match
         group_fields_cypher = ", ".join([f"n.{field} AS {field}" for field in group_fields])
-        group_fields_cypher_polardb = "agtype, ".join([f"n.{field} AS {field}" for field in group_fields])
-
+        # group_fields_cypher_polardb = "agtype, ".join([f"{field}" for field in group_fields])
+        group_fields_cypher_polardb = ", ".join([f"{field} agtype" for field in group_fields])
+        print("group_fields_cypher_polardb:" + group_fields_cypher_polardb)
         query = f"""
-        SELECT * FROM cypher('{self.db_name}_graph', $$
-            MATCH (n:Memory)
-            {where_clause}
-            RETURN {group_fields_cypher}, COUNT(n) AS count
-        $$ ) as ({group_fields_cypher_polardb}, count agtype); 
-        """
-        print("get_grouped_counts:"+query)
+               SELECT * FROM cypher('{self.db_name}_graph', $$
+                   MATCH (n:Memory)
+                   {where_clause}
+                   RETURN {group_fields_cypher}, COUNT(n) AS count1
+               $$ ) as ({group_fields_cypher_polardb}, count1 agtype); 
+               """
+        print("get_grouped_counts:" + query)
         try:
             with self.connection.cursor() as cursor:
                 # 处理参数化查询

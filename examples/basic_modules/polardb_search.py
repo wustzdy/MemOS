@@ -110,10 +110,10 @@ def searchVector(db_name: str, vectorStr: list[float], user_name: str = None):
     graph = getPolarDb(db_name)
 
     # 1，查询search_by_embedding
-    # nodes = graph.search_by_embedding(vector=vectorStr, top_k=1, user_name=user_name)
-    # print("search_by_embedding nodes:", len(nodes))
-    # for node_i in nodes:
-    #     print("Search result:", graph.get_node(node_i["id"][1:-1]))
+    nodes = graph.search_by_embedding(vector=vectorStr, top_k=1, user_name=user_name)
+    print("search_by_embedding nodes:", len(nodes))
+    for node_i in nodes:
+        print("Search result:", graph.get_node(node_i["id"][1:-1]))
 
     # 2，查询单个get_node
     # detail = graph.get_node(id="194f1e30-44d2-4e3f-bc58-c950343c56b7",
@@ -181,6 +181,8 @@ def get_subgraph(db_name, center_id, depth, center_status, user_name):
 def get_grouped_counts(db_name, user_name):
     graph = getPolarDb(db_name)
     grouped_counts = graph.get_grouped_counts(group_fields=["status"], where_clause="user_name = %s",
+                                              params=[user_name], user_name=user_name)
+    grouped_counts = graph.get_grouped_counts1(group_fields=["status"],
                                               params=[user_name], user_name=user_name)
     print("get_grouped_counts:", grouped_counts)
 
@@ -360,13 +362,13 @@ if __name__ == "__main__":
     #              center_status="activated", user_name="memos07ea708ac7eb412887c5c283f874ea30")
 
     #
-    # get_grouped_counts(db_name="memtensor_memos", user_name="memos07ea708ac7eb412887c5c283f874ea30")
+    get_grouped_counts(db_name="memtensor_memos", user_name="memos07ea708ac7eb412887c5c283f874ea30")
 
     # export_graph(db_name="memtensor_memos", include_embedding=False, user_name="memos8698ecb1f76940ff9adc12494c4d57a6")
 
     # get_structure_optimization_candidates(db_name="memtensor_memos", scope='UserMemory', include_embedding=False, user_name="memos8f5530534d9b413bb8981ffc3d48a495")
 
-    get_all_memory_items(db_name="memtensor_memos", scope='UserMemory', include_embedding=True, user_name="memos8f5530534d9b413bb8981ffc3d48a495")
+    # get_all_memory_items(db_name="memtensor_memos", scope='UserMemory', include_embedding=True, user_name="memos8f5530534d9b413bb8981ffc3d48a495")
     
     # 测试 get_structure_optimization_candidates 函数
     # get_structure_optimization_candidates(db_name="memtensor_memos", scope='UserMemory', include_embedding=False, user_name="memos8f5530534d9b413bb8981ffc3d48a495")
