@@ -1966,7 +1966,7 @@ class PolarDBGraphDB(BaseGraphDB):
               AND ag_catalog.agtype_access_operator(m.properties, '"user_name"'::ag_catalog.agtype) = '"activated"'::ag_catalog.agtype
                 AND NOT EXISTS (
                 SELECT 1 
-                FROM memtensor_memos_graph."PARENT" p 
+                FROM {self.db_name}_graph."PARENT" p 
                 WHERE m.id = p.start_id OR m.id = p.end_id 
               ); 
         """
