@@ -1628,7 +1628,7 @@ class PolarDBGraphDB(BaseGraphDB):
                 """
             
             with self.connection.cursor() as cursor:
-                cursor.execute(node_query+"limit 5")
+                cursor.execute(node_query)
                 node_results = cursor.fetchall()
                 nodes = []
                 
@@ -1670,7 +1670,7 @@ class PolarDBGraphDB(BaseGraphDB):
                 SELECT * FROM cypher('{self.db_name}_graph', $$
                 MATCH (a:Memory)-[r]->(b:Memory)
                 WHERE a.user_name = '{user_name}' AND b.user_name = '{user_name}'
-                RETURN a.id AS source, b.id AS target, type(r) as edge limit 5
+                RETURN a.id AS source, b.id AS target, type(r) as edge 
                 $$) AS (source agtype, target agtype, edge agtype)
             """
             
