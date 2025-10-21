@@ -830,7 +830,7 @@ class PolarDBGraphDB(BaseGraphDB):
             return nodes
 
     @timed
-    def get_edges(self, id: str, type: str = "ANY", direction: str = "ANY") -> list[dict[str, str]]:
+    def get_edges_old(self, id: str, type: str = "ANY", direction: str = "ANY") -> list[dict[str, str]]:
         """
         Get edges connected to a node, with optional type and direction filter.
 
@@ -2642,3 +2642,73 @@ class PolarDBGraphDB(BaseGraphDB):
 
             except Exception as e:
                 logger.error(f"Fail to load edge: {edge}, error: {e}")
+
+    @timed
+    def get_edges(self, id: str, type: str = "ANY", direction: str = "ANY", user_name: str | None = None) -> list[
+        dict[str, str]]:
+        """
+        Get edges connected to a node, with optional type and direction filter.
+
+        Args:
+            id: Node ID to retrieve edges for.
+            type: Relationship type to match, or 'ANY' to match all.
+            direction: 'OUTGOING', 'INCOMING', or 'ANY'.
+            user_name (str, optional): User name for filtering in non-multi-db mode
+
+        Returns:
+            List of edges:
+            [
+              {"from": "source_id", "to": "target_id", "type": "RELATE"},
+              ...
+            ]
+        """
+        user_name = user_name if user_name else self._get_config_value("user_name")
+
+        if direction == "OUTGOING":
+            pattern = f"(a:Memory)-[r]->(b:Memory)"
+            where_clause = f"a.id = '{id}'"
+        elif direction == "INCOMING":
+            pattern = f"(a:Memory)<-[r]-(b:Memory)"
+            where_clause = f"a.id = '{id}'"
+        elif direction == "ANY":
+            pattern = f"(a:Memory)-[r]-(b:Memory)"
+            where_clause = f"a.id = '{id}' OR b.id = '{id}'"
+        else:
+            raise ValueError("Invalid direction. Must be 'OUTGOING', 'INCOMING', or 'ANY'.")
+
+        # 添加类型过滤
+        if type != "ANY":
+            where_clause += f" AND type(r) = '{type}'"
+
+        # 添加用户过滤
+        where_clause += f" AND a.user_name = '{user_name}' AND b.user_name = '{user_name}'"
+
+        query = f"""
+            SELECT * FROM cypher('{self.db_name}_graph', $$
+            MATCH {pattern}
+            WHERE {where_clause}
+            RETURN a.id AS from_id, b.id AS to_id, type(r) AS edge_type
+            $$) AS (from_id agtype, to_id agtype, edge_type agtype)
+        """
+
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(query)
+                results = cursor.fetchall()
+
+                edges = []
+                for row in results:
+                    from_id = row[0].value if hasattr(row[0], 'value') else row[0]
+                    to_id = row[1].value if hasattr(row[1], 'value') else row[1]
+                    edge_type = row[2].value if hasattr(row[2], 'value') else row[2]
+
+                    edges.append({
+                        "from": from_id,
+                        "to": to_id,
+                        "type": edge_type
+                    })
+                return edges
+
+        except Exception as e:
+            logger.error(f"Failed to get edges: {e}", exc_info=True)
+            return []
