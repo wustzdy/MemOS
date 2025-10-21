@@ -122,11 +122,11 @@ def searchVector(db_name: str, vectorStr: list[float], user_name: str = None):
     #
     # # 3，查询多个get_nodes
     ids = ['bb079c5b-1937-4125-a9e5-55d4abe6c95d', 'd66120af-992b-44c6-b261-a6ebe6bc57a5']
-    ids = ['"bfde036f-6276-4485-9dc6-3c64eab3e132"']
-    detail_list = graph.get_nodes(ids=ids,user_name='memos7a9f9fbbb61c412f94f77fbaa8103c35')
-    print("1111多个node:", len(detail_list))
-    #
-    print("多个node:", detail_list)
+    # ids = ['"bfde036f-6276-4485-9dc6-3c64eab3e132"']
+    # detail_list = graph.get_nodes(ids=ids,user_name='memos7a9f9fbbb61c412f94f77fbaa8103c35')
+    # print("1111多个node:", len(detail_list))
+    # #
+    # print("多个node:", detail_list)
 
     # 4，更新 update_node
     # graph.update_node(id="000009999ef-926f-42e2-b7b5-0224daf0abcd", fields={"name": "new_name"})
@@ -202,7 +202,15 @@ def get_structure_optimization_candidates(db_name, scope, include_embedding, use
 def get_all_memory_items(db_name, scope, include_embedding, user_name):
     graph = getPolarDb(db_name)
     memory_items = graph.get_all_memory_items(scope=scope, include_embedding=include_embedding, user_name=user_name)
-    print("get_all_memory_items:", memory_items)
+    print("11111get_all_memory_items:", memory_items)
+
+
+def get_neighbors_by_tag(db_name, user_name):
+    graph = getPolarDb(db_name)
+    tags=['旅游建议','景点']
+    ids = ['39d12b46-ebe4-4f25-b0b7-1582042049e7']
+    neighbors = graph.get_neighbors_by_tag(tags=tags, exclude_ids=ids, user_name=user_name)
+    print("get_neighbors_by_tag:", neighbors)
 
 
 if __name__ == "__main__":
@@ -356,19 +364,21 @@ if __name__ == "__main__":
     #             target_id="2dd03a5b-5d5f-49c9-9e0a-9a2a2899b98d", type="PARENT", direction="OUTGOING",
     #             user_name="memosbfb3fb32032b4077a641404dc48739cd")
 
-    # get_children_with_embeddings(db_name="memtensor_memos", id="13bb9df6-0609-4442-8bed-bba77dadac92",user_name="memos07ea708ac7eb412887c5c283f874ea30")
+    get_children_with_embeddings(db_name="memtensor_memos", id="13bb9df6-0609-4442-8bed-bba77dadac92",user_name="memos07ea708ac7eb412887c5c283f874ea30")
 
     # get_subgraph(db_name="memtensor_memos", center_id="13bb9df6-0609-4442-8bed-bba77dadac92", depth=1,
     #              center_status="activated", user_name="memos07ea708ac7eb412887c5c283f874ea30")
 
     #
-    get_grouped_counts(db_name="memtensor_memos", user_name="memos07ea708ac7eb412887c5c283f874ea30")
+    # get_grouped_counts(db_name="memtensor_memos", user_name="memos07ea708ac7eb412887c5c283f874ea30")
 
-    # export_graph(db_name="memtensor_memos", include_embedding=False, user_name="memos8698ecb1f76940ff9adc12494c4d57a6")
+    # export_graph(db_name="memtensor_memos", include_embedding=True, user_name="memos8698ecb1f76940ff9adc12494c4d57a6")
 
     # get_structure_optimization_candidates(db_name="memtensor_memos", scope='UserMemory', include_embedding=False, user_name="memos8f5530534d9b413bb8981ffc3d48a495")
 
-    # get_all_memory_items(db_name="memtensor_memos", scope='UserMemory', include_embedding=True, user_name="memos8f5530534d9b413bb8981ffc3d48a495")
+    # get_all_memory_items(db_name="memtensor_memos", scope='UserMemory', include_embedding=False, user_name="memos8f5530534d9b413bb8981ffc3d48a495")
     
     # 测试 get_structure_optimization_candidates 函数
     # get_structure_optimization_candidates(db_name="memtensor_memos", scope='UserMemory', include_embedding=False, user_name="memos8f5530534d9b413bb8981ffc3d48a495")
+
+    get_neighbors_by_tag(db_name="memtensor_memos",user_name="memosfeebbc2bd1744d7bb5b5ec57f38e828d")
