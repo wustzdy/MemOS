@@ -1946,13 +1946,14 @@ class PolarDBGraphDB(BaseGraphDB):
                 "n.node_type AS node_type",
                 "n.visibility AS visibility",
                 "n.usage AS usage",
-                "n.background AS background"
+                "n.background AS background",
+                "n.graph_id as graph_id"
             ])
             fields = [
                 "id", "memory", "user_name", "user_id", "session_id", "status",
                 "key", "confidence", "tags", "created_at", "updated_at",
                 "memory_type", "sources", "source", "node_type", "visibility",
-                "usage", "background"
+                "usage", "background","graph_id"
             ]
             return_fields_agtype = ", ".join([f"{field} agtype" for field in fields])
 
@@ -2027,7 +2028,7 @@ class PolarDBGraphDB(BaseGraphDB):
                             "id", "memory", "user_name", "user_id", "session_id", "status", 
                             "key", "confidence", "tags", "created_at", "updated_at", 
                             "memory_type", "sources", "source", "node_type", "visibility", 
-                            "usage", "background"
+                            "usage", "background","graph_id"
                         ]
                         
                         # 将行数据转换为字典
