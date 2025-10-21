@@ -12,6 +12,7 @@ from memos.configs.graph_db import PolarDBGraphDBConfig
 from memos.dependency import require_python_package
 from memos.graph_dbs.base import BaseGraphDB
 from memos.log import get_logger
+from memos.utils import timed
 
 logger = get_logger(__name__)
 
@@ -176,6 +177,7 @@ class PolarDBGraphDB(BaseGraphDB):
             logger.error(f"Failed to access database '{self.db_name}': {e}")
             raise
 
+    @timed
     def _create_graph(self):
         """Create PostgreSQL schema and table for graph storage."""
         try:
@@ -283,6 +285,7 @@ class PolarDBGraphDB(BaseGraphDB):
             logger.error(f"[get_memory_count] Failed: {e}")
             return -1
 
+    @timed
     def node_not_exist(self, scope: str, user_name: str | None = None) -> int:
         """Check if a node with given scope exists."""
         user_name = user_name if user_name else self._get_config_value("user_name")
@@ -307,6 +310,7 @@ class PolarDBGraphDB(BaseGraphDB):
             logger.error(f"[node_not_exist] Query failed: {e}", exc_info=True)
             raise
 
+    @timed
     def remove_oldest_memory(self, memory_type: str, keep_latest: int, user_name: str | None = None) -> None:
         """
         Remove all WorkingMemory nodes except the latest `keep_latest` entries.
@@ -357,6 +361,7 @@ class PolarDBGraphDB(BaseGraphDB):
             logger.error(f"[remove_oldest_memory] Failed: {e}", exc_info=True)
             raise
 
+    @timed
     def update_node(self, id: str, fields: dict[str, Any], user_name: str | None = None) -> None:
         """
         Update node fields in PolarDB, auto-converting `created_at` and `updated_at` to datetime type if present.
@@ -420,6 +425,7 @@ class PolarDBGraphDB(BaseGraphDB):
             logger.error(f"[update_node] Failed to update node '{id}': {e}", exc_info=True)
             raise
 
+    @timed
     def delete_node(self, id: str, user_name: str | None = None) -> None:
         """
         Delete a node from the graph.
@@ -446,6 +452,7 @@ class PolarDBGraphDB(BaseGraphDB):
             logger.error(f"[delete_node] Failed to delete node '{id}': {e}", exc_info=True)
             raise
 
+    @timed
     def create_extension(self):
         extensions = [
             ("polar_age", "图引擎"),
@@ -472,6 +479,7 @@ class PolarDBGraphDB(BaseGraphDB):
             print(f"⚠️ Failed to access database context: {e}")
             logger.error(f"Failed to access database context: {e}", exc_info=True)
 
+    @timed
     def create_graph(self):
         try:
             with self.connection.cursor() as cursor:
@@ -490,6 +498,7 @@ class PolarDBGraphDB(BaseGraphDB):
             print(f"⚠️ Failed to create graph '{self.db_name}_graph': {e}")
             logger.error(f"Failed to create graph '{self.db_name}_graph': {e}", exc_info=True)
 
+    @timed
     def create_edge(self):
         """创建所有有效的边类型，如果不存在的话"""
         VALID_REL_TYPES = {
@@ -514,6 +523,7 @@ class PolarDBGraphDB(BaseGraphDB):
                     print(f"⚠️ Failed to create label {label_name}: {e}")
                     logger.error(f"Failed to create elabel '{label_name}': {e}", exc_info=True)
 
+    @timed
     def add_edge(self, source_id: str, target_id: str, type: str, user_name: str | None = None) -> None:
         if not source_id or not target_id:
             raise ValueError("[add_edge] source_id and target_id must be provided")
@@ -550,6 +560,7 @@ class PolarDBGraphDB(BaseGraphDB):
             logger.error(f"Failed to insert edge: {e}", exc_info=True)
             raise
 
+    @timed
     def delete_edge(self, source_id: str, target_id: str, type: str) -> None:
         """
         Delete a specific edge between two nodes.
@@ -567,6 +578,7 @@ class PolarDBGraphDB(BaseGraphDB):
             cursor.execute(query, (source_id, target_id, type))
             logger.info(f"Edge deleted: {source_id} -[{type}]-> {target_id}")
 
+    @timed
     def edge_exists_old(
             self, source_id: str, target_id: str, type: str = "ANY", direction: str = "OUTGOING"
     ) -> bool:
@@ -623,6 +635,7 @@ class PolarDBGraphDB(BaseGraphDB):
             result = cursor.fetchone()
             return result is not None
 
+    @timed
     def edge_exists(
             self,
             source_id: str,
@@ -675,6 +688,7 @@ class PolarDBGraphDB(BaseGraphDB):
             result = cursor.fetchone()
             return result is not None and result[0] is not None
 
+    @timed
     def get_node(self, id: str, include_embedding: bool = False, user_name: str | None = None) -> dict[str, Any] | None:
         """
         Retrieve a Memory node by its unique ID.
@@ -743,6 +757,7 @@ class PolarDBGraphDB(BaseGraphDB):
             logger.error(f"[get_node] Failed to retrieve node '{id}': {e}", exc_info=True)
             return None
 
+    @timed
     def get_nodes(self, ids: list[str],  user_name: str | None = None,**kwargs) -> list[dict[str, Any]]:
         """
         Retrieve the metadata and memory of a list of nodes.
@@ -814,6 +829,7 @@ class PolarDBGraphDB(BaseGraphDB):
                     {"id": properties.get("id", node_id), "memory": properties.get("memory", ""), "metadata": properties}))
             return nodes
 
+    @timed
     def get_edges(self, id: str, type: str = "ANY", direction: str = "ANY") -> list[dict[str, str]]:
         """
         Get edges connected to a node, with optional type and direction filter.
@@ -908,6 +924,7 @@ class PolarDBGraphDB(BaseGraphDB):
         """Get connected node IDs in a specific direction and relationship type."""
         raise NotImplementedError
 
+    @timed
     def get_neighbors_by_tag_old(
             self,
             tags: list[str],
@@ -1002,6 +1019,7 @@ class PolarDBGraphDB(BaseGraphDB):
             nodes_with_overlap.sort(key=lambda x: x[1], reverse=True)
             return [node for node, _ in nodes_with_overlap[:top_k]]
 
+    @timed
     def get_children_with_embeddings(self, id: str, user_name: str | None = None) -> list[dict[str, Any]]:
         """Get children nodes with their embeddings."""
         user_name = user_name if user_name else self._get_config_value("user_name")
@@ -1087,6 +1105,7 @@ class PolarDBGraphDB(BaseGraphDB):
         """Get the path of nodes from source to target within a limited depth."""
         raise NotImplementedError
 
+    @timed
     def get_subgraph(
         self,
         center_id: str,
@@ -1210,6 +1229,7 @@ class PolarDBGraphDB(BaseGraphDB):
         """Get the ordered context chain starting from a node."""
         raise NotImplementedError
 
+    @timed
     def search_by_embedding(
             self,
             vector: list[float],
@@ -1292,6 +1312,7 @@ class PolarDBGraphDB(BaseGraphDB):
                     output.append({"id": id_val, "score": score_val})
             return output[:top_k]
 
+    @timed
     def get_by_metadata(self, filters: list[dict[str, Any]], user_name: str | None = None) -> list[str]:
         """
         Retrieve node IDs that match given metadata filters.
@@ -1382,6 +1403,7 @@ class PolarDBGraphDB(BaseGraphDB):
             
         return ids
 
+    @timed
     def get_grouped_counts1(
         self,
         group_fields: list[str],
@@ -1459,7 +1481,7 @@ class PolarDBGraphDB(BaseGraphDB):
             logger.error(f"Failed to get grouped counts: {e}", exc_info=True)
             return []
 
-
+    @timed
     def get_grouped_counts(
         self,
         group_fields: list[str],
@@ -1566,6 +1588,7 @@ class PolarDBGraphDB(BaseGraphDB):
         """Merge two similar or duplicate nodes into one."""
         raise NotImplementedError
 
+    @timed
     def clear(self) -> None:
         """Clear the entire graph."""
         try:
@@ -1597,6 +1620,7 @@ class PolarDBGraphDB(BaseGraphDB):
             logger.warning(f"Failed to clear graph '{self.db_name}_graph': {e}")
             # Don't raise the exception, just log it as a warning
 
+    @timed
     def export_graph(
         self, include_embedding: bool = False, user_name: str | None = None
     ) -> dict[str, Any]:
@@ -1695,6 +1719,7 @@ class PolarDBGraphDB(BaseGraphDB):
 
         return {"nodes": nodes, "edges": edges}
 
+    @timed
     def import_graph(self, data: dict[str, Any]) -> None:
         """Import the entire graph from a serialized dictionary."""
         with self.connection.cursor() as cursor:
@@ -1716,6 +1741,7 @@ class PolarDBGraphDB(BaseGraphDB):
             for edge in data.get("edges", []):
                 self.add_edge(edge["source"], edge["target"], edge["type"])
 
+    @timed
     def get_all_memory_items(
             self, scope: str, include_embedding: bool = False, user_name: str | None = None
     ) -> list[dict]:
@@ -1914,6 +1940,7 @@ class PolarDBGraphDB(BaseGraphDB):
 
             return nodes
 
+    @timed
     def get_structure_optimization_candidates(
         self, scope: str, include_embedding: bool = False, user_name: str | None = None
     ) -> list[dict]:
@@ -2200,6 +2227,7 @@ class PolarDBGraphDB(BaseGraphDB):
             print(f"❌ 插入失败 (ID: {id}): {e}")
             return False
 
+    @timed
     def add_node(self, id: str, memory: str, metadata: dict[str, Any], user_name: str | None = None) -> None:
         """Add a memory node to the graph."""
         # user_name 从 metadata 中获取，如果不存在则从配置中获取
