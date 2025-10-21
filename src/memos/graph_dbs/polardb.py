@@ -2349,105 +2349,84 @@ class PolarDBGraphDB(BaseGraphDB):
 
         user_name = user_name if user_name else self._get_config_value("user_name")
 
-        # 构建查询条件，与 nebular.py 保持一致
-        where_clauses = [
-            'n.status = "activated"',
-            'NOT (n.node_type = "reasoning")',
-            'NOT (n.memory_type = "WorkingMemory")',
-        ]
+        # 构建查询条件
+        where_clauses = []
+        params = []
 
         if exclude_ids:
-            exclude_ids_str = "[" + ", ".join(f'"{id}"' for id in exclude_ids) + "]"
-            where_clauses.append(f"NOT (n.id IN {exclude_ids_str})")
+            exclude_conditions = []
+            for exclude_id in exclude_ids:
+                exclude_conditions.append(
+                    "ag_catalog.agtype_access_operator(properties, '\"id\"'::agtype) != %s::agtype")
+                params.append(f'"{exclude_id}"')
+            where_clauses.append(f"({' AND '.join(exclude_conditions)})")
 
-        where_clauses.append(f'n.user_name = "{user_name}"')
+        # 状态过滤
+        where_clauses.append(
+            "ag_catalog.agtype_access_operator(properties, '\"status\"'::agtype) = '\"activated\"'::agtype")
+
+        # 类型过滤
+        where_clauses.append(
+            "ag_catalog.agtype_access_operator(properties, '\"node_type\"'::agtype) != '\"reasoning\"'::agtype")
+
+        where_clauses.append(
+            "ag_catalog.agtype_access_operator(properties, '\"memory_type\"'::agtype) != '\"WorkingMemory\"'::agtype")
+
+        # 用户过滤
+        where_clauses.append("ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype")
+        params.append(f'"{user_name}"')
 
         where_clause = " AND ".join(where_clauses)
-        tag_list_literal = "[" + ", ".join(f'"{t}"' for t in tags) + "]"
 
-        return_fields = [
-            "n.id AS id",
-            "n.memory AS memory",
-            "n.user_name AS user_name",
-            "n.user_id AS user_id",
-            "n.session_id AS session_id",
-            "n.status AS status",
-            "n.key AS key",
-            "n.confidence AS confidence",
-            "n.tags AS tags",
-            "n.created_at AS created_at",
-            "n.updated_at AS updated_at",
-            "n.memory_type AS memory_type",
-            "n.sources AS sources",
-            "n.source AS source",
-            "n.node_type AS node_type",
-            "n.visibility AS visibility",
-            "n.background AS background"
-        ]
-
-        if include_embedding:
-            return_fields.append("n.embedding AS embedding")
-
-        return_fields_str = ", ".join(return_fields)
-
-        # 使用 Cypher 查询，与 nebular.py 保持一致
+        # 获取所有候选节点
         query = f"""
-            SELECT * FROM cypher('{self.db_name}_graph', $$
-            LET tag_list = {tag_list_literal}
-
-            MATCH (n:Memory)
+            SELECT id, properties, embedding
+            FROM "{self.db_name}_graph"."Memory" 
             WHERE {where_clause}
-            RETURN {return_fields_str},
-               size( filter( n.tags, t -> t IN tag_list ) ) AS overlap_count
-            ORDER BY overlap_count DESC
-            LIMIT {top_k}
-            $$) AS ({return_fields_str.replace("n.", "").replace(" AS ", " agtype, ")} overlap_count agtype)
         """
+        print(f"[get_neighbors_by_tag] query: {query}, params: {params}")
 
         try:
             with self.connection.cursor() as cursor:
-                cursor.execute(query)
+                cursor.execute(query, params)
                 results = cursor.fetchall()
 
-                neighbors = []
+                nodes_with_overlap = []
                 for row in results:
-                    # 解析结果
-                    props = {}
-                    overlap_count = None
+                    node_id, properties_json, embedding_json = row
+                    properties = properties_json if properties_json else {}
 
-                    # 手动解析每个字段
-                    field_names = [
-                        "id", "memory", "user_name", "user_id", "session_id", "status",
-                        "key", "confidence", "tags", "created_at", "updated_at",
-                        "memory_type", "sources", "source", "node_type", "visibility", "background"
-                    ]
+                    # 解析embedding
+                    if include_embedding and embedding_json is not None:
+                        try:
+                            embedding = json.loads(embedding_json) if isinstance(embedding_json,
+                                                                                 str) else embedding_json
+                            properties["embedding"] = embedding
+                        except (json.JSONDecodeError, TypeError):
+                            logger.warning(f"Failed to parse embedding for node {node_id}")
 
-                    if include_embedding:
-                        field_names.append("embedding")
-                    field_names.append("overlap_count")
+                    # 计算标签重叠
+                    node_tags = properties.get("tags", [])
+                    if isinstance(node_tags, str):
+                        try:
+                            node_tags = json.loads(node_tags)
+                        except (json.JSONDecodeError, TypeError):
+                            node_tags = []
 
-                    for i, field in enumerate(field_names):
-                        if field == "overlap_count":
-                            overlap_count = row[i].value if hasattr(row[i], 'value') else row[i]
-                        else:
-                            props[field] = row[i].value if hasattr(row[i], 'value') else row[i]
+                    overlap_tags = [tag for tag in tags if tag in node_tags]
+                    overlap_count = len(overlap_tags)
 
-                    if overlap_count is not None and overlap_count >= min_overlap:
-                        parsed = self._parse_node(props)
-                        parsed["overlap_count"] = overlap_count
-                        neighbors.append(parsed)
+                    if overlap_count >= min_overlap:
+                        node_data = self._parse_node({
+                            "id": properties.get("id", node_id),
+                            "memory": properties.get("memory", ""),
+                            "metadata": properties
+                        })
+                        nodes_with_overlap.append((node_data, overlap_count))
 
-                # 按重叠数量排序
-                neighbors.sort(key=lambda x: x["overlap_count"], reverse=True)
-                neighbors = neighbors[:top_k]
-
-                # 移除 overlap_count 字段
-                result = []
-                for neighbor in neighbors:
-                    neighbor.pop("overlap_count", None)
-                    result.append(neighbor)
-
-                return result
+                # 按重叠数量排序并返回前top_k个
+                nodes_with_overlap.sort(key=lambda x: x[1], reverse=True)
+                return [node for node, _ in nodes_with_overlap[:top_k]]
 
         except Exception as e:
             logger.error(f"Failed to get neighbors by tag: {e}", exc_info=True)
