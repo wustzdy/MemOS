@@ -2249,6 +2249,13 @@ class PolarDBGraphDB(BaseGraphDB):
                 WHERE id = ag_catalog._make_graph_id('{self.db_name}_graph'::name, 'Memory'::name, %s::text::cstring)
             """
             cursor.execute(delete_query, (id,))
+            #
+            get_graph_id_query = f"""
+                              SELECT ag_catalog._make_graph_id('{self.db_name}_graph'::name, 'Memory'::name, %s::text::cstring)
+                          """
+            cursor.execute(get_graph_id_query, (id,))
+            graph_id = cursor.fetchone()[0]
+            properties['graph_id'] = str(graph_id)
 
             # 然后插入新记录
             if embedding_vector:
