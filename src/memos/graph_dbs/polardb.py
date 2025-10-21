@@ -2087,7 +2087,18 @@ class PolarDBGraphDB(BaseGraphDB):
         # 不再对sources和usage字段进行反序列化，保持List[str]格式
         # 不再移除user_name字段，保持所有字段
 
-        return {"id": node.pop("id"), "memory": node.pop("memory", ""), "metadata": node}
+        # 1
+        # return {"id": node.pop("id"), "memory": node.pop("memory", ""), "metadata": node}
+
+        # 2
+        # node_id = node.pop("id")
+        # memory = node.pop("memory", "")
+        # # 在 metadata 中添加 id 字段
+        # node["id"] = node_id
+        # node1 = node
+        # return {"id": node_id, "memory": memory, "metadata": node1}
+
+        return {"id": node.get("id"), "memory": node.get("memory", ""), "metadata": node}
 
     def _parse_node_new(self, node_data: dict[str, Any]) -> dict[str, Any]:
         """Parse node data from database format to standard format."""
