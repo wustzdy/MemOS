@@ -1393,13 +1393,10 @@ class PolarDBGraphDB(BaseGraphDB):
             with self.connection.cursor() as cursor:
                 cursor.execute(cypher_query)
                 results = cursor.fetchall()
-                print("[get_by_metadata] result:"+results)
-                for row in results:
-                    if row[0] and hasattr(row[0], 'value'):
-                        ids.append(row[0].value)
-                    elif row[0]:
-                        ids.append(str(row[0]))
+                print("[get_by_metadata] result:",results)
+                ids = [str(item[0]).strip('"') for item in results]
         except Exception as e:
+            print("Failed to get metadata:", {e})
             logger.error(f"Failed to get metadata: {e}, query is {cypher_query}")
             
         return ids
