@@ -1280,7 +1280,6 @@ class PolarDBGraphDB(BaseGraphDB):
                         SELECT id,
                                properties,
                                timeline,
-                               embedding,
                                ag_catalog.agtype_access_operator(properties, '"id"'::agtype) AS old_id,
                                (1 - (embedding <=> %s::vector(1024))) AS scope
                         FROM "{self.db_name}_graph"."Memory"
@@ -1302,9 +1301,9 @@ class PolarDBGraphDB(BaseGraphDB):
             for row in results:
                 polarId = row[0]  # id
                 properties = row[1]  # properties
-                embedding = row[3]  # embedding
-                oldId = row[4]  # old_id
-                score = row[5]  # scope
+                # embedding = row[3]  # embedding
+                oldId = row[3]  # old_id
+                score = row[4]  # scope
                 id_val = str(oldId)
                 score_val = float(score)
                 score_val = (score_val + 1) / 2  # align to neo4j, Normalized Cosine Score
