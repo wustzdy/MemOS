@@ -1354,13 +1354,13 @@ class PolarDBGraphDB(BaseGraphDB):
                 escaped_value = f"[{', '.join(list_items)}]"
             else:
                 escaped_value = f"'{value}'" if isinstance(value, str) else str(value)
-            
+            print("op=============:",op)
             # 构建 WHERE 条件
             if op == "=":
                 where_conditions.append(f"n.{field} = {escaped_value}")
             elif op == "in":
-                # where_conditions.append(f"n.{field} IN {escaped_value}")
-                where_conditions.append(f"{escaped_value} IN n.{field}")
+                where_conditions.append(f"n.{field} IN {escaped_value}")
+                # where_conditions.append(f"{escaped_value} IN n.{field}")
             elif op == "contains":
                 where_conditions.append(f"{escaped_value} IN n.{field}")
                 # where_conditions.append(f"size(filter(n.{field}, t -> t IN {escaped_value})) > 0")
@@ -1393,6 +1393,7 @@ class PolarDBGraphDB(BaseGraphDB):
             with self.connection.cursor() as cursor:
                 cursor.execute(cypher_query)
                 results = cursor.fetchall()
+                print("[get_by_metadata] result:"+results)
                 for row in results:
                     if row[0] and hasattr(row[0], 'value'):
                         ids.append(row[0].value)
