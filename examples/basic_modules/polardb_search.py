@@ -213,9 +213,9 @@ def get_neighbors_by_tag(db_name, user_name):
     print("get_neighbors_by_tag:", neighbors)
 
 
-def get_edges(db_name, id, user_name):
+def get_edges(db_name: str, id: str, type: str, direction: str, user_name: str = None) -> None:
     graph = getPolarDb(db_name)
-    edges = graph.get_edges(id=id, user_name=user_name)
+    edges = graph.get_edges(id=id, type=type, direction=direction, user_name=user_name)
     print("get_edges:", edges)
 
 
@@ -383,10 +383,10 @@ if __name__ == "__main__":
     # get_structure_optimization_candidates(db_name="memtensor_memos", scope='UserMemory', include_embedding=False, user_name="memos8f5530534d9b413bb8981ffc3d48a495")
 
     # get_all_memory_items(db_name="memtensor_memos", scope='UserMemory', include_embedding=False, user_name="memos8f5530534d9b413bb8981ffc3d48a495")
-    
+
     # 测试 get_structure_optimization_candidates 函数
     # get_structure_optimization_candidates(db_name="memtensor_memos", scope='UserMemory', include_embedding=False, user_name="memos8f5530534d9b413bb8981ffc3d48a495")
 
     # get_neighbors_by_tag(db_name="memtensor_memos",user_name="memosfeebbc2bd1744d7bb5b5ec57f38e828d")
 
-    get_edges(db_name="memtensor_memos", id="13bb9df6-0609-4442-8bed-bba77dadac92",user_name="memosfeebbc2bd1744d7bb5b5ec57f38e828d")
+    get_edges(db_name="memtensor_memos", id="13bb9df6-0609-4442-8bed-bba77dadac92",type="PARENT",direction="OUTGOING",user_name="memosfeebbc2bd1744d7bb5b5ec57f38e828d")
