@@ -2358,7 +2358,7 @@ class PolarDBGraphDB(BaseGraphDB):
             return {"id": props.get("id", ""), "memory": props.get("memory", ""), "metadata": props}
         except Exception:
             return None
-
+    @timed
     def get_neighbors_by_tag(
             self,
             tags: list[str],
