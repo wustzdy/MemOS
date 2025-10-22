@@ -28,19 +28,19 @@ VALID_REL_TYPES = {
 BATCH_SIZE = 1000
 
 
-def create_elabel(conn, label_name):
-    """创建关系类型（若不存在）"""
-    with conn.cursor() as cur:
-        print(f"🪶 Creating elabel: {label_name}")
-        try:
-            cur.execute(f"SELECT create_elabel('memtensor_memos_graph', '{label_name}');")
-            conn.commit()
-        except Exception as e:
-            conn.rollback()
-            if "already exists" in str(e):
-                print(f"ℹ️ Label '{label_name}' already exists, skipping.")
-            else:
-                print(f"⚠️ Failed to create label {label_name}: {e}")
+# def create_elabel(conn, label_name):
+#     """创建关系类型（若不存在）"""
+#     with conn.cursor() as cur:
+#         print(f"🪶 Creating elabel: {label_name}")
+#         try:
+#             cur.execute(f"SELECT create_elabel('memtensor_memos_graph', '{label_name}');")
+#             conn.commit()
+#         except Exception as e:
+#             conn.rollback()
+#             if "already exists" in str(e):
+#                 print(f"ℹ️ Label '{label_name}' already exists, skipping.")
+#             else:
+#                 print(f"⚠️ Failed to create label {label_name}: {e}")
 
 
 def insert_edges(conn, edges, label_name):
@@ -71,7 +71,8 @@ def insert_edges(conn, edges, label_name):
 def process_relation_folder(conn, folder_path, label_name):
     """处理一个关系文件夹"""
     print(f"\n🔗 Processing relation: {label_name}")
-    create_elabel(conn, label_name)
+
+    # create_elabel(conn, label_name)
     for root, _, files in os.walk(folder_path):
         for file in files:
             if not (file.endswith(".json") or file.endswith(".txt")):

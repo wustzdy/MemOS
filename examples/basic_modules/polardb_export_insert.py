@@ -15,17 +15,33 @@ from memos.graph_dbs.factory import GraphStoreFactory
 
 
 
-DB_CONFIG = {
-    'host': 'xxxxxxx',
-    'port': 5432,
-    'database': 'xxxxx',
-    'user': 'xxxx',
-    'password': 'xxxx'
-}
-
-# 图数据库配置
+# DB_CONFIG = {
+#     'host': 'xxxxxxx',
+#     'port': 5432,
+#     'database': 'xxxxx',
+#     'user': 'xxxx',
+#     'password': 'xxxx'
+# }
+#
+# # 图数据库配置
 GRAPH_NAME = 'memtensor_memos_graph'
-
+def getPolarDb():
+    config = GraphDBConfigFactory(
+        backend="polardb",
+        config={
+            "host": "memory.pg.polardb.rds.aliyuncs.com",
+            "port": 5432,
+            "user": "adimin",
+            "password": "Openmem0925",
+            "db_name": "memtensor_memos",
+            "user_name": 'adimin',
+            "use_multi_db": True,  # 设置为True，不添加user_name过滤条件
+            "auto_create": True,
+            "embedding_dimension": 1024,
+        },
+    )
+    graph = GraphStoreFactory.from_config(config)
+    return graph
 
 def create_vector_extension(conn):
     with conn.cursor() as cursor:
@@ -196,23 +212,24 @@ def insert_data(conn, data_list, graph_name=None):
         graph_name: 图名称，可选
     """
     # 创建PolarDB配置
-    config = GraphDBConfigFactory(
-        backend="polardb",
-        config={
-            "host": "xxxxxxx",
-            "port": 5432,
-            "user": "xxxx",
-            "password": "xxxx",
-            "db_name": "xxxxx",
-            "user_name": 'xxxx',
-            "use_multi_db": False,
-            "auto_create": False,
-            "embedding_dimension": 1024,
-        },
-    )
-    
-    # 创建PolarDB实例
-    graph = GraphStoreFactory.from_config(config)
+    # config = GraphDBConfigFactory(
+    #     backend="polardb",
+    #     config={
+    #         "host": "xxxxxxx",
+    #         "port": 5432,
+    #         "user": "xxxx",
+    #         "password": "xxxx",
+    #         "db_name": "xxxxx",
+    #         "user_name": 'xxxx',
+    #         "use_multi_db": False,
+    #         "auto_create": False,
+    #         "embedding_dimension": 1024,
+    #     },
+    # )
+    #
+    # # 创建PolarDB实例
+    # graph = GraphStoreFactory.from_config(config)
+    graph = getPolarDb()
     print("✅ PolarDB连接成功")
     
     success_count = 0
@@ -326,7 +343,7 @@ def main():
         print("⚠️ 没有数据")
         return
 
-    conn = psycopg2.connect(**DB_CONFIG)
+    # conn = psycopg2.connect(**DB_CONFIG)
     print("✅ 数据库连接成功")
 
     # create_vector_extension(conn)
@@ -334,9 +351,9 @@ def main():
 
     # 使用默认的图名称，或者可以传入自定义的图名称
     # insert_data(conn, data, "custom_graph_name")
-    insert_data(conn, data)
+    insert_data(None, data)
 
-    conn.close()
+    # conn.close()
     print("🔒 数据库连接1已关闭")
 
 

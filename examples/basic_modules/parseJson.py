@@ -4,16 +4,18 @@ import psycopg2
 import sys
 
 # Add the parent directory to the path to allow imports
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'src'))
+sys.path.insert(0, src_path)
 
-from polardb_export_insert import insert_data
+# from polardb_export_insert_1 import insert_data
+from batchImport_polardbFromJson import insert_data, update_graph
 
 DB_CONFIG = {
-    'host': 'xxxxxxx',
+    'host': 'memory.pg.polardb.rds.aliyuncs.com',
     'port': 5432,
-    'database': 'xxxxx',
-    'user': 'xxxx',
-    'password': 'xxxx'
+    'database': 'test_zdy',
+    'user': 'adimin',
+    'password': 'Openmem0925'
 }
 conn = psycopg2.connect(**DB_CONFIG)
 
@@ -72,10 +74,15 @@ def process_folder(folder_path, batch_size=1000):
     # 处理最后不足 batch_size 的部分
     if batch:
         insert(batch)
+        update_graph()
 
     print(f"\n✅ 全部完成，共处理 {total_count} 条记录。")
 
 
 if __name__ == "__main__":
-    folder_path = r"/Users/zhudayang/python/github/1/MemOS/examples/basic_modules"
+    # folder_path = r"/Users/ccl/Desktop/file/export13/ceshi"
+    # 10W
+    folder_path = r"/Users/ccl/Desktop/file/export15/Memory"
+    # 70W
+    folder_path = r"/Users/ccl/Desktop/file/export13/Memory"
     process_folder(folder_path, batch_size=1000)
