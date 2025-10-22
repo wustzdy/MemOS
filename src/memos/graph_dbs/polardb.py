@@ -1386,7 +1386,8 @@ class PolarDBGraphDB(BaseGraphDB):
             RETURN n.id AS id
             $$) AS (id agtype)
         """
-        
+
+        print(f"[get_by_metadata] query: {cypher_query}, where_str: {where_str}")
         ids = []
         try:
             with self.connection.cursor() as cursor:
@@ -2357,7 +2358,7 @@ class PolarDBGraphDB(BaseGraphDB):
             return {"id": props.get("id", ""), "memory": props.get("memory", ""), "metadata": props}
         except Exception:
             return None
-
+    @timed
     def get_neighbors_by_tag(
             self,
             tags: list[str],
