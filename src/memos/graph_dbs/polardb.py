@@ -1387,7 +1387,8 @@ class PolarDBGraphDB(BaseGraphDB):
             RETURN n.id AS id
             $$) AS (id agtype)
         """
-        
+
+        print(f"[get_by_metadata] query: {cypher_query}, where_str: {where_str}")
         ids = []
         try:
             with self.connection.cursor() as cursor:
