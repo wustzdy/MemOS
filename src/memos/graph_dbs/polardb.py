@@ -2405,8 +2405,7 @@ class PolarDBGraphDB(BaseGraphDB):
             "ag_catalog.agtype_access_operator(properties, '\"status\"'::agtype) = '\"activated\"'::agtype")
 
         # 类型过滤 - 排除 reasoning 类型
-        where_clauses.append(
-            "ag_catalog.agtype_access_operator(properties, '\"node_type\"'::agtype) != '\"reasoning\"'::agtype")
+        # where_clauses.append("ag_catalog.agtype_access_operator(properties, '\"node_type\"'::agtype) != '\"reasoning\"'::agtype")
 
         # 用户过滤
         where_clauses.append("ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype")
