@@ -16,7 +16,7 @@ from memos.utils import timed
 
 logger = get_logger(__name__)
 
-# 图数据库配置
+# Graph database configuration
 GRAPH_NAME = 'test_memos_graph'
 
 
@@ -55,7 +55,7 @@ def generate_vector(dim=1024, low=-0.2, high=0.2):
 
 def find_embedding(metadata):
     def find_embedding(item):
-        """在多层结构中查找 embedding 向量"""
+        """Find an embedding vector within nested structures"""
         for key in ["embedding", "embedding_1024", "embedding_3072", "embedding_768"]:
             if key in item and isinstance(item[key], list):
                 return item[key]
@@ -73,7 +73,7 @@ def detect_embedding_field(embedding_list):
     if dim == 1024:
         return "embedding"
     else:
-        print(f"⚠️ 未知 embedding 维度 {dim}，跳过该向量")
+        print(f"⚠️ Unknown embedding dimension {dim}, skipping this vector")
         return None
 def convert_to_vector(embedding_list):
     if not embedding_list:
@@ -83,7 +83,7 @@ def convert_to_vector(embedding_list):
     return "[" + ",".join(str(float(x)) for x in embedding_list) + "]"
 
 def clean_properties(props):
-    """移除向量字段"""
+    """Remove vector fields"""
     vector_keys = {"embedding", "embedding_1024", "embedding_3072", "embedding_768"}
     if not isinstance(props, dict):
         return {}
@@ -322,8 +322,8 @@ class PolarDBGraphDB(BaseGraphDB):
         """
         user_name = user_name if user_name else self._get_config_value("user_name")
         
-        # 使用真正的 OFFSET 逻辑，与 nebular.py 保持一致
-        # 先找到要删除的节点ID，然后删除它们
+        # Use actual OFFSET logic, consistent with nebular.py
+        # First find IDs to delete, then delete them
         select_query = f"""
             SELECT id FROM "{self.db_name}_graph"."Memory" 
             WHERE ag_catalog.agtype_access_operator(properties, '"memory_type"'::agtype) = %s::agtype
@@ -337,7 +337,7 @@ class PolarDBGraphDB(BaseGraphDB):
         
         try:
             with self.connection.cursor() as cursor:
-                # 执行查询获取要删除的ID列表
+                # Execute query to get IDs to delete
                 cursor.execute(select_query, select_params)
                 ids_to_delete = [row[0] for row in cursor.fetchall()]
 
@@ -345,7 +345,7 @@ class PolarDBGraphDB(BaseGraphDB):
                     logger.info(f"No {memory_type} memories to remove for user {user_name}")
                     return
 
-                # 构建删除查询
+                # Build delete query
                 placeholders = ','.join(['%s'] * len(ids_to_delete))
                 delete_query = f"""
                     DELETE FROM "{self.db_name}_graph"."Memory"
@@ -353,7 +353,7 @@ class PolarDBGraphDB(BaseGraphDB):
                 """
                 delete_params = ids_to_delete
 
-                # 执行删除
+                # Execute deletion
                 cursor.execute(delete_query, delete_params)
                 deleted_count = cursor.rowcount
                 logger.info(f"Removed {deleted_count} oldest {memory_type} memories, keeping {keep_latest} latest for user {user_name}")
@@ -371,32 +371,32 @@ class PolarDBGraphDB(BaseGraphDB):
 
         user_name = user_name if user_name else self.config.user_name
 
-        # 获取当前节点
+        # Get the current node
         current_node = self.get_node(id, user_name=user_name)
         if not current_node:
             return
 
-        # 更新属性，但保留原始的id字段和memory字段
+        # Update properties but keep original id and memory fields
         properties = current_node["metadata"].copy()
-        original_id = properties.get("id", id)  # 保留原始ID
-        original_memory = current_node.get("memory", "")  # 保留原始memory
+        original_id = properties.get("id", id)  # Preserve original ID
+        original_memory = current_node.get("memory", "")  # Preserve original memory
         
-        # 如果fields中有memory字段，使用它；否则保留原始的memory
+        # If fields include memory, use it; otherwise keep original memory
         if "memory" in fields:
             original_memory = fields.pop("memory")
         
         properties.update(fields)
-        properties["id"] = original_id  # 确保ID不被覆盖
-        properties["memory"] = original_memory  # 确保memory不被覆盖
+        properties["id"] = original_id  # Ensure ID is not overwritten
+        properties["memory"] = original_memory  # Ensure memory is not overwritten
 
-        # 处理 embedding 字段
+        # Handle embedding field
         embedding_vector = None
         if "embedding" in fields:
             embedding_vector = fields.pop("embedding")
             if not isinstance(embedding_vector, list):
                 embedding_vector = None
 
-        # 构建更新查询
+        # Build update query
         if embedding_vector is not None:
             query = f"""
                 UPDATE "{self.db_name}_graph"."Memory" 
@@ -412,7 +412,7 @@ class PolarDBGraphDB(BaseGraphDB):
             """
             params = [json.dumps(properties), f'"{id}"']
 
-        # 只有在提供了 user_name 参数时才添加用户过滤
+        # Only add user filter when user_name is provided
         if user_name is not None:
             query += "\nAND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
             params.append(f'"{user_name}"')
@@ -439,7 +439,7 @@ class PolarDBGraphDB(BaseGraphDB):
         """
         params = [f'"{id}"']
 
-        # 只有在提供了 user_name 参数时才添加用户过滤
+        # Only add user filter when user_name is provided
         if user_name is not None:
             query += "\nAND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
             params.append(f'"{user_name}"')
@@ -455,15 +455,15 @@ class PolarDBGraphDB(BaseGraphDB):
     @timed
     def create_extension(self):
         extensions = [
-            ("polar_age", "图引擎"),
-            ("vector", "向量引擎")
+            ("polar_age", "Graph engine"),
+            ("vector", "Vector engine")
         ]
         try:
             with self.connection.cursor() as cursor:
-                # 确保在正确的数据库上下文中
+                # Ensure in the correct database context
                 cursor.execute(f"SELECT current_database();")
                 current_db = cursor.fetchone()[0]
-                print(f"当前数据库上下文: {current_db}")
+                print(f"Current database context: {current_db}")
                 
                 for ext_name, ext_desc in extensions:
                     try:
@@ -500,7 +500,7 @@ class PolarDBGraphDB(BaseGraphDB):
 
     @timed
     def create_edge(self):
-        """创建所有有效的边类型，如果不存在的话"""
+        """Create all valid edge types if they do not exist"""
         VALID_REL_TYPES = {
             "AGGREGATE_TO",
             "FOLLOWS",
@@ -701,7 +701,7 @@ class PolarDBGraphDB(BaseGraphDB):
         Returns:
             dict: Node properties as key-value pairs, or None if not found.
         """
-        # 构建查询字段
+        # Build select fields
         if include_embedding:
             select_fields = "id, properties, embedding"
         else:
@@ -714,7 +714,7 @@ class PolarDBGraphDB(BaseGraphDB):
         """
         params = [f'"{id}"']
         
-        # 只有在提供了 user_name 参数时才添加用户过滤
+        # Only add user filter when user_name is provided
         if user_name is not None:
             query += "\nAND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
             params.append(f'"{user_name}"')
@@ -847,10 +847,10 @@ class PolarDBGraphDB(BaseGraphDB):
             ]
         """
 
-        # 创建一个简单的边表来存储关系（如果不存在的话）
+        # Create a simple edge table to store relationships (if not exists)
         try:
             with self.connection.cursor() as cursor:
-                # 创建边表
+                # Create edge table
                 cursor.execute(f"""
                     CREATE TABLE IF NOT EXISTS "{self.db_name}_graph"."Edges" (
                         id SERIAL PRIMARY KEY,
@@ -864,7 +864,7 @@ class PolarDBGraphDB(BaseGraphDB):
                     );
                 """)
 
-                # 创建索引
+                # Create indexes
                 cursor.execute(f"""
                     CREATE INDEX IF NOT EXISTS idx_edges_source 
                     ON "{self.db_name}_graph"."Edges" (source_id);
@@ -880,7 +880,7 @@ class PolarDBGraphDB(BaseGraphDB):
         except Exception as e:
             logger.warning(f"Failed to create edges table: {e}")
 
-        # 查询边
+        # Query edges
         where_clauses = []
         params = [id]
 
@@ -894,7 +894,7 @@ class PolarDBGraphDB(BaseGraphDB):
             where_clauses.append("target_id = %s")
         else:  # ANY
             where_clauses.append("(source_id = %s OR target_id = %s)")
-            params.append(id)  # 添加第二个参数用于ANY方向
+            params.append(id)  # Add second parameter for ANY direction
 
         where_clause = " AND ".join(where_clauses)
 
@@ -944,35 +944,35 @@ class PolarDBGraphDB(BaseGraphDB):
         Returns:
             List of dicts with node details and overlap count.
         """
-        # 构建查询条件
+        # Build query conditions
         where_clauses = []
         params = []
 
-        # 排除指定的ID
+        # Exclude specified IDs
         if exclude_ids:
             placeholders = ','.join(['%s'] * len(exclude_ids))
             where_clauses.append(f"id NOT IN ({placeholders})")
             params.extend(exclude_ids)
 
-        # 状态过滤
+        # Status filter
         where_clauses.append("properties->>'status' = %s")
         params.append('activated')
 
-        # 类型过滤
+        # Type filter
         where_clauses.append("properties->>'type' != %s")
         params.append('reasoning')
 
         where_clauses.append("properties->>'memory_type' != %s")
         params.append('WorkingMemory')
 
-        # 用户过滤
+        # User filter
         if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
             where_clauses.append("properties->>'user_name' = %s")
             params.append(self._get_config_value("user_name"))
 
         where_clause = " AND ".join(where_clauses)
 
-        # 获取所有候选节点
+        # Get all candidate nodes
         query = f"""
             SELECT id, properties, embedding
             FROM "{self.db_name}_graph"."Memory" 
@@ -988,7 +988,7 @@ class PolarDBGraphDB(BaseGraphDB):
                 node_id, properties_json, embedding_json = row
                 properties = properties_json if properties_json else {}
 
-                # 解析embedding
+                # Parse embedding
                 if embedding_json is not None:
                     try:
                         embedding = json.loads(embedding_json) if isinstance(embedding_json, str) else embedding_json
@@ -996,7 +996,7 @@ class PolarDBGraphDB(BaseGraphDB):
                     except (json.JSONDecodeError, TypeError):
                         logger.warning(f"Failed to parse embedding for node {node_id}")
 
-                # 计算标签重叠
+                # Compute tag overlap
                 node_tags = properties.get("tags", [])
                 if isinstance(node_tags, str):
                     try:
@@ -1015,7 +1015,7 @@ class PolarDBGraphDB(BaseGraphDB):
                     })
                     nodes_with_overlap.append((node_data, overlap_count))
 
-            # 按重叠数量排序并返回前top_k个
+            # Sort by overlap count and return top_k
             nodes_with_overlap.sort(key=lambda x: x[1], reverse=True)
             return [node for node, _ in nodes_with_overlap[:top_k]]
 
@@ -1049,10 +1049,10 @@ class PolarDBGraphDB(BaseGraphDB):
 
                 children = []
                 for row in results:
-                    # 处理 child_id - 移除可能的引号
+                    # Handle child_id - remove possible quotes
                     child_id_raw = row[0].value if hasattr(row[0], 'value') else str(row[0])
                     if isinstance(child_id_raw, str):
-                        # 如果字符串以引号开始和结束，去掉引号
+                        # If string starts and ends with quotes, remove quotes
                         if child_id_raw.startswith('"') and child_id_raw.endswith('"'):
                             child_id = child_id_raw[1:-1]
                         else:
@@ -1060,28 +1060,28 @@ class PolarDBGraphDB(BaseGraphDB):
                     else:
                         child_id = str(child_id_raw)
 
-                    # 处理 embedding - 从数据库的embedding列获取
+                    # Handle embedding - get from database embedding column
                     embedding_raw = row[1]
                     embedding = []
                     if embedding_raw is not None:
                         try:
                             if isinstance(embedding_raw, str):
-                                # 如果是JSON字符串，解析它
+                                # If it is a JSON string, parse it
                                 embedding = json.loads(embedding_raw)
                             elif isinstance(embedding_raw, list):
-                                # 如果已经是列表，直接使用
+                                # If already a list, use directly
                                 embedding = embedding_raw
                             else:
-                                # 尝试转换为列表
+                                # Try converting to list
                                 embedding = list(embedding_raw)
                         except (json.JSONDecodeError, TypeError, ValueError) as e:
                             logger.warning(f"Failed to parse embedding for child node {child_id}: {e}")
                             embedding = []
 
-                    # 处理 memory - 移除可能的引号
+                    # Handle memory - remove possible quotes
                     memory_raw = row[2].value if hasattr(row[2], 'value') else str(row[2])
                     if isinstance(memory_raw, str):
-                        # 如果字符串以引号开始和结束，去掉引号
+                        # If string starts and ends with quotes, remove quotes
                         if memory_raw.startswith('"') and memory_raw.endswith('"'):
                             memory = memory_raw[1:-1]
                         else:
@@ -1132,7 +1132,7 @@ class PolarDBGraphDB(BaseGraphDB):
 
         user_name = user_name if user_name else self._get_config_value("user_name")
 
-        # 使用简化的查询获取子图（暂时只获取直接邻居）
+        # Use a simplified query to get the subgraph (temporarily only direct neighbors)
         query1 = f"""
             SELECT * FROM cypher('{self.db_name}_graph', $$
                     MATCH(center: Memory)-[r * 1..{depth}]->(neighbor:Memory)
@@ -1169,14 +1169,14 @@ class PolarDBGraphDB(BaseGraphDB):
                 if not result or not result[0]:
                     return {"core_node": None, "neighbors": [], "edges": []}
 
-                # 解析中心节点
+                # Parse center node
                 centers_data = result[0] if result[0] else "[]"
                 neighbors_data = result[1] if result[1] else "[]"
                 edges_data = result[2] if result[2] else "[]"
                 
-                # 解析 JSON 数据
+                # Parse JSON data
                 try:
-                    # 清理数据中的 ::vertex 和 ::edge 后缀
+                    # Clean ::vertex and ::edge suffixes in data
                     if isinstance(centers_data, str):
                         centers_data = centers_data.replace('::vertex', '')
                     if isinstance(neighbors_data, str):
@@ -1191,14 +1191,14 @@ class PolarDBGraphDB(BaseGraphDB):
                     logger.error(f"Failed to parse JSON data: {e}")
                     return {"core_node": None, "neighbors": [], "edges": []}
                 
-                # 解析中心节点
+                # Parse center node
                 core_node = None
                 if centers_list and len(centers_list) > 0:
                     center_data = centers_list[0]
                     if isinstance(center_data, dict) and "properties" in center_data:
                         core_node = self._parse_node(center_data["properties"])
                 
-                # 解析邻居节点
+                # Parse neighbor nodes
                 neighbors = []
                 if isinstance(neighbors_list, list):
                     for neighbor_data in neighbors_list:
@@ -1206,7 +1206,7 @@ class PolarDBGraphDB(BaseGraphDB):
                             neighbor_parsed = self._parse_node(neighbor_data["properties"])
                             neighbors.append(neighbor_parsed)
 
-                # 解析边
+                # Parse edges
                 edges = []
                 if isinstance(edges_list, list):
                     for edge_group in edges_list:
@@ -1332,7 +1332,7 @@ class PolarDBGraphDB(BaseGraphDB):
         """
         user_name = user_name if user_name else self._get_config_value("user_name")
         
-        # 构建 cypher 查询的 WHERE 条件
+        # Build WHERE conditions for cypher query
         where_conditions = []
         
         for f in filters:
@@ -1340,11 +1340,11 @@ class PolarDBGraphDB(BaseGraphDB):
             op = f.get("op", "=")
             value = f["value"]
             
-            # 格式化值
+            # Format value
             if isinstance(value, str):
                 escaped_value = f"'{value}'"
             elif isinstance(value, list):
-                # 处理列表值
+                # Handle list values
                 list_items = []
                 for v in value:
                     if isinstance(v, str):
@@ -1355,7 +1355,7 @@ class PolarDBGraphDB(BaseGraphDB):
             else:
                 escaped_value = f"'{value}'" if isinstance(value, str) else str(value)
             print("op=============:",op)
-            # 构建 WHERE 条件
+            # Build WHERE conditions
             if op == "=":
                 where_conditions.append(f"n.{field} = {escaped_value}")
             elif op == "in":
@@ -1373,12 +1373,12 @@ class PolarDBGraphDB(BaseGraphDB):
             else:
                 raise ValueError(f"Unsupported operator: {op}")
         
-        # 添加用户名称过滤
+        # Add user_name filter
         where_conditions.append(f"n.user_name = '{user_name}'")
         
         where_str = " AND ".join(where_conditions)
         
-        # 使用 cypher 查询
+        # Use cypher query
         cypher_query = f"""
             SELECT * FROM cypher('{self.db_name}_graph', $$
             MATCH (n:Memory)
@@ -1454,7 +1454,7 @@ class PolarDBGraphDB(BaseGraphDB):
         print("get_grouped_counts:" + query)
         try:
             with self.connection.cursor() as cursor:
-                # 处理参数化查询
+                # Handle parameterized query
                 if params and isinstance(params, list):
                     cursor.execute(query, final_params)
                 else:
@@ -1524,7 +1524,7 @@ class PolarDBGraphDB(BaseGraphDB):
                     value = f"'{value}'"
                 where_clause = where_clause.replace(f"${key}", str(value))
         
-        # 处理 where_clause 中的 user_name 参数
+        # Handle user_name parameter in where_clause
         if "user_name = %s" in where_clause:
             where_clause = where_clause.replace("user_name = %s", f"ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = '\"{user_name}\"'::agtype")
 
@@ -1549,7 +1549,7 @@ class PolarDBGraphDB(BaseGraphDB):
 
         try:
             with self.connection.cursor() as cursor:
-                # 处理参数化查询
+                # Handle parameterized query
                 if params and isinstance(params, list):
                     cursor.execute(query, params)
                 else:
@@ -1768,7 +1768,7 @@ class PolarDBGraphDB(BaseGraphDB):
         if scope not in {"WorkingMemory", "LongTermMemory", "UserMemory", "OuterMemory"}:
             raise ValueError(f"Unsupported memory type scope: {scope}")
 
-        # 使用 cypher 查询获取记忆项
+        # Use cypher query to retrieve memory items
         if include_embedding:
             cypher_query = f"""
                    WITH t as (
@@ -1858,7 +1858,7 @@ class PolarDBGraphDB(BaseGraphDB):
         if scope not in {"WorkingMemory", "LongTermMemory", "UserMemory", "OuterMemory"}:
             raise ValueError(f"Unsupported memory type scope: {scope}")
 
-        # 使用 cypher 查询获取记忆项
+        # Use cypher query to retrieve memory items
         if include_embedding:
             cypher_query = f"""
                 WITH t as (
@@ -1898,16 +1898,16 @@ class PolarDBGraphDB(BaseGraphDB):
                         node_agtype = row[0]
                         # print(f"[get_all_memory_items] Processing row: {type(node_agtype)} = {node_agtype}")
 
-                        # 处理字符串格式的数据
+                        # Handle string-formatted data
                         if isinstance(node_agtype, str):
                             try:
-                                # 移除 ::vertex 后缀
+                                # Remove ::vertex suffix
                                 json_str = node_agtype.replace('::vertex', '')
                                 node_data = json.loads(json_str)
 
                                 if isinstance(node_data, dict) and "properties" in node_data:
                                     properties = node_data["properties"]
-                                    # 构建节点数据
+                                    # Build node data
                                     parsed_node_data = {
                                         "id": properties.get("id", ""),
                                         "memory": properties.get("memory", ""),
@@ -1918,17 +1918,17 @@ class PolarDBGraphDB(BaseGraphDB):
                                         parsed_node_data["embedding"] = properties["embedding"]
 
                                     nodes.append(self._parse_node(parsed_node_data))
-                                    print(f"[get_all_memory_items] ✅ 成功解析节点: {properties.get('id', '')}")
+                                    print(f"[get_all_memory_items] ✅ Parsed node successfully: {properties.get('id', '')}")
                                 else:
-                                    print(f"[get_all_memory_items] ❌ 节点数据格式不正确: {node_data}")
+                                    print(f"[get_all_memory_items] ❌ Invalid node data format: {node_data}")
 
                             except (json.JSONDecodeError, TypeError) as e:
-                                print(f"[get_all_memory_items] ❌ JSON 解析失败: {e}")
+                                print(f"[get_all_memory_items] ❌ JSON parsing failed: {e}")
                         elif node_agtype and hasattr(node_agtype, 'value'):
-                            # 处理 agtype 对象
+                            # Handle agtype object
                             node_props = node_agtype.value
                             if isinstance(node_props, dict):
-                                # 解析节点属性
+                                # Parse node properties
                                 node_data = {
                                     "id": node_props.get("id", ""),
                                     "memory": node_props.get("memory", ""),
@@ -1939,9 +1939,9 @@ class PolarDBGraphDB(BaseGraphDB):
                                     node_data["embedding"] = node_props["embedding"]
 
                                 nodes.append(self._parse_node(node_data))
-                                print(f"[get_all_memory_items] ✅ 成功解析 agtype 节点: {node_props.get('id', '')}")
+                                print(f"[get_all_memory_items] ✅ Parsed agtype node successfully: {node_props.get('id', '')}")
                         else:
-                            print(f"[get_all_memory_items] ❌ 未知的数据格式: {type(node_agtype)}")
+                            print(f"[get_all_memory_items] ❌ Unknown data format: {type(node_agtype)}")
 
             except Exception as e:
                 logger.error(f"Failed to get memories: {e}", exc_info=True)
@@ -1959,12 +1959,12 @@ class PolarDBGraphDB(BaseGraphDB):
         """
         user_name = user_name if user_name else self._get_config_value("user_name")
         
-        # 构建返回字段，根据 include_embedding 参数决定是否包含 embedding
+        # Build return fields based on include_embedding flag
         if include_embedding:
             return_fields = "id(n) as id1,n"
             return_fields_agtype = " id1 agtype,n agtype"
         else:
-            # 构建不包含 embedding 的字段列表
+            # Build field list without embedding
             return_fields = ",".join([
                 "n.id AS id",
                 "n.memory AS memory", 
@@ -1994,7 +1994,7 @@ class PolarDBGraphDB(BaseGraphDB):
             ]
             return_fields_agtype = ", ".join([f"{field} agtype" for field in fields])
 
-        # 保留写法
+        # Keep legacy query
         cypher_query_1 = f"""
             SELECT m.*
             FROM {self.db_name}_graph."Memory" m
@@ -2009,7 +2009,7 @@ class PolarDBGraphDB(BaseGraphDB):
               ); 
         """
 
-        # 使用 OPTIONAL MATCH 来查找孤立节点（没有父节点和子节点的节点）
+        # Use OPTIONAL MATCH to find isolated nodes (no parents or children)
         cypher_query = f"""
             SELECT * FROM cypher('{self.db_name}_graph', $$
             MATCH (n:Memory)
@@ -2046,7 +2046,7 @@ class PolarDBGraphDB(BaseGraphDB):
                 print("result------",len(results))
                 for row in results:
                     if include_embedding:
-                        # 当 include_embedding=True 时，返回完整的节点对象
+                        # When include_embedding=True, return full node object
                         if isinstance(row, (list, tuple)) and len(row) >= 2:
                             embedding_val, node_val = row[0], row[1]
                         else:
@@ -2059,8 +2059,8 @@ class PolarDBGraphDB(BaseGraphDB):
                                 candidates.append(node)
                                 node_ids.add(node_id)
                     else:
-                        # 当 include_embedding=False 时，返回字段字典
-                        # 定义字段名称（与查询中的 RETURN 字段对应）
+                        # When include_embedding=False, return field dictionary
+                        # Define field names matching the RETURN clause
                         field_names = [
                             "id", "memory", "user_name", "user_id", "session_id", "status", 
                             "key", "confidence", "tags", "created_at", "updated_at", 
@@ -2068,22 +2068,22 @@ class PolarDBGraphDB(BaseGraphDB):
                             "usage", "background","graph_id"
                         ]
                         
-                        # 将行数据转换为字典
+                        # Convert row to dictionary
                         node_data = {}
                         for i, field_name in enumerate(field_names):
                             if i < len(row):
                                 value = row[i]
-                                # 处理特殊字段
+                                # Handle special fields
                                 if field_name in ["tags", "sources", "usage"] and isinstance(value, str):
                                     try:
-                                        # 尝试解析 JSON 字符串
+                                        # Try parsing JSON string
                                         node_data[field_name] = json.loads(value)
                                     except (json.JSONDecodeError, TypeError):
                                         node_data[field_name] = value
                                 else:
                                     node_data[field_name] = value
                         
-                        # 使用 _parse_node 方法解析
+                        # Parse node using _parse_node_new
                         try:
                             node = self._parse_node_new(node_data)
                             node_id = node["id"]
@@ -2091,9 +2091,9 @@ class PolarDBGraphDB(BaseGraphDB):
                             if node_id not in node_ids:
                                 candidates.append(node)
                                 node_ids.add(node_id)
-                                print(f"✅ 成功解析节点: {node_id}")
+                                print(f"✅ Parsed node successfully: {node_id}")
                         except Exception as e:
-                            print(f"❌ 解析节点失败: {e}")
+                            print(f"❌ Failed to parse node: {e}")
                                 
         except Exception as e:
             logger.error(f"Failed to get structure optimization candidates: {e}", exc_info=True)
@@ -2122,8 +2122,8 @@ class PolarDBGraphDB(BaseGraphDB):
             if time_field in node and hasattr(node[time_field], "isoformat"):
                 node[time_field] = node[time_field].isoformat()
 
-        # 不再对sources和usage字段进行反序列化，保持List[str]格式
-        # 不再移除user_name字段，保持所有字段
+        # Do not deserialize sources and usage; keep List[str] format
+        # Do not remove user_name; keep all fields
 
         # 1
         # return {"id": node.pop("id"), "memory": node.pop("memory", ""), "metadata": node}
@@ -2131,7 +2131,7 @@ class PolarDBGraphDB(BaseGraphDB):
         # 2
         # node_id = node.pop("id")
         # memory = node.pop("memory", "")
-        # # 在 metadata 中添加 id 字段
+        # # Add id field into metadata
         # node["id"] = node_id
         # node1 = node
         # return {"id": node_id, "memory": memory, "metadata": node1}
@@ -2158,8 +2158,8 @@ class PolarDBGraphDB(BaseGraphDB):
             if time_field in node and hasattr(node[time_field], "isoformat"):
                 node[time_field] = node[time_field].isoformat()
 
-        # 不再对sources和usage字段进行反序列化，保持List[str]格式
-        # 不再移除user_name字段，保持所有字段
+        # Do not deserialize sources and usage; keep List[str]
+        # Do not remove user_name; keep all fields
 
         return {"id": node.pop("id"), "memory": node.pop("memory", ""), "metadata": node}
 
@@ -2171,16 +2171,16 @@ class PolarDBGraphDB(BaseGraphDB):
     #deprecated
     def add_node_old(conn, id: str, memory: str, metadata: dict, graph_name=None):
         """
-        添加单个节点到图数据库
+        Add a single node to the graph database
 
         Args:
-            conn: 数据库连接
-            id: 节点ID
-            memory: 内存内容
-            metadata: 元数据字典
-            graph_name: 图名称，可选
+            conn: Database connection
+            id: Node ID
+            memory: Memory content
+            metadata: Metadata dictionary
+            graph_name: Graph name, optional
         """
-        # 使用传入的graph_name或默认值
+        # Use provided graph_name or default
         if graph_name is None:
             graph_name = GRAPH_NAME
 
@@ -2197,14 +2197,14 @@ class PolarDBGraphDB(BaseGraphDB):
             properties["memory"] = memory
 
             with conn.cursor() as cursor:
-                # 先删除现有记录（如果存在）
+                # Delete existing record first (if any)
                 delete_sql = f"""
                     DELETE FROM "Memory" 
                     WHERE id = ag_catalog._make_graph_id('{graph_name}'::name, 'Memory'::name, %s::text::cstring);
                 """
                 cursor.execute(delete_sql, (id,))
 
-                # 然后插入新记录
+                # Then insert new record
                 if field_name and vector_value:
                     insert_sql = f"""
                                        INSERT INTO "Memory" (id, properties, {field_name})
@@ -2215,7 +2215,7 @@ class PolarDBGraphDB(BaseGraphDB):
                                        );
                                        """
                     cursor.execute(insert_sql, (id, Json(properties), vector_value))
-                    print(f"✅ 成功插入/更新: {id} ({field_name})")
+                    print(f"✅ Insert/update succeeded: {id} ({field_name})")
                 else:
                     insert_sql = f"""
                                         INSERT INTO "Memory" (id, properties)
@@ -2225,20 +2225,20 @@ class PolarDBGraphDB(BaseGraphDB):
                                         );
                                         """
                     cursor.execute(insert_sql, (id, Json(properties)))
-                    print(f"✅ 成功插入/更新(无向量): {id}")
+                    print(f"✅ Insert/update succeeded (no vector): {id}")
 
             conn.commit()
             return True
 
         except Exception as e:
             conn.rollback()
-            print(f"❌ 插入失败 (ID: {id}): {e}")
+            print(f"❌ Insert failed (ID: {id}): {e}")
             return False
 
     @timed
     def add_node(self, id: str, memory: str, metadata: dict[str, Any], user_name: str | None = None) -> None:
         """Add a memory node to the graph."""
-        # user_name 从 metadata 中获取，如果不存在则从配置中获取
+        # user_name comes from metadata; fallback to config if missing
         metadata["user_name"] = user_name if user_name else self.config.user_name
         # if "user_name" not in metadata:
         #     if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
@@ -2264,16 +2264,16 @@ class PolarDBGraphDB(BaseGraphDB):
         if "embedding" not in properties or not properties["embedding"]:
             properties["embedding"] = generate_vector(self._get_config_value("embedding_dimension", 1024))
 
-        # serialization - 处理sources和usage字段的JSON序列化
+        # serialization - JSON-serialize sources and usage fields
         for field_name in ["sources", "usage"]:
             if field_name in properties and properties[field_name]:
                 if isinstance(properties[field_name], list):
                     for idx in range(len(properties[field_name])):
-                        # 只有当元素不是字符串时才进行序列化
+                        # Serialize only when element is not a string
                         if not isinstance(properties[field_name][idx], str):
                             properties[field_name][idx] = json.dumps(properties[field_name][idx])
                 elif isinstance(properties[field_name], str):
-                    # 如果已经是字符串，保持不变
+                    # If already a string, leave as-is
                     pass
 
         # Extract embedding for separate column
@@ -2281,8 +2281,8 @@ class PolarDBGraphDB(BaseGraphDB):
         if not isinstance(embedding_vector, list):
             embedding_vector = []
 
-        # 根据embedding维度选择正确的列名
-        embedding_column = "embedding"  # 默认列
+        # Select column name based on embedding dimension
+        embedding_column = "embedding"  # default column
         if len(embedding_vector) == 3072:
             embedding_column = "embedding_3072"
         elif len(embedding_vector) == 1024:
@@ -2291,7 +2291,7 @@ class PolarDBGraphDB(BaseGraphDB):
             embedding_column = "embedding_768"
 
         with self.connection.cursor() as cursor:
-            # 先删除现有记录（如果存在）
+            # Delete existing record first (if any)
             delete_query = f"""
                 DELETE FROM {self.db_name}_graph."Memory" 
                 WHERE id = ag_catalog._make_graph_id('{self.db_name}_graph'::name, 'Memory'::name, %s::text::cstring)
@@ -2305,7 +2305,7 @@ class PolarDBGraphDB(BaseGraphDB):
             graph_id = cursor.fetchone()[0]
             properties['graph_id'] = str(graph_id)
 
-            # 然后插入新记录
+            # Then insert new record
             if embedding_vector:
                 insert_query = f"""
                     INSERT INTO {self.db_name}_graph."Memory"(id, properties, {embedding_column})
@@ -2329,18 +2329,18 @@ class PolarDBGraphDB(BaseGraphDB):
 
     def _build_node_from_agtype(self, node_agtype, embedding=None):
         """
-        将 cypher 返回的 n 列（agtype 或 JSON 字符串）解析为标准节点，
-        并把 embedding 合并进 properties 里。
+        Parse the cypher-returned column `n` (agtype or JSON string)
+        into a standard node and merge embedding into properties.
         """
         try:
-            # 字符串场景: '{"id":...,"label":[...],"properties":{...}}::vertex'
+            # String case: '{"id":...,"label":[...],"properties":{...}}::vertex'
             if isinstance(node_agtype, str):
                 json_str = node_agtype.replace('::vertex', '')
                 obj = json.loads(json_str)
                 if not (isinstance(obj, dict) and "properties" in obj):
                     return None
                 props = obj["properties"]
-            # agtype 场景: 带 value 属性
+            # agtype case: has `value` attribute
             elif node_agtype and hasattr(node_agtype, "value"):
                 val = node_agtype.value
                 if not (isinstance(val, dict) and "properties" in val):
@@ -2352,7 +2352,7 @@ class PolarDBGraphDB(BaseGraphDB):
             if embedding is not None:
                 props["embedding"] = embedding
 
-            # 直接返回标准格式，不需要再次调用 _parse_node_new
+            # Return standard format directly; no need to call _parse_node_new again
             return {"id": props.get("id", ""), "memory": props.get("memory", ""), "metadata": props}
         except Exception:
             return None
@@ -2385,11 +2385,11 @@ class PolarDBGraphDB(BaseGraphDB):
 
         user_name = user_name if user_name else self._get_config_value("user_name")
 
-        # 构建查询条件 - 更宽松的过滤条件
+        # Build query conditions - more relaxed filters
         where_clauses = []
         params = []
 
-        # 排除指定的ID - 使用 properties 中的 id 字段
+        # Exclude specified IDs - use id in properties
         if exclude_ids:
             exclude_conditions = []
             for exclude_id in exclude_ids:
@@ -2398,23 +2398,23 @@ class PolarDBGraphDB(BaseGraphDB):
                 params.append(f'"{exclude_id}"')
             where_clauses.append(f"({' AND '.join(exclude_conditions)})")
 
-        # 状态过滤 - 只保留 activated 状态
+        # Status filter - keep only 'activated'
         where_clauses.append(
             "ag_catalog.agtype_access_operator(properties, '\"status\"'::agtype) = '\"activated\"'::agtype")
 
-        # 类型过滤 - 排除 reasoning 类型
+        # Type filter - exclude 'reasoning' type
         # where_clauses.append("ag_catalog.agtype_access_operator(properties, '\"node_type\"'::agtype) != '\"reasoning\"'::agtype")
 
-        # 用户过滤
+        # User filter
         where_clauses.append("ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype")
         params.append(f'"{user_name}"')
 
-        # 测试无数据，需要注释
+        # Testing showed no data; annotate.
         where_clauses.append("ag_catalog.agtype_access_operator(properties, '\"memory_type\"'::agtype) != '\"WorkingMemory\"'::agtype")
 
         where_clause = " AND ".join(where_clauses)
 
-        # 获取所有候选节点
+        # Fetch all candidate nodes
         query = f"""
             SELECT id, properties, embedding
             FROM "{self.db_name}_graph"."Memory" 
@@ -2433,7 +2433,7 @@ class PolarDBGraphDB(BaseGraphDB):
                     node_id, properties_json, embedding_json = row
                     properties = properties_json if properties_json else {}
 
-                    # 解析embedding
+                    # Parse embedding
                     if include_embedding and embedding_json is not None:
                         try:
                             embedding = json.loads(embedding_json) if isinstance(embedding_json,
@@ -2442,7 +2442,7 @@ class PolarDBGraphDB(BaseGraphDB):
                         except (json.JSONDecodeError, TypeError):
                             logger.warning(f"Failed to parse embedding for node {node_id}")
 
-                    # 计算标签重叠
+                    # Compute tag overlap
                     node_tags = properties.get("tags", [])
                     if isinstance(node_tags, str):
                         try:
@@ -2461,7 +2461,7 @@ class PolarDBGraphDB(BaseGraphDB):
                         })
                         nodes_with_overlap.append((node_data, overlap_count))
 
-                # 按重叠数量排序并返回前top_k个
+                # Sort by overlap count and return top_k items
                 nodes_with_overlap.sort(key=lambda x: x[1], reverse=True)
                 return [node for node, _ in nodes_with_overlap[:top_k]]
 
@@ -2497,7 +2497,7 @@ class PolarDBGraphDB(BaseGraphDB):
 
         user_name = user_name if user_name else self._get_config_value("user_name")
 
-        # 构建查询条件，与 nebular.py 保持一致
+        # Build query conditions; keep consistent with nebular.py
         where_clauses = [
             'n.status = "activated"',
             'NOT (n.node_type = "reasoning")',
@@ -2543,14 +2543,14 @@ class PolarDBGraphDB(BaseGraphDB):
         return_fields_str = ", ".join(return_fields)
         result_fields = []
         for field in return_fields:
-            # 从 "n.id AS id" 提取出字段名 "id"
+            # Extract field name 'id' from 'n.id AS id'
             field_name = field.split(" AS ")[-1]
             result_fields.append(f"{field_name} agtype")
 
-        # 添加 overlap_count
+        # Add overlap_count
         result_fields.append("overlap_count agtype")
         result_fields_str = ", ".join(result_fields)
-        # 使用 Cypher 查询，与 nebular.py 保持一致
+        # Use Cypher query; keep consistent with nebular.py
         query = f"""
             SELECT * FROM (
                 SELECT * FROM cypher('{self.db_name}_graph', $$
@@ -2572,11 +2572,11 @@ class PolarDBGraphDB(BaseGraphDB):
 
                 neighbors = []
                 for row in results:
-                    # 解析结果
+                    # Parse results
                     props = {}
                     overlap_count = None
 
-                    # 手动解析每个字段
+                    # Manually parse each field
                     field_names = [
                         "id", "memory", "user_name", "user_id", "session_id", "status",
                         "key", "confidence", "tags", "created_at", "updated_at",
@@ -2598,11 +2598,11 @@ class PolarDBGraphDB(BaseGraphDB):
                         parsed["overlap_count"] = overlap_int
                         neighbors.append(parsed)
 
-                # 按重叠数量排序
+                # Sort by overlap count
                 neighbors.sort(key=lambda x: x["overlap_count"], reverse=True)
                 neighbors = neighbors[:top_k]
 
-                # 移除 overlap_count 字段
+                # Remove overlap_count field
                 result = []
                 for neighbor in neighbors:
                     neighbor.pop("overlap_count", None)
@@ -2632,7 +2632,7 @@ class PolarDBGraphDB(BaseGraphDB):
                 metadata = _prepare_node_metadata(metadata)
                 metadata.update({"id": id, "memory": memory})
 
-                # 使用 add_node 方法添加节点
+                # Use add_node to insert node
                 self.add_node(id, memory, metadata)
 
             except Exception as e:
@@ -2644,7 +2644,7 @@ class PolarDBGraphDB(BaseGraphDB):
                 source_id, target_id = edge["source"], edge["target"]
                 edge_type = edge["type"]
 
-                # 使用 add_edge 方法添加边
+                # Use add_edge to insert edge
                 self.add_edge(source_id, target_id, edge_type, user_name)
 
             except Exception as e:
@@ -2683,11 +2683,11 @@ class PolarDBGraphDB(BaseGraphDB):
         else:
             raise ValueError("Invalid direction. Must be 'OUTGOING', 'INCOMING', or 'ANY'.")
 
-        # 添加类型过滤
+        # Add type filter
         if type != "ANY":
             where_clause += f" AND type(r) = '{type}'"
 
-        # 添加用户过滤
+        # Add user filter
         where_clause += f" AND a.user_name = '{user_name}' AND b.user_name = '{user_name}'"
 
         query = f"""
