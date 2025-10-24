@@ -294,13 +294,13 @@ class MemoryDataProcessor:
 if __name__ == "__main__":
     # 数据库配置（请根据实际情况修改）
     POLARDB_CONFIG = {
-        "host": "memory.pg.polardb.rds.aliyuncs.com",
+        "host": "xxx",
         "port": 5432,
-        "user": "adimin",
-        "password": "Openmem0925",
-        "database": "memtensor_memos",
+        "user": "xxx",
+        "password": "xxx",
+        "database": "xxx",
         # "database": "test_zdy",
-        "graph_name": "memtensor_memos_graph"
+        "graph_name": "xxx"
         # "graph_name": "test_zdy_graph"
     }
 
