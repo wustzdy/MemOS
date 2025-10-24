@@ -293,16 +293,16 @@ class MemoryDataProcessor:
 # 使用示例
 if __name__ == "__main__":
     # 数据库配置（请根据实际情况修改）
-    # POLARDB_CONFIG = {
-    #     "host": "memory.pg.polardb.rds.aliyuncs.com",
-    #     "port": 5432,
-    #     "user": "adimin",
-    #     "password": "Openmem0925",
-    #     "database": "memtensor_memos",
-    #     # "database": "test_zdy",
-    #     "graph_name": "memtensor_memos_graph"
-    #     # "graph_name": "test_zdy_graph"
-    # }
+    POLARDB_CONFIG = {
+        "host": "memory.pg.polardb.rds.aliyuncs.com",
+        "port": 5432,
+        "user": "adimin",
+        "password": "Openmem0925",
+        "database": "memtensor_memos",
+        # "database": "test_zdy",
+        "graph_name": "memtensor_memos_graph"
+        # "graph_name": "test_zdy_graph"
+    }
 
     # 文件路径
     file_path = "/Users/ccl/Desktop/file/temp/result.json"
