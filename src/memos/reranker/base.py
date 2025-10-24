@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
-from memos.utils import timed
 
 
 if TYPE_CHECKING:
@@ -14,7 +13,6 @@ class BaseReranker(ABC):
     """Abstract interface for memory rerankers."""
 
     @abstractmethod
-    @timed
     def rerank(
         self,
         query: str,
