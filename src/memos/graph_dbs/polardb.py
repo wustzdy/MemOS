@@ -8,6 +8,7 @@ import numpy as np
 import psycopg2
 from psycopg2.extras import Json
 
+from examples.mem_os.locomo_shared_database_memos import result
 from memos.configs.graph_db import PolarDBGraphDBConfig
 from memos.dependency import require_python_package
 from memos.graph_dbs.base import BaseGraphDB
@@ -305,7 +306,7 @@ class PolarDBGraphDB(BaseGraphDB):
                 cursor.execute(query, params)
                 result = cursor.fetchone()
                 print(f"[node_not_exist] Query result: {result}")
-                return len(result)
+                return 1 if result else 0
         except Exception as e:
             logger.error(f"[node_not_exist] Query failed: {e}", exc_info=True)
             raise
