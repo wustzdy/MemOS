@@ -1331,30 +1331,34 @@ class PolarDBGraphDB(BaseGraphDB):
             list[str]: Node IDs whose metadata match the filter conditions. (AND logic).
         """
         user_name = user_name if user_name else self._get_config_value("user_name")
-        
+
         # Build WHERE conditions for cypher query
         where_conditions = []
-        
+
         for f in filters:
             field = f["field"]
             op = f.get("op", "=")
             value = f["value"]
-            
+
             # Format value
             if isinstance(value, str):
-                escaped_value = f"'{value}'"
+                # Escape single quotes in string values
+                escaped_str = value.replace("'", "''")
+                escaped_value = f"'{escaped_str}'"
             elif isinstance(value, list):
-                # Handle list values
+                # Handle list values - use double quotes for Cypher arrays
                 list_items = []
                 for v in value:
                     if isinstance(v, str):
-                        list_items.append(f"'{v}'")
+                        # Escape double quotes in string values for Cypher
+                        escaped_str = v.replace('"', '\\"')
+                        list_items.append(f'"{escaped_str}"')
                     else:
                         list_items.append(str(v))
                 escaped_value = f"[{', '.join(list_items)}]"
             else:
                 escaped_value = f"'{value}'" if isinstance(value, str) else str(value)
-            print("op=============:",op)
+            print("op=============:", op)
             # Build WHERE conditions
             if op == "=":
                 where_conditions.append(f"n.{field} = {escaped_value}")
@@ -1372,12 +1376,13 @@ class PolarDBGraphDB(BaseGraphDB):
                 where_conditions.append(f"n.{field} {op} {escaped_value}")
             else:
                 raise ValueError(f"Unsupported operator: {op}")
-        
+
         # Add user_name filter
-        where_conditions.append(f"n.user_name = '{user_name}'")
-        
+        escaped_user_name = user_name.replace("'", "''")
+        where_conditions.append(f"n.user_name = '{escaped_user_name}'")
+
         where_str = " AND ".join(where_conditions)
-        
+
         # Use cypher query
         cypher_query = f"""
             SELECT * FROM cypher('{self.db_name}_graph', $$
@@ -1393,12 +1398,12 @@ class PolarDBGraphDB(BaseGraphDB):
             with self.connection.cursor() as cursor:
                 cursor.execute(cypher_query)
                 results = cursor.fetchall()
-                print("[get_by_metadata] result:",results)
+                print("[get_by_metadata] result:", results)
                 ids = [str(item[0]).strip('"') for item in results]
         except Exception as e:
             print("Failed to get metadata:", {e})
             logger.error(f"Failed to get metadata: {e}, query is {cypher_query}")
-            
+
         return ids
 
     @timed
