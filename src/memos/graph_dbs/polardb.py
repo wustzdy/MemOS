@@ -305,7 +305,7 @@ class PolarDBGraphDB(BaseGraphDB):
                 cursor.execute(query, params)
                 result = cursor.fetchone()
                 print(f"[node_not_exist] Query result: {result}")
-                return len(result)
+                return 1 if result else 0
         except Exception as e:
             logger.error(f"[node_not_exist] Query failed: {e}", exc_info=True)
             raise
