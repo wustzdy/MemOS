@@ -8,7 +8,6 @@ import numpy as np
 import psycopg2
 from psycopg2.extras import Json
 
-from examples.mem_os.locomo_shared_database_memos import result
 from memos.configs.graph_db import PolarDBGraphDBConfig
 from memos.dependency import require_python_package
 from memos.graph_dbs.base import BaseGraphDB
