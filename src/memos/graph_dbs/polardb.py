@@ -2202,12 +2202,10 @@ class PolarDBGraphDB(BaseGraphDB):
             graph_name = GRAPH_NAME
 
         try:
-            # 先提取 embedding（在清理properties之前）
             embedding = find_embedding(metadata)
             field_name = detect_embedding_field(embedding)
             vector_value = convert_to_vector(embedding) if field_name else None
 
-            # 提取 properties
             properties = metadata.copy()
             properties = clean_properties(properties)
             properties["id"] = id
