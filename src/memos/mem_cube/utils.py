@@ -128,14 +128,13 @@ def merge_config_with_default(
                         )
                 
                 # Handle use_multi_db transition
-                if not default_graph_config.get("use_multi_db", True):
-                    if merged_graph_config.get("use_multi_db", True):
-                        merged_graph_config["use_multi_db"] = False
-                        # For Neo4j: db_name becomes user_name in single-db mode
-                        if "neo4j" in default_backend and "db_name" in merged_graph_config:
-                            merged_graph_config["user_name"] = merged_graph_config.get("db_name")
-                            merged_graph_config["db_name"] = default_graph_config.get("db_name")
-                        logger.info("Transitioned to single-db mode (use_multi_db=False)")
+                if not default_graph_config.get("use_multi_db", True) and merged_graph_config.get("use_multi_db", True):
+                    merged_graph_config["use_multi_db"] = False
+                    # For Neo4j: db_name becomes user_name in single-db mode
+                    if "neo4j" in default_backend and "db_name" in merged_graph_config:
+                        merged_graph_config["user_name"] = merged_graph_config.get("db_name")
+                        merged_graph_config["db_name"] = default_graph_config.get("db_name")
+                    logger.info("Transitioned to single-db mode (use_multi_db=False)")
             
             preserved_graph_db = {
                 "backend": default_backend,
