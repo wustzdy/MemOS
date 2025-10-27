@@ -110,15 +110,15 @@ def searchVector(db_name: str, vectorStr: list[float], user_name: str = None):
     graph = getPolarDb(db_name)
 
     # 1，查询search_by_embedding
-    nodes = graph.search_by_embedding(vector=vectorStr, top_k=1, user_name=user_name)
-    print("search_by_embedding nodes:", len(nodes))
-    for node_i in nodes:
-        print("Search result:", graph.get_node(node_i["id"][1:-1]))
+    # nodes = graph.search_by_embedding(vector=vectorStr, top_k=1, user_name=user_name)
+    # print("search_by_embedding nodes:", len(nodes))
+    # for node_i in nodes:
+    #     print("Search result:", graph.get_node(node_i["id"][1:-1]))
 
     # 2，查询单个get_node
-    # detail = graph.get_node(id="194f1e30-44d2-4e3f-bc58-c950343c56b7",
-    #                         user_name='memos231a22c655fd4b859ca4143b97d2b808')
-    # print("单个node:", detail)
+    detail = graph.get_node(id='"194f1e30-44d2-4e3f-bc58-c950343c56b7"',
+                            user_name='"memos231a22c655fd4b859ca4143b97d2b808"')
+    print("单个node:", detail)
     #
     # # 3，查询多个get_nodes
     ids = ['bb079c5b-1937-4125-a9e5-55d4abe6c95d', 'd66120af-992b-44c6-b261-a6ebe6bc57a5']
@@ -367,7 +367,7 @@ if __name__ == "__main__":
               -0.01335147, -0.040344328, 0.029144352, -0.04174814, 0.023315482, -0.02227788, -0.0022716573, -0.03152473,
               0.0482484, -0.027038634, -0.004882823, 0.06152357, -0.003881463, -0.036041338, -0.0075645614, 0.020660445,
               -0.07250992, -0.024429375, -0.036377035]
-    # searchVector(db_name="memtensor_memos", vectorStr=vector, user_name="memos7a9f9fbbb61c412f94f77fbaa8103c35")
+    searchVector(db_name="memtensor_memos", vectorStr=vector, user_name="memos7a9f9fbbb61c412f94f77fbaa8103c35")
 
 
     # searchVector(db_name="test_1020_02", vectorStr=vector)
@@ -398,4 +398,4 @@ if __name__ == "__main__":
 
     # get_edges(db_name="memtensor_memos", id="13bb9df6-0609-4442-8bed-bba77dadac92",type="PARENT",direction="OUTGOING",user_name="memosfeebbc2bd1744d7bb5b5ec57f38e828d")
 
-    get_by_metadata(db_name="memtensor_memos", filters=[{"field": "tags", "op": "contains", "value": "glazes"}], user_name="memos452356faadb34b06acc7fa507023d91c")
+    # get_by_metadata(db_name="memtensor_memos", filters=[{"field": "tags", "op": "contains", "value": "glazes"}], user_name="memos452356faadb34b06acc7fa507023d91c")

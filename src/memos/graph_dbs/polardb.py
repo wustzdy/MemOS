@@ -706,18 +706,29 @@ class PolarDBGraphDB(BaseGraphDB):
             select_fields = "id, properties, embedding"
         else:
             select_fields = "id, properties"
-            
+
+        # Helper function to format parameter value
+        def format_param_value(value: str) -> str:
+            """Format parameter value to handle both quoted and unquoted formats"""
+            # Remove outer quotes if they exist
+            if value.startswith('"') and value.endswith('"'):
+                # Already has double quotes, return as is
+                return value
+            else:
+                # Add double quotes
+                return f'"{value}"'
+
         query = f"""
             SELECT {select_fields}
             FROM "{self.db_name}_graph"."Memory" 
             WHERE ag_catalog.agtype_access_operator(properties, '"id"'::agtype) = %s::agtype
         """
-        params = [f'"{id}"']
-        
+        params = [format_param_value(id)]
+
         # Only add user filter when user_name is provided
         if user_name is not None:
             query += "\nAND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
-            params.append(f'"{user_name}"')
+            params.append(format_param_value(user_name))
 
         print(f"[get_node] query: {query}, params: {params}")
         try:
@@ -731,7 +742,7 @@ class PolarDBGraphDB(BaseGraphDB):
                     else:
                         node_id, properties_json = result
                         embedding_json = None
-                    
+
                     # Parse properties from JSONB if it's a string
                     if isinstance(properties_json, str):
                         try:
@@ -741,15 +752,16 @@ class PolarDBGraphDB(BaseGraphDB):
                             properties = {}
                     else:
                         properties = properties_json if properties_json else {}
-                    
+
                     # Parse embedding from JSONB if it exists and include_embedding is True
                     if include_embedding and embedding_json is not None:
                         try:
-                            embedding = json.loads(embedding_json) if isinstance(embedding_json, str) else embedding_json
+                            embedding = json.loads(embedding_json) if isinstance(embedding_json,
+                                                                                 str) else embedding_json
                             properties["embedding"] = embedding
                         except (json.JSONDecodeError, TypeError):
                             logger.warning(f"Failed to parse embedding for node {id}")
-                    
+
                     return self._parse_node({"id": id, "memory": properties.get("memory", ""), **properties})
                 return None
 
