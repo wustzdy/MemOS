@@ -5,8 +5,7 @@ from datetime import datetime
 from typing import Any, Literal
 
 import numpy as np
-import psycopg2
-from psycopg2.extras import Json
+
 
 from memos.configs.graph_db import PolarDBGraphDBConfig
 from memos.dependency import require_python_package
@@ -2198,6 +2197,7 @@ class PolarDBGraphDB(BaseGraphDB):
             graph_name: Graph name, optional
         """
         # Use provided graph_name or default
+        from psycopg2.extras import Json
         if graph_name is None:
             graph_name = GRAPH_NAME
 
