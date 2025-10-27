@@ -145,6 +145,7 @@ class PolarDBGraphDB(BaseGraphDB):
         )
         self.connection.autocommit = True
 
+        """
         # Handle auto_create
         # auto_create = config.get("auto_create", False) if isinstance(config, dict) else config.auto_create
         # if auto_create:
@@ -158,6 +159,7 @@ class PolarDBGraphDB(BaseGraphDB):
         # Handle embedding_dimension
         # embedding_dim = config.get("embedding_dimension", 1024) if isinstance(config,dict) else config.embedding_dimension
         # self.create_index(dimensions=embedding_dim)
+        """
 
     def _get_config_value(self, key: str, default=None):
         """Safely get config value from either dict or object."""
