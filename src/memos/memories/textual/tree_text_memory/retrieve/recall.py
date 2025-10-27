@@ -56,20 +56,6 @@ class GraphMemoryRetriever:
             working_memories = self.graph_store.get_all_memory_items(
                 scope="WorkingMemory", include_embedding=False, user_name=user_name
             )
-            # 过滤数据，只保留模型定义的字段
-            # if isinstance(working_memories, list):
-            #     valid_fields = set(TextualMemoryItem.__fields__.keys())
-            #
-            #     filtered_records = []
-            #     for record in working_memories:
-            #         if isinstance(record, dict):
-            #             # 过滤每个字典中的字段
-            #             filtered_record = {k: v for k, v in record.items() if k in valid_fields}
-            #             # 使用 from_dict 方法创建实例
-            #             memory_item = TextualMemoryItem.from_dict(filtered_record)
-            #             filtered_records.append(memory_item)
-            #
-            #     return filtered_records
             return [TextualMemoryItem.from_dict(record) for record in working_memories]
 
         with ContextThreadPoolExecutor(max_workers=2) as executor:
