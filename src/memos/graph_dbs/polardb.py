@@ -5,8 +5,7 @@ from datetime import datetime
 from typing import Any, Literal
 
 import numpy as np
-import psycopg2
-from psycopg2.extras import Json
+
 
 from memos.configs.graph_db import PolarDBGraphDBConfig
 from memos.dependency import require_python_package
@@ -145,6 +144,22 @@ class PolarDBGraphDB(BaseGraphDB):
             dbname=self.db_name
         )
         self.connection.autocommit = True
+
+        """
+        # Handle auto_create
+        # auto_create = config.get("auto_create", False) if isinstance(config, dict) else config.auto_create
+        # if auto_create:
+        #     self._ensure_database_exists()
+
+        # Create graph and tables
+        # self.create_graph()
+        # self.create_edge()
+        # self._create_graph()
+
+        # Handle embedding_dimension
+        # embedding_dim = config.get("embedding_dimension", 1024) if isinstance(config,dict) else config.embedding_dimension
+        # self.create_index(dimensions=embedding_dim)
+        """
 
     def _get_config_value(self, key: str, default=None):
         """Safely get config value from either dict or object."""
@@ -2184,16 +2199,15 @@ class PolarDBGraphDB(BaseGraphDB):
             graph_name: Graph name, optional
         """
         # Use provided graph_name or default
+        from psycopg2.extras import Json
         if graph_name is None:
             graph_name = GRAPH_NAME
 
         try:
-            # 先提取 embedding（在清理properties之前）
             embedding = find_embedding(metadata)
             field_name = detect_embedding_field(embedding)
             vector_value = convert_to_vector(embedding) if field_name else None
 
-            # 提取 properties
             properties = metadata.copy()
             properties = clean_properties(properties)
             properties["id"] = id
