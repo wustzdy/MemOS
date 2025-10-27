@@ -703,11 +703,8 @@ class PolarDBGraphDB(BaseGraphDB):
         Returns:
             dict: Node properties as key-value pairs, or None if not found.
         """
-        # Build select fields
-        if include_embedding:
-            select_fields = "id, properties, embedding"
-        else:
-            select_fields = "id, properties"
+
+        select_fields = "id, properties, embedding" if include_embedding else "id, properties"
 
         # Helper function to format parameter value
         def format_param_value(value: str) -> str:
@@ -807,11 +804,6 @@ class PolarDBGraphDB(BaseGraphDB):
         query += " AND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
         params.append(f'"{user_name}"')
 
-        # if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
-        #     user_name = kwargs.get("cube_name", self._get_config_value("user_name"))
-        #     query += " AND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
-        #     params.append(f"{user_name}")
-
         print(f"[get_nodes] query: {query}, params: {params}")
         with self.connection.cursor() as cursor:
             cursor.execute(query, params)
@@ -835,8 +827,10 @@ class PolarDBGraphDB(BaseGraphDB):
                     try:
                         print("embedding_json:", embedding_json)
                         # remove embedding
-                        # embedding = json.loads(embedding_json) if isinstance(embedding_json, str) else embedding_json
+                        """
+                        embedding = json.loads(embedding_json) if isinstance(embedding_json, str) else embedding_json
                         # properties["embedding"] = embedding
+                        """
                     except (json.JSONDecodeError, TypeError):
                         logger.warning(f"Failed to parse embedding for node {node_id}")
                 nodes.append(self._parse_node(
@@ -1147,7 +1141,7 @@ class PolarDBGraphDB(BaseGraphDB):
         user_name = user_name if user_name else self._get_config_value("user_name")
 
         # Use a simplified query to get the subgraph (temporarily only direct neighbors)
-        query1 = f"""
+        """
             SELECT * FROM cypher('{self.db_name}_graph', $$
                     MATCH(center: Memory)-[r * 1..{depth}]->(neighbor:Memory)
                     WHERE
@@ -1269,12 +1263,14 @@ class PolarDBGraphDB(BaseGraphDB):
         where_clauses.append("embedding is not null")
         # Add user_name filter like nebular.py
 
+        """
         # user_name = self._get_config_value("user_name")
         # if not self.config.use_multi_db and user_name:
         #     if kwargs.get("cube_name"):
         #         where_clauses.append(f"ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = '\"{kwargs['cube_name']}\"'::agtype")
         #     else:
         #         where_clauses.append(f"ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = '\"{user_name}\"'::agtype")
+        """
         user_name = user_name if user_name else self.config.user_name
         where_clauses.append(f"ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = '\"{user_name}\"'::agtype")
 
@@ -1313,12 +1309,14 @@ class PolarDBGraphDB(BaseGraphDB):
             results = cursor.fetchall()
             output = []
             for row in results:
+                """
                 polarId = row[0]  # id
                 properties = row[1]  # properties
                 # embedding = row[3]  # embedding
-                oldId = row[3]  # old_id
+                """
+                oldid = row[3]  # old_id
                 score = row[4]  # scope
-                id_val = str(oldId)
+                id_val = str(oldid)
                 score_val = float(score)
                 score_val = (score_val + 1) / 2  # align to neo4j, Normalized Cosine Score
                 if threshold is None or score_val >= threshold:
@@ -1378,10 +1376,14 @@ class PolarDBGraphDB(BaseGraphDB):
                 where_conditions.append(f"n.{field} = {escaped_value}")
             elif op == "in":
                 where_conditions.append(f"n.{field} IN {escaped_value}")
+                """
                 # where_conditions.append(f"{escaped_value} IN n.{field}")
+                """
             elif op == "contains":
                 where_conditions.append(f"{escaped_value} IN n.{field}")
+                """
                 # where_conditions.append(f"size(filter(n.{field}, t -> t IN {escaped_value})) > 0")
+                """
             elif op == "starts_with":
                 where_conditions.append(f"n.{field} STARTS WITH {escaped_value}")
             elif op == "ends_with":
@@ -1460,7 +1462,9 @@ class PolarDBGraphDB(BaseGraphDB):
         print("where_clause:" + where_clause)
         # Force RETURN field AS field to guarantee key match
         group_fields_cypher = ", ".join([f"n.{field} AS {field}" for field in group_fields])
+        """
         # group_fields_cypher_polardb = "agtype, ".join([f"{field}" for field in group_fields])
+        """
         group_fields_cypher_polardb = ", ".join([f"{field} agtype" for field in group_fields])
         print("group_fields_cypher_polardb:" + group_fields_cypher_polardb)
         query = f"""
@@ -1686,11 +1690,14 @@ class PolarDBGraphDB(BaseGraphDB):
                         properties = properties_json if properties_json else {}
                     
                     # # Build node data
+
+                    """
                     # node_data = {
                     #     "id": properties.get("id", node_id),
                     #     "memory": properties.get("memory", ""),
                     #     "metadata": properties
                     # }
+                    """
                     
                     if include_embedding and embedding_json is not None:
                         properties["embedding"] = embedding_json
@@ -1747,28 +1754,6 @@ class PolarDBGraphDB(BaseGraphDB):
         return int(result.one_or_none()["count"].value)
 
     @timed
-    def import_graph(self, data: dict[str, Any]) -> None:
-        """Import the entire graph from a serialized dictionary."""
-        with self.connection.cursor() as cursor:
-            for node in data.get("nodes", []):
-                id, memory, metadata = _compose_node(node)
-
-                if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
-                    metadata["user_name"] = self._get_config_value("user_name")
-
-                metadata = _prepare_node_metadata(metadata)
-
-                # Generate embedding if not provided
-                if "embedding" not in metadata or not metadata["embedding"]:
-                    metadata["embedding"] = generate_vector(self._get_config_value("embedding_dimension", 1024))
-
-                self.add_node(id, memory, metadata)
-
-            # Import edges
-            for edge in data.get("edges", []):
-                self.add_edge(edge["source"], edge["target"], edge["type"])
-
-    @timed
     def get_all_memory_items(
             self, scope: str, include_embedding: bool = False, user_name: str | None = None
     ) -> list[dict]:
@@ -1814,7 +1799,10 @@ class PolarDBGraphDB(BaseGraphDB):
                     results = cursor.fetchall()
 
                     for row in results:
+                        """
                         if isinstance(row, (list, tuple)) and len(row) >= 2:
+                        """
+                        if isinstance(row, list | tuple) and len(row) >= 2:
                             embedding_val, node_val = row[0], row[1]
                         else:
                             embedding_val, node_val = None, row[0]
@@ -1849,11 +1837,16 @@ class PolarDBGraphDB(BaseGraphDB):
                     results = cursor.fetchall()
 
                     for row in results:
+                        """
                         if isinstance(row[0], str):
                             memory_data = json.loads(row[0])
                         else:
                             memory_data = row[0]  # 如果已经是字典，直接使用
                         nodes.append(self._parse_node(memory_data))
+                        """
+                        memory_data = json.loads(row[0]) if isinstance(row[0], str) else row[0]
+                        nodes.append(self._parse_node(memory_data))
+
             except Exception as e:
                 logger.error(f"Failed to get memories: {e}", exc_info=True)
 
@@ -1915,7 +1908,6 @@ class PolarDBGraphDB(BaseGraphDB):
 
                     for row in results:
                         node_agtype = row[0]
-                        # print(f"[get_all_memory_items] Processing row: {type(node_agtype)} = {node_agtype}")
 
                         # Handle string-formatted data
                         if isinstance(node_agtype, str):
@@ -2013,20 +2005,6 @@ class PolarDBGraphDB(BaseGraphDB):
             ]
             return_fields_agtype = ", ".join([f"{field} agtype" for field in fields])
 
-        # Keep legacy query
-        cypher_query_1 = f"""
-            SELECT m.*
-            FROM {self.db_name}_graph."Memory" m
-            WHERE 
-              ag_catalog.agtype_access_operator(m.properties, '"memory_type"'::ag_catalog.agtype) = '"LongTermMemory"'::ag_catalog.agtype
-              AND ag_catalog.agtype_access_operator(m.properties, '"status"'::ag_catalog.agtype) = '"activated"'::ag_catalog.agtype
-              AND ag_catalog.agtype_access_operator(m.properties, '"user_name"'::ag_catalog.agtype) = '"activated"'::ag_catalog.agtype
-                AND NOT EXISTS (
-                SELECT 1 
-                FROM {self.db_name}_graph."PARENT" p 
-                WHERE m.id = p.start_id OR m.id = p.end_id 
-              ); 
-        """
 
         # Use OPTIONAL MATCH to find isolated nodes (no parents or children)
         cypher_query = f"""
@@ -2066,7 +2044,10 @@ class PolarDBGraphDB(BaseGraphDB):
                 for row in results:
                     if include_embedding:
                         # When include_embedding=True, return full node object
+                        """
                         if isinstance(row, (list, tuple)) and len(row) >= 2:
+                        """
+                        if isinstance(row, list | tuple) and len(row) >= 2:
                             embedding_val, node_val = row[0], row[1]
                         else:
                             embedding_val, node_val = None, row[0]
@@ -2141,19 +2122,6 @@ class PolarDBGraphDB(BaseGraphDB):
             if time_field in node and hasattr(node[time_field], "isoformat"):
                 node[time_field] = node[time_field].isoformat()
 
-        # Do not remove user_name; keep all fields
-
-        # 1
-        # return {"id": node.pop("id"), "memory": node.pop("memory", ""), "metadata": node}
-
-        # 2
-        # node_id = node.pop("id")
-        # memory = node.pop("memory", "")
-        # # Add id field into metadata
-        # node["id"] = node_id
-        # node1 = node
-        # return {"id": node_id, "memory": memory, "metadata": node1}
-
         return {"id": node.get("id"), "memory": node.get("memory", ""), "metadata": node}
 
     def _parse_node_new(self, node_data: dict[str, Any]) -> dict[str, Any]:
@@ -2162,9 +2130,15 @@ class PolarDBGraphDB(BaseGraphDB):
 
         # Normalize string values that may arrive as quoted literals (e.g., '"abc"')
         def _strip_wrapping_quotes(value: Any) -> Any:
+            """
             if isinstance(value, str) and len(value) >= 2:
                 if value[0] == value[-1] and value[0] in ("'", '"'):
                     return value[1:-1]
+            return value
+            """
+            if (isinstance(value, str) and len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"')
+            ):
+                return value[1:-1]
             return value
 
         for k, v in list(node.items()):
@@ -2185,80 +2159,11 @@ class PolarDBGraphDB(BaseGraphDB):
         if hasattr(self, 'connection') and self.connection:
             self.connection.close()
 
-    #deprecated
-    def add_node_old(conn, id: str, memory: str, metadata: dict, graph_name=None):
-        """
-        Add a single node to the graph database
-
-        Args:
-            conn: Database connection
-            id: Node ID
-            memory: Memory content
-            metadata: Metadata dictionary
-            graph_name: Graph name, optional
-        """
-        # Use provided graph_name or default
-        from psycopg2.extras import Json
-        if graph_name is None:
-            graph_name = GRAPH_NAME
-
-        try:
-            embedding = find_embedding(metadata)
-            field_name = detect_embedding_field(embedding)
-            vector_value = convert_to_vector(embedding) if field_name else None
-
-            properties = metadata.copy()
-            properties = clean_properties(properties)
-            properties["id"] = id
-            properties["memory"] = memory
-
-            with conn.cursor() as cursor:
-                # Delete existing record first (if any)
-                delete_sql = f"""
-                    DELETE FROM "Memory" 
-                    WHERE id = ag_catalog._make_graph_id('{graph_name}'::name, 'Memory'::name, %s::text::cstring);
-                """
-                cursor.execute(delete_sql, (id,))
-
-                # Then insert new record
-                if field_name and vector_value:
-                    insert_sql = f"""
-                                       INSERT INTO "Memory" (id, properties, {field_name})
-                                       VALUES (
-                                         ag_catalog._make_graph_id('{graph_name}'::name, 'Memory'::name, %s::text::cstring),
-                                         %s::text::agtype,
-                                         %s::vector
-                                       );
-                                       """
-                    cursor.execute(insert_sql, (id, Json(properties), vector_value))
-                    print(f"✅ Insert/update succeeded: {id} ({field_name})")
-                else:
-                    insert_sql = f"""
-                                        INSERT INTO "Memory" (id, properties)
-                                        VALUES (
-                                          ag_catalog._make_graph_id('{graph_name}'::name, 'Memory'::name, %s::text::cstring),
-                                          %s::text::agtype
-                                        );
-                                        """
-                    cursor.execute(insert_sql, (id, Json(properties)))
-                    print(f"✅ Insert/update succeeded (no vector): {id}")
-
-            conn.commit()
-            return True
-
-        except Exception as e:
-            conn.rollback()
-            print(f"❌ Insert failed (ID: {id}): {e}")
-            return False
-
     @timed
     def add_node(self, id: str, memory: str, metadata: dict[str, Any], user_name: str | None = None) -> None:
         """Add a memory node to the graph."""
         # user_name comes from metadata; fallback to config if missing
         metadata["user_name"] = user_name if user_name else self.config.user_name
-        # if "user_name" not in metadata:
-        #     if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
-        #         metadata["user_name"] = self._get_config_value("user_name")
 
         # Safely process metadata
         metadata = _prepare_node_metadata(metadata)
@@ -2282,7 +2187,7 @@ class PolarDBGraphDB(BaseGraphDB):
 
         # serialization - JSON-serialize sources and usage fields
         for field_name in ["sources", "usage"]:
-            if field_name in properties and properties[field_name]:
+            if properties.get(field_name):
                 if isinstance(properties[field_name], list):
                     for idx in range(len(properties[field_name])):
                         # Serialize only when element is not a string
@@ -2419,7 +2324,7 @@ class PolarDBGraphDB(BaseGraphDB):
             "ag_catalog.agtype_access_operator(properties, '\"status\"'::agtype) = '\"activated\"'::agtype")
 
         # Type filter - exclude 'reasoning' type
-        # where_clauses.append("ag_catalog.agtype_access_operator(properties, '\"node_type\"'::agtype) != '\"reasoning\"'::agtype")
+        where_clauses.append("ag_catalog.agtype_access_operator(properties, '\"node_type\"'::agtype) != '\"reasoning\"'::agtype")
 
         # User filter
         where_clauses.append("ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype")
