@@ -158,4 +158,3 @@ watchfiles==1.1.0
 websockets==15.0.1
 xlrd==2.0.2
 xlsxwriter==3.2.5
-nacos-sdk-python==1.0.0
