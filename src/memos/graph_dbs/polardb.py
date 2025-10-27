@@ -2141,15 +2141,6 @@ class PolarDBGraphDB(BaseGraphDB):
             if time_field in node and hasattr(node[time_field], "isoformat"):
                 node[time_field] = node[time_field].isoformat()
 
-        # Ensure sources, usage and tags are lists (not deserializing, just type checking)
-        for field_name in ["sources", "usage", "tags"]:
-            if field_name in node and node[field_name] is not None:
-                field_value = node[field_name]
-                # If it's not already a list, wrap it in a list
-                if not isinstance(field_value, list):
-                    logger.warning(f"[_parse_node] {field_name} is not a list (type: {type(field_value).__name__}), wrapping in list")
-                    node[field_name] = [field_value]
-
         # Do not remove user_name; keep all fields
 
         # 1
@@ -2184,15 +2175,6 @@ class PolarDBGraphDB(BaseGraphDB):
         for time_field in ("created_at", "updated_at"):
             if time_field in node and hasattr(node[time_field], "isoformat"):
                 node[time_field] = node[time_field].isoformat()
-
-        # Ensure sources, usage and tags are lists (not deserializing, just type checking)
-        for field_name in ["sources", "usage", "tags"]:
-            if field_name in node and node[field_name] is not None:
-                field_value = node[field_name]
-                # If it's not already a list, wrap it in a list
-                if not isinstance(field_value, list):
-                    logger.warning(f"[_parse_node] {field_name} is not a list (type: {type(field_value).__name__}), wrapping in list")
-                    node[field_name] = [field_value]
 
         # Do not remove user_name; keep all fields
 
@@ -2385,15 +2367,6 @@ class PolarDBGraphDB(BaseGraphDB):
 
             if embedding is not None:
                 props["embedding"] = embedding
-
-            # Ensure sources, usage and tags are lists (not deserializing, just type checking)
-            for field_name in ["sources", "usage", "tags"]:
-                if field_name in props and props[field_name] is not None:
-                    field_value = props[field_name]
-                    # If it's not already a list, wrap it in a list
-                    if not isinstance(field_value, list):
-                        logger.warning(f"[_build_node_from_agtype] {field_name} is not a list (type: {type(field_value).__name__}), wrapping in list")
-                        props[field_name] = [field_value]
 
             # Return standard format directly
             return {"id": props.get("id", ""), "memory": props.get("memory", ""), "metadata": props}
