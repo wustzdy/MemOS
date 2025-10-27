@@ -73,7 +73,7 @@ def merge_config_with_default(
 
             # Detect backend change
             backend_changed = existing_backend != default_backend
-            
+
             if backend_changed:
                 logger.info(
                     f"Detected graph_db backend change: {existing_backend} -> {default_backend}. "
@@ -81,18 +81,20 @@ def merge_config_with_default(
                 )
                 # Start with default config as base when backend changes
                 merged_graph_config = copy.deepcopy(default_graph_config)
-                
+
                 # Preserve user-specific fields if they exist in both configs
                 preserve_graph_fields = {
                     "auto_create",
-                    "user_name", 
+                    "user_name",
                     "use_multi_db",
                 }
                 for field in preserve_graph_fields:
                     if field in existing_graph_config:
                         merged_graph_config[field] = existing_graph_config[field]
-                        logger.debug(f"Preserved graph_db field '{field}': {existing_graph_config[field]}")
-                
+                        logger.debug(
+                            f"Preserved graph_db field '{field}': {existing_graph_config[field]}"
+                        )
+
                 # Clean up backend-specific fields that don't exist in the new backend
                 # This approach is generic: remove any field from merged config that's not in default config
                 # and not in the preserve list
@@ -100,7 +102,7 @@ def merge_config_with_default(
                 for field in list(merged_graph_config.keys()):
                     if field not in default_graph_config and field not in preserve_graph_fields:
                         fields_to_remove.append(field)
-                
+
                 for field in fields_to_remove:
                     removed_value = merged_graph_config.pop(field)
                     logger.info(
@@ -115,10 +117,10 @@ def merge_config_with_default(
                     "user_name",
                     "use_multi_db",
                 }
-                
+
                 # Start with existing config as base
                 merged_graph_config = copy.deepcopy(existing_graph_config)
-                
+
                 # Update with default config except preserved fields
                 for key, value in default_graph_config.items():
                     if key not in preserve_graph_fields:
@@ -126,16 +128,18 @@ def merge_config_with_default(
                         logger.debug(
                             f"Updated graph_db field '{key}': {existing_graph_config.get(key)} -> {value}"
                         )
-                
+
                 # Handle use_multi_db transition
-                if not default_graph_config.get("use_multi_db", True) and merged_graph_config.get("use_multi_db", True):
+                if not default_graph_config.get("use_multi_db", True) and merged_graph_config.get(
+                    "use_multi_db", True
+                ):
                     merged_graph_config["use_multi_db"] = False
                     # For Neo4j: db_name becomes user_name in single-db mode
                     if "neo4j" in default_backend and "db_name" in merged_graph_config:
                         merged_graph_config["user_name"] = merged_graph_config.get("db_name")
                         merged_graph_config["db_name"] = default_graph_config.get("db_name")
                     logger.info("Transitioned to single-db mode (use_multi_db=False)")
-            
+
             preserved_graph_db = {
                 "backend": default_backend,
                 "config": merged_graph_config,
