@@ -2141,22 +2141,13 @@ class PolarDBGraphDB(BaseGraphDB):
             if time_field in node and hasattr(node[time_field], "isoformat"):
                 node[time_field] = node[time_field].isoformat()
 
-        # Deserialize sources and usage if they are not lists
+        # Ensure sources, usage and tags are lists (not deserializing, just type checking)
         for field_name in ["sources", "usage", "tags"]:
             if field_name in node and node[field_name] is not None:
                 field_value = node[field_name]
-                
-                # If it's a string, try to parse it as JSON
-                if isinstance(field_value, str):
-                    try:
-                        node[field_name] = json.loads(field_value)
-                    except (json.JSONDecodeError, TypeError):
-                        logger.warning(f"Failed to parse {field_name} as JSON, wrapping in list")
-                        node[field_name] = [field_value]
-                
-                # If it's not a list, wrap it in a list
-                elif not isinstance(field_value, list):
-                    logger.warning(f"{field_name} is not a list, wrapping value: {type(field_value)}")
+                # If it's not already a list, wrap it in a list
+                if not isinstance(field_value, list):
+                    logger.warning(f"[_parse_node] {field_name} is not a list (type: {type(field_value).__name__}), wrapping in list")
                     node[field_name] = [field_value]
 
         # Do not remove user_name; keep all fields
@@ -2194,22 +2185,13 @@ class PolarDBGraphDB(BaseGraphDB):
             if time_field in node and hasattr(node[time_field], "isoformat"):
                 node[time_field] = node[time_field].isoformat()
 
-        # Deserialize sources, usage and tags if they are not lists
+        # Ensure sources, usage and tags are lists (not deserializing, just type checking)
         for field_name in ["sources", "usage", "tags"]:
             if field_name in node and node[field_name] is not None:
                 field_value = node[field_name]
-                
-                # If it's a string, try to parse it as JSON
-                if isinstance(field_value, str):
-                    try:
-                        node[field_name] = json.loads(field_value)
-                    except (json.JSONDecodeError, TypeError):
-                        logger.warning(f"Failed to parse {field_name} as JSON, wrapping in list")
-                        node[field_name] = [field_value]
-                
-                # If it's not a list, wrap it in a list
-                elif not isinstance(field_value, list):
-                    logger.warning(f"{field_name} is not a list, wrapping value: {type(field_value)}")
+                # If it's not already a list, wrap it in a list
+                if not isinstance(field_value, list):
+                    logger.warning(f"[_parse_node] {field_name} is not a list (type: {type(field_value).__name__}), wrapping in list")
                     node[field_name] = [field_value]
 
         # Do not remove user_name; keep all fields
@@ -2404,22 +2386,13 @@ class PolarDBGraphDB(BaseGraphDB):
             if embedding is not None:
                 props["embedding"] = embedding
 
-            # Deserialize sources, usage and tags if they are not lists
+            # Ensure sources, usage and tags are lists (not deserializing, just type checking)
             for field_name in ["sources", "usage", "tags"]:
                 if field_name in props and props[field_name] is not None:
                     field_value = props[field_name]
-                    
-                    # If it's a string, try to parse it as JSON
-                    if isinstance(field_value, str):
-                        try:
-                            props[field_name] = json.loads(field_value)
-                        except (json.JSONDecodeError, TypeError):
-                            logger.warning(f"Failed to parse {field_name} as JSON, wrapping in list")
-                            props[field_name] = [field_value]
-                    
-                    # If it's not a list, wrap it in a list
-                    elif not isinstance(field_value, list):
-                        logger.warning(f"{field_name} is not a list, wrapping value: {type(field_value)}")
+                    # If it's not already a list, wrap it in a list
+                    if not isinstance(field_value, list):
+                        logger.warning(f"[_build_node_from_agtype] {field_name} is not a list (type: {type(field_value).__name__}), wrapping in list")
                         props[field_name] = [field_value]
 
             # Return standard format directly
