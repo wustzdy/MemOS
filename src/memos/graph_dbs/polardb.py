@@ -502,7 +502,8 @@ class PolarDBGraphDB(BaseGraphDB):
     @timed
     def create_edge(self):
         """Create all valid edge types if they do not exist"""
-        VALID_REL_TYPES = {
+
+        valid_rel_types = {
             "AGGREGATE_TO",
             "FOLLOWS",
             "INFERS",
@@ -511,7 +512,7 @@ class PolarDBGraphDB(BaseGraphDB):
             "PARENT"
         }
         
-        for label_name in VALID_REL_TYPES:
+        for label_name in valid_rel_types:
             print(f"🪶 Creating elabel: {label_name}")
             try:
                 with self.connection.cursor() as cursor:
