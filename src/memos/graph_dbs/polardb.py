@@ -2194,7 +2194,24 @@ class PolarDBGraphDB(BaseGraphDB):
             if time_field in node and hasattr(node[time_field], "isoformat"):
                 node[time_field] = node[time_field].isoformat()
 
-        # Do not deserialize sources and usage; keep List[str]
+        # Deserialize sources, usage and tags if they are not lists
+        for field_name in ["sources", "usage", "tags"]:
+            if field_name in node and node[field_name] is not None:
+                field_value = node[field_name]
+                
+                # If it's a string, try to parse it as JSON
+                if isinstance(field_value, str):
+                    try:
+                        node[field_name] = json.loads(field_value)
+                    except (json.JSONDecodeError, TypeError):
+                        logger.warning(f"Failed to parse {field_name} as JSON, wrapping in list")
+                        node[field_name] = [field_value]
+                
+                # If it's not a list, wrap it in a list
+                elif not isinstance(field_value, list):
+                    logger.warning(f"{field_name} is not a list, wrapping value: {type(field_value)}")
+                    node[field_name] = [field_value]
+
         # Do not remove user_name; keep all fields
 
         return {"id": node.pop("id"), "memory": node.pop("memory", ""), "metadata": node}
@@ -2387,7 +2404,25 @@ class PolarDBGraphDB(BaseGraphDB):
             if embedding is not None:
                 props["embedding"] = embedding
 
-            # Return standard format directly; no need to call _parse_node_new again
+            # Deserialize sources, usage and tags if they are not lists
+            for field_name in ["sources", "usage", "tags"]:
+                if field_name in props and props[field_name] is not None:
+                    field_value = props[field_name]
+                    
+                    # If it's a string, try to parse it as JSON
+                    if isinstance(field_value, str):
+                        try:
+                            props[field_name] = json.loads(field_value)
+                        except (json.JSONDecodeError, TypeError):
+                            logger.warning(f"Failed to parse {field_name} as JSON, wrapping in list")
+                            props[field_name] = [field_value]
+                    
+                    # If it's not a list, wrap it in a list
+                    elif not isinstance(field_value, list):
+                        logger.warning(f"{field_name} is not a list, wrapping value: {type(field_value)}")
+                        props[field_name] = [field_value]
+
+            # Return standard format directly
             return {"id": props.get("id", ""), "memory": props.get("memory", ""), "metadata": props}
         except Exception:
             return None
