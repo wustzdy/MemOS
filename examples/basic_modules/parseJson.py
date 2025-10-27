@@ -11,11 +11,11 @@ sys.path.insert(0, src_path)
 from batchImport_polardbFromJson import insert_data, update_graph
 
 DB_CONFIG = {
-    'host': 'memory.pg.polardb.rds.aliyuncs.com',
+    'host': 'xxxxx',
     'port': 5432,
-    'database': 'test_zdy',
-    'user': 'adimin',
-    'password': 'Openmem0925'
+    'database': 'xxxx',
+    'user': 'xxxx',
+    'password': 'xxxxx'
 }
 conn = psycopg2.connect(**DB_CONFIG)
 
