@@ -2140,7 +2140,24 @@ class PolarDBGraphDB(BaseGraphDB):
             if time_field in node and hasattr(node[time_field], "isoformat"):
                 node[time_field] = node[time_field].isoformat()
 
-        # Do not deserialize sources and usage; keep List[str] format
+        # Deserialize sources and usage if they are not lists
+        for field_name in ["sources", "usage", "tags"]:
+            if field_name in node and node[field_name] is not None:
+                field_value = node[field_name]
+                
+                # If it's a string, try to parse it as JSON
+                if isinstance(field_value, str):
+                    try:
+                        node[field_name] = json.loads(field_value)
+                    except (json.JSONDecodeError, TypeError):
+                        logger.warning(f"Failed to parse {field_name} as JSON, wrapping in list")
+                        node[field_name] = [field_value]
+                
+                # If it's not a list, wrap it in a list
+                elif not isinstance(field_value, list):
+                    logger.warning(f"{field_name} is not a list, wrapping value: {type(field_value)}")
+                    node[field_name] = [field_value]
+
         # Do not remove user_name; keep all fields
 
         # 1
