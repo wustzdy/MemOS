@@ -193,12 +193,13 @@ class PolarDBGraphDB(BaseGraphDB):
         return conn
 
     def _get_connection(self):
-        """Get a connection from the pool."""
+        """Get a connection from the pool (with retry + health check)."""
         if self._pool_closed:
             raise RuntimeError("Connection pool has been closed")
 
         max_retries = 3
         for attempt in range(max_retries):
+            conn = None
             try:
                 conn = self.connection_pool.getconn()
 
@@ -209,17 +210,29 @@ class PolarDBGraphDB(BaseGraphDB):
                         conn.close()
                     except Exception as e:
                         logger.warning(f"Failed to close connection: {e}")
-                    if attempt < max_retries - 1:
-                        continue
-                    else:
-                        raise RuntimeError("Pool returned a closed connection")
+                    self.connection_pool.putconn(conn, close=True)
+                    continue
 
-                # Set autocommit for PolarDB compatibility
                 conn.autocommit = True
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute("SELECT 1;")
+                except Exception as ping_err:
+                    logger.warning(f"[DB] Ping failed (attempt {attempt + 1}): {ping_err}")
+                    self.connection_pool.putconn(conn, close=True)
+                    continue
+
+
                 return conn
             except Exception as e:
+                logger.warning(f"[DB] Failed to get connection (attempt {attempt + 1}): {e}")
+                if conn:
+                    try:
+                        self.connection_pool.putconn(conn, close=True)
+                    except Exception as e:
+                        logger.warning(f"Failed to return connection to pool: {e}")
                 if attempt >= max_retries - 1:
-                    raise RuntimeError(f"Failed to get a valid connection from pool: {e}") from e
+                    raise RuntimeError(f"Failed to get a valid connection from pool after {max_retries} retries") from e
                 continue
 
     def _return_connection(self, connection):
@@ -647,12 +660,16 @@ class PolarDBGraphDB(BaseGraphDB):
         self, source_id: str, target_id: str, type: str, user_name: str | None = None
     ) -> None:
         if not source_id or not target_id:
+            logger.warning(f"Edge '{source_id}' and '{target_id}' are both None")
             raise ValueError("[add_edge] source_id and target_id must be provided")
 
         source_exists = self.get_node(source_id) is not None
         target_exists = self.get_node(target_id) is not None
 
         if not source_exists or not target_exists:
+            logger.warning(
+                "[add_edge] Source %s or target %s does not exist.", source_exists, target_exists
+            )
             raise ValueError("[add_edge] source_id and target_id must be provided")
 
         properties = {}
