@@ -18,6 +18,7 @@ def find_project_root(marker=".git"):
             return current
         current = current.parent
     logger.warn(f"The project root directory tag file was not found: {marker}")
+    return Path(".")
 
 
 PROJECT_ROOT = find_project_root()

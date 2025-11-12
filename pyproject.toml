@@ -65,6 +65,11 @@ memos = "memos.cli:main"
 # Developers install: `poetry install --extras <feature>`. e.g., `poetry install --extras general-mem`
 # Users install: `pip install MemoryOS[<feature>]`. e.g., `pip install MemoryOS[general-mem]`
 
+add = [
+    "psycopg2-binary (>=2.9.11,<=2.9.11)",
+    "pymilvus (>=2.6.3,<=2.6.3)",
+]
+
 # TreeTextualMemory
 tree-mem = [
     "neo4j (>=5.28.1,<6.0.0)",  # Graph database
@@ -225,3 +230,6 @@ lint.ignore = [
 ]
 lint.isort.lines-between-types = 1
 lint.isort.lines-after-imports = 2
+
+
+#  python src/memos/api/server_api.py
