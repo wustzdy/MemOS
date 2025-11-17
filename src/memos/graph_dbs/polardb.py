@@ -2500,7 +2500,6 @@ class PolarDBGraphDB(BaseGraphDB):
         # user_name comes from metadata; fallback to config if missing
         metadata["user_name"] = user_name if user_name else self.config.user_name
 
-        # Safely process metadata
         metadata = _prepare_node_metadata(metadata)
 
         # Merge node and set metadata
