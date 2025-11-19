@@ -116,7 +116,7 @@ class ChatHandler(BaseHandler):
                 query=chat_req.query,
                 top_k=chat_req.top_k or 10,
                 session_id=chat_req.session_id,
-                mode=SearchMode.FINE,
+                mode=SearchMode.FAST,
                 internet_search=chat_req.internet_search,
                 moscube=chat_req.moscube,
                 chat_history=chat_req.history,
@@ -213,8 +213,8 @@ class ChatHandler(BaseHandler):
                         query=chat_req.query,
                         top_k=20,
                         session_id=chat_req.session_id,
-                        mode=SearchMode.FINE,
-                        internet_search=chat_req.internet_search,
+                        mode=SearchMode.FAST,
+                        internet_search=chat_req.internet_search,  # TODO this param is not worked at fine mode
                         moscube=chat_req.moscube,
                         chat_history=chat_req.history,
                     )
@@ -603,7 +603,7 @@ class ChatHandler(BaseHandler):
                 content=query,
                 timestamp=datetime.utcnow(),
             )
-            self.mem_scheduler.submit_messages(messages=[message_item])
+            self.mem_scheduler.memos_message_queue.submit_messages(messages=[message_item])
             self.logger.info(f"Sent message to scheduler with label: {label}")
         except Exception as e:
             self.logger.error(f"Failed to send message to scheduler: {e}", exc_info=True)
