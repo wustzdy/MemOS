@@ -1460,6 +1460,7 @@ class PolarDBGraphDB(BaseGraphDB):
         threshold: float | None = None,
         search_filter: dict | None = None,
         user_name: str | None = None,
+        filter: dict | None = None,
         **kwargs,
     ) -> list[dict]:
         """
