@@ -1518,9 +1518,9 @@ class PolarDBGraphDB(BaseGraphDB):
                 },
                 {"memory": "湖北武汉"},
                 {"info.A": "建议从基础语法开始，多做练习项目"},
+                {"user_id": "65c3a65b-78f7-4009-bc92-7ee1981deb3a"},
             ]
         }
-
         if filter:
             # Helper function to escape string value for SQL
             def escape_sql_string(value: str) -> str:
@@ -1551,13 +1551,14 @@ class PolarDBGraphDB(BaseGraphDB):
                             # First get info object, then get the field inside it
                             condition_parts.append(
                                 f"ag_catalog.agtype_access_operator(ag_catalog.agtype_access_operator(properties, '\"info\"'::agtype), '\"{info_field}\"'::agtype) = '\"{escaped_value}\"'::agtype"
+                                f"ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '\"info\"'::ag_catalog.agtype, '\"{info_field}\"'::ag_catalog.agtype]) = '\"{escaped_value}\"'::agtype"
                             )
                         else:
                             condition_parts.append(
                                 f"ag_catalog.agtype_access_operator(ag_catalog.agtype_access_operator(properties, '\"info\"'::agtype), '\"{info_field}\"'::agtype) = {value}::agtype"
+                                f"ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '\"info\"'::ag_catalog.agtype, '\"{info_field}\"'::ag_catalog.agtype]) = '\"{value}\"'::agtype"
                             )
                     else:
-                        # Key doesn't have "info." prefix, match in properties directly
                         if isinstance(value, str):
                             escaped_value = escape_sql_string(value)
                             condition_parts.append(
@@ -1623,8 +1624,8 @@ class PolarDBGraphDB(BaseGraphDB):
             with conn.cursor() as cursor:
                 cursor.execute(query, params)
                 results = cursor.fetchall()
-                print("88888results:", results)
                 output = []
+                print("=== Raw Results ===:", results)
                 for row in results:
                     """
                     polarId = row[0]  # id
