@@ -1468,6 +1468,8 @@ class PolarDBGraphDB(BaseGraphDB):
         """
         # Build WHERE clause dynamically like nebular.py
         where_clauses = []
+        scope = "LongTermMemory"
+        user_name = "adimin"
         if scope:
             where_clauses.append(
                 f"ag_catalog.agtype_access_operator(properties, '\"memory_type\"'::agtype) = '\"{scope}\"'::agtype"
@@ -1507,6 +1509,86 @@ class PolarDBGraphDB(BaseGraphDB):
                     where_clauses.append(
                         f"ag_catalog.agtype_access_operator(properties, '\"{key}\"'::agtype) = {value}::agtype"
                     )
+        # Add filter conditions (supports "or" and "and" logic)
+        filter = {
+            "and": [
+                {"id": "2025-11-19-02"},
+                {
+                    "info.B": "用户询问如何学习Python编程，助手建议从基础语法开始，并通过多做练习项目来提高技能。"
+                },
+                {"memory": "湖北武汉"},
+                {"info.A": "建议从基础语法开始，多做练习项目"},
+            ]
+        }
+
+        if filter:
+            # Helper function to escape string value for SQL
+            def escape_sql_string(value: str) -> str:
+                """Escape single quotes in SQL string."""
+                return value.replace("'", "''")
+
+            # Helper function to build a single filter condition
+            def build_filter_condition(condition_dict: dict) -> str:
+                """Build a WHERE condition for a single filter item.
+
+                Args:
+                    condition_dict: A dict like {"id": "xxx"} or {"info.B": "xxx"}
+
+                Returns:
+                    SQL condition string
+                """
+                condition_parts = []
+                for key, value in condition_dict.items():
+                    # Check if key starts with "info." prefix
+                    if key.startswith("info."):
+                        # Extract the field name after "info."
+                        info_field = key[5:]  # Remove "info." prefix (5 characters)
+                        # Match in info field: properties->'info'->'B'
+                        # For nested access, use agtype_access_operator with nested structure
+                        if isinstance(value, str):
+                            escaped_value = escape_sql_string(value)
+                            # Access nested field: properties->'info'->'B'
+                            # First get info object, then get the field inside it
+                            condition_parts.append(
+                                f"ag_catalog.agtype_access_operator(ag_catalog.agtype_access_operator(properties, '\"info\"'::agtype), '\"{info_field}\"'::agtype) = '\"{escaped_value}\"'::agtype"
+                            )
+                        else:
+                            condition_parts.append(
+                                f"ag_catalog.agtype_access_operator(ag_catalog.agtype_access_operator(properties, '\"info\"'::agtype), '\"{info_field}\"'::agtype) = {value}::agtype"
+                            )
+                    else:
+                        # Key doesn't have "info." prefix, match in properties directly
+                        if isinstance(value, str):
+                            escaped_value = escape_sql_string(value)
+                            condition_parts.append(
+                                f"ag_catalog.agtype_access_operator(properties, '\"{key}\"'::agtype) = '\"{escaped_value}\"'::agtype"
+                            )
+                        else:
+                            condition_parts.append(
+                                f"ag_catalog.agtype_access_operator(properties, '\"{key}\"'::agtype) = {value}::agtype"
+                            )
+                return " AND ".join(condition_parts)
+
+            # Process filter structure
+            if isinstance(filter, dict):
+                if "or" in filter:
+                    # OR logic: at least one condition must match
+                    or_conditions = []
+                    for condition in filter["or"]:
+                        if isinstance(condition, dict):
+                            condition_str = build_filter_condition(condition)
+                            if condition_str:
+                                or_conditions.append(f"({condition_str})")
+                    if or_conditions:
+                        where_clauses.append(f"({' OR '.join(or_conditions)})")
+
+                elif "and" in filter:
+                    # AND logic: all conditions must match
+                    for condition in filter["and"]:
+                        if isinstance(condition, dict):
+                            condition_str = build_filter_condition(condition)
+                            if condition_str:
+                                where_clauses.append(f"({condition_str})")
 
         where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
@@ -1528,12 +1610,20 @@ class PolarDBGraphDB(BaseGraphDB):
                     WHERE scope > 0.1;
                 """
         params = [vector]
+        logger.debug(f"search_by_embedding query: {query}")
+        logger.debug(f"search_by_embedding params: {params}")
+        print("=== SQL Query ===")
+        print(query)
+        print("=== Params ===")
+        print(params)
+        print("================")
 
         conn = self._get_connection()
         try:
             with conn.cursor() as cursor:
                 cursor.execute(query, params)
                 results = cursor.fetchall()
+                print("88888results:", results)
                 output = []
                 for row in results:
                     """
