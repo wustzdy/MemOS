@@ -3,7 +3,6 @@ import os
 import sys
 from typing import Optional
 
-
 src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 sys.path.insert(0, src_path)
 
@@ -12,33 +11,17 @@ import psycopg2
 from memos.configs.graph_db import GraphDBConfigFactory
 from memos.graph_dbs.factory import GraphStoreFactory
 
-def getGraph(db_name):
-    config = GraphDBConfigFactory(
-        backend="nebular",
-        config={
-            "uri": json.loads(os.getenv("NEBULAR_HOSTS", "localhost")),
-            "user": os.getenv("NEBULAR_USER", "root"),
-            "password": os.getenv("NEBULAR_PASSWORD", "xxxxxx"),
-            "space": db_name,
-            "use_multi_db": False,
-            "auto_create": True,
-            "embedding_dimension": 1024,
-        },
-    )
-    graph = GraphStoreFactory.from_config(config)
-    return graph
 
-
-def getPolarDb(db_name):
+def getPolarDb():
     config = GraphDBConfigFactory(
         backend="polardb",
         config={
-            "host": os.getenv("POLAR_DB_HOST", "xxxxxxxxx"),
+            "host": os.getenv("POLAR_DB_HOST", "xxxxx"),
             "port": int(os.getenv("POLAR_DB_PORT", "5432")),
-            "user": os.getenv("POLAR_DB_USER", "xxxxxxxxx"),
-            "password": os.getenv("POLAR_DB_PASSWORD", "xxxxxxxxx"),
-            "db_name": db_name,
-            "user_name": os.getenv("POLARDB_USER_NAME", "adimin"),
+            "user": os.getenv("POLAR_DB_USER", "xxxxx"),
+            "password": os.getenv("POLAR_DB_PASSWORD", "xxx"),
+            "db_name": os.getenv("POLAR_DB_DB_NAME", "xxx"),
+            "user_name": os.getenv("POLARDB_USER_NAME", "xxx"),
             "use_multi_db": os.getenv("POLARDB_USE_MULTI_DB", "True").lower() == "true",  # 设置为True，不添加user_name过滤条件
             "auto_create": True,
             "embedding_dimension": 1024,
@@ -48,25 +31,59 @@ def getPolarDb(db_name):
     return graph
 
 
-def searchVector(db_name: str, vectorStr: list[float], user_name: Optional[str] = None, filter: Optional[dict] = None):
-    graph = getPolarDb(db_name)
-    print("6666666666666")
-
-    # 1，查询search_by_embedding
+def test_search_by_embedding(graph, vector: list[float], user_name: Optional[str] = None,
+                             filter: Optional[dict] = None):
+    """Test search_by_embedding function."""
+    # Query search_by_embedding
     nodes = graph.search_by_embedding(
-        vector=vectorStr, top_k=100, user_name=user_name, filter=filter
+        vector=vector, top_k=100, user_name=user_name, filter=filter
     )
-    print("search_by_embedding nodes:", len(nodes))
+    print(f"test_search_by_embedding: nodes count: {len(nodes)}")
     for node_i in nodes:
-        print("Search result:", graph.get_node(node_i["id"][1:-1]))
+        print(f"Search result id: {node_i['id']}, score: {node_i.get('score', 'N/A')}")
 
-    # 2，查询单个get_node
-    detail = graph.get_node(id='"65c3a65b-78f7-4009-bc92-7ee1981deb3a"', user_name='"adimin"')
-    print("单个node:", detail)
-    #
-    # # 3，查询多个get_nodes
-    ids = ["bb079c5b-1937-4125-a9e5-55d4abe6c95d", "d66120af-992b-44c6-b261-a6ebe6bc57a5"]
-    # ids = ['"bfde036f-6276-4485-9dc6-3c64eab3e132"']
+
+def test_get_node(graph, node_id: str, user_name: Optional[str] = None):
+    """Test get_node function - query single node."""
+    detail = graph.get_node(id=node_id, user_name=user_name)
+    print(f"test_get_node: {detail}")
+
+
+def test_get_nodes(graph, ids: list[str], user_name: Optional[str] = None):
+    """Test get_nodes function - query multiple nodes."""
+    detail_list = graph.get_nodes(ids=ids, user_name=user_name)
+    print(f"test_get_nodes: count: {len(detail_list)}")
+    print(f"test_get_nodes: {detail_list}")
+
+
+def test_update_node(graph, node_id: str, fields: dict, user_name: Optional[str] = None):
+    """Test update_node function."""
+    result = graph.update_node(id=node_id, fields=fields, user_name=user_name)
+    print(f"test_update_node: {result}")
+
+
+def test_get_memory_count(graph, scope: str, user_name: Optional[str] = None):
+    """Test get_memory_count function."""
+    count = graph.get_memory_count(scope, user_name)
+    print(f"test_get_memory_count: {count}")
+
+
+def test_node_not_exist(graph, scope: str, user_name: Optional[str] = None):
+    """Test node_not_exist function - check if node exists."""
+    isNodeExist = graph.node_not_exist(scope, user_name)
+    print(f"test_node_not_exist: {isNodeExist}")
+
+
+def test_remove_oldest_memory(graph, scope: str, skip_count: int, user_name: Optional[str] = None):
+    """Test remove_oldest_memory function - remove oldest memory after skipping."""
+    result = graph.remove_oldest_memory(scope, skip_count, user_name)
+    print(f"test_remove_oldest_memory: {result}")
+
+
+def test_delete_node(graph, node_id: str, user_name: Optional[str] = None):
+    """Test delete_node function."""
+    isNodeDeleted = graph.delete_node(id=node_id, user_name=user_name)
+    print(f"test_delete_node: {isNodeDeleted}")
     # detail_list = graph.get_nodes(ids=ids,user_name='memos7a9f9fbbb61c412f94f77fbaa8103c35')
     # print("1111多个node:", len(detail_list))
     # #
@@ -98,19 +115,19 @@ def searchVector(db_name: str, vectorStr: list[float], user_name: Optional[str] 
 
 # 9，添加边 add_edge
 def add_edge(
-    db_name: str, source_id: str, target_id: str, edge_type: str = "Memory", user_name: Optional[str] = None
+        db_name: str, source_id: str, target_id: str, edge_type: str = "Memory", user_name: Optional[str] = None
 ):
     graph = getPolarDb(db_name)
     graph.add_edge(source_id, target_id, edge_type, user_name)
 
 
 def edge_exists(
-    db_name: str,
-    source_id: str,
-    target_id: str,
-    type: str = "Memory",
-    direction: str = "OUTGOING",
-    user_name: Optional[str] = None,
+        db_name: str,
+        source_id: str,
+        target_id: str,
+        type: str = "Memory",
+        direction: str = "OUTGOING",
+        user_name: Optional[str] = None,
 ):
     graph = getPolarDb(db_name)
     isEdge_exists = graph.edge_exists(
@@ -194,12 +211,14 @@ def get_structure_optimization_candidates(db_name, scope, include_embedding, use
     print("get_structure_optimization_candidates:", candidates)
 
 
-def get_all_memory_items(db_name, scope, include_embedding, user_name, filter=None):
-    graph = getPolarDb(db_name)
+def test_get_all_memory_items(graph, scope: str, include_embedding: bool, user_name: str,
+                              filter: Optional[dict] = None):
+    """Test get_all_memory_items function."""
     memory_items = graph.get_all_memory_items(
         scope=scope, include_embedding=include_embedding, user_name=user_name, filter=filter
     )
-    print("11111get_all_memory_items:", memory_items)
+    print(f"test_get_all_memory_items: count: {len(memory_items)}")
+    print(f"test_get_all_memory_items: {memory_items}")
 
 
 def get_neighbors_by_tag(db_name, user_name):
@@ -216,15 +235,15 @@ def get_edges(db_name: str, id: str, type: str, direction: str, user_name: Optio
     print("get_edges:", edges)
 
 
-def get_by_metadata(db_name, filters, user_name, filter=None):
-    graph = getPolarDb(db_name)
+def test_get_by_metadata(graph, filters: list[dict], user_name: str, filter: Optional[dict] = None):
+    """Test get_by_metadata function."""
     ids = graph.get_by_metadata(filters=filters, user_name=user_name, filter=filter)
-    print("get_by_metadata:", ids)
+    print(f"test_get_by_metadata: count: {len(ids)}")
+    print(f"test_get_by_metadata: {ids}")
 
 
 if __name__ == "__main__":
-    # handler_node_edge(db_name="shared-tree-textual-memory-product-0731",type="node")
-    # handler_node_edge(db_name="shared-tree-textual-memory-product-0731",type="edge")
+    # Example vector for testing
     vector = [
         -0.059882111847400665,
         0.020448941737413406,
@@ -1251,7 +1270,8 @@ if __name__ == "__main__":
         -0.009011801332235336,
         0.030511723831295967,
     ]
-    filter = {
+    # Example filter for testing - common filter used by multiple tests
+    filter_example = {
         "and": [
             {"id": "65c3a65b-78f7-4009-bc92-7ee1981deb3a"},
             {
@@ -1264,8 +1284,54 @@ if __name__ == "__main__":
             },
         ]
     }
-    searchVector(db_name="memos_test", vectorStr=vector, user_name="adimin",filter=filter)
-    # searchVector(db_name="memos_test", vectorStr=vector, user_name="adimin",filter=filter)
+
+    # Example filters for get_by_metadata
+    filters_example = [
+        {"field": "tags", "op": "contains", "value": "Python"},
+    ]
+
+    # Create connection once - shared by all tests
+    graph = getPolarDb()
+    user_name = "adimin"
+    scope = "WorkingMemory"
+
+    # Run all tests - uncomment the test you want to run
+    test_search_by_embedding(graph, vector, user_name, filter_example)
+    test_get_all_memory_items(graph, "LongTermMemory", False, user_name, filter_example)
+    test_get_by_metadata(graph, filters_example, user_name, filter_example)
+
+    # Or run all tests
+
+    # Test search_by_embedding
+    # test_search_by_embedding(graph, vector, user_name, filter_example)
+
+    # Test get_node - query single node
+    # test_get_node(graph, '"65c3a65b-78f7-4009-bc92-7ee1981deb3a"', '"adimin"')
+
+    # Test get_nodes - query multiple nodes
+    # test_get_nodes(graph, ["65c3a65b-78f7-4009-bc92-7ee1981deb3a", "65c3a65b-78f7-4009-bc92-7ee1981deb3b"], user_name)
+
+    # Test update_node
+    # test_update_node(graph, "000009999ef-926f-42e2-b7b5-0224daf0abcd", {"name": "new_name"}, user_name)
+    # test_update_node(graph, "bb079c5b-1937-4125-a9e5-55d4abe6c95d", {"status": "inactived", "tags": ["yoga", "travel11111111", "local studios5667888"]}, user_name)
+
+    # Test get_memory_count
+    # test_get_memory_count(graph, 'UserMemory', user_name)
+
+    # Test node_not_exist
+    # test_node_not_exist(graph, 'UserMemory', user_name)
+
+    # Test remove_oldest_memory
+    # test_remove_oldest_memory(graph, 'UserMemory', 2, user_name)
+
+    # Test delete_node
+    # test_delete_node(graph, "bb079c5b-1937-4125-a9e5-55d4abe6c95d", user_name)
+
+    # Test get_all_memory_items
+    # test_get_all_memory_items(graph, scope, False, user_name, filter_example)
+
+    # Test get_by_metadata
+    # test_get_by_metadata(graph, filters_example, user_name, filter_example)
 
     # searchVector(db_name="test_1020_02", vectorStr=vector)
 
