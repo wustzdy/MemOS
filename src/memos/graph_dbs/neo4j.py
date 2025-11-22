@@ -168,7 +168,7 @@ class Neo4jGraphDB(BaseGraphDB):
             session.run(query)
 
     def add_node(
-        self, id: str, memory: str, metadata: dict[str, Any], user_name: str | None = None
+            self, id: str, memory: str, metadata: dict[str, Any], user_name: str | None = None
     ) -> None:
         user_name = user_name if user_name else self.config.user_name
         if not self.config.use_multi_db and (self.config.user_name or user_name):
@@ -559,7 +559,7 @@ class Neo4jGraphDB(BaseGraphDB):
             ]
 
     def get_path(
-        self, source_id: str, target_id: str, max_depth: int = 3, user_name: str | None = None
+            self, source_id: str, target_id: str, max_depth: int = 3, user_name: str | None = None
     ) -> list[str]:
         """
         Get the path of nodes from source to target within a limited depth.
@@ -875,7 +875,8 @@ class Neo4jGraphDB(BaseGraphDB):
                 return " AND ".join(condition_parts), filter_params_inner
 
             # Process filter structure
-            param_counter = [len(filters)]  # Use list to allow modification in nested function, start from len(filters) to avoid conflicts
+            param_counter = [
+                len(filters)]  # Use list to allow modification in nested function, start from len(filters) to avoid conflicts
 
             if isinstance(filter, dict):
                 if "or" in filter:
@@ -883,10 +884,10 @@ class Neo4jGraphDB(BaseGraphDB):
                     or_conditions = []
                     for condition in filter["or"]:
                         if isinstance(condition, dict):
-                            condition_str, params = build_filter_condition(condition, param_counter)
+                            condition_str, filter_params_inner = build_filter_condition(condition, param_counter)
                             if condition_str:
                                 or_conditions.append(f"({condition_str})")
-                                filter_params.update(params)
+                                filter_params.update(filter_params_inner)
                     if or_conditions:
                         where_clauses.append(f"({' OR '.join(or_conditions)})")
 
@@ -894,17 +895,22 @@ class Neo4jGraphDB(BaseGraphDB):
                     # AND logic: all conditions must match
                     for condition in filter["and"]:
                         if isinstance(condition, dict):
-                            condition_str, params = build_filter_condition(condition, param_counter)
+                            condition_str, filter_params_inner = build_filter_condition(condition, param_counter)
                             if condition_str:
                                 where_clauses.append(f"({condition_str})")
-                                filter_params.update(params)
+                                filter_params.update(filter_params_inner)
 
-        where_str = " AND ".join(where_clauses)
-        query = f"MATCH (n:Memory) WHERE {where_str} RETURN n.id AS id"
+        where_str = " AND ".join(where_clauses) if where_clauses else ""
+        if where_str:
+            query = f"MATCH (n:Memory) WHERE {where_str} RETURN n.id AS id"
+        else:
+            query = "MATCH (n:Memory) RETURN n.id AS id"
 
         # Merge filter parameters
         if filter_params:
             params.update(filter_params)
+        print("1111111query:", query)
+        print("1111111params:", params)
 
         with self.driver.session(database=self.db_name) as session:
             result = session.run(query, params)
