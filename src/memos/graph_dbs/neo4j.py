@@ -653,15 +653,16 @@ class Neo4jGraphDB(BaseGraphDB):
 
     # Search / recall operations
     def search_by_embedding(
-        self,
-        vector: list[float],
-        top_k: int = 5,
-        scope: str | None = None,
-        status: str | None = None,
-        threshold: float | None = None,
-        search_filter: dict | None = None,
-        user_name: str | None = None,
-        **kwargs,
+            self,
+            vector: list[float],
+            top_k: int = 5,
+            scope: str | None = None,
+            status: str | None = None,
+            threshold: float | None = None,
+            search_filter: dict | None = None,
+            user_name: str | None = None,
+            filter: dict | None = None,
+            **kwargs,
     ) -> list[dict]:
         """
         Retrieve node IDs based on vector similarity.
@@ -704,6 +705,43 @@ class Neo4jGraphDB(BaseGraphDB):
                 param_name = f"filter_{key}"
                 where_clauses.append(f"node.{key} = ${param_name}")
 
+        filter_params = {}
+        if filter:
+            def build_filter_condition(condition_dict: dict, param_counter: list) -> tuple[str, dict]:
+                condition_parts = []
+                params = {}
+
+                for key, value in condition_dict.items():
+                    # All fields are stored as flat properties in Neo4j
+                    param_name = f"filter_flat_{key}_{param_counter[0]}"
+                    param_counter[0] += 1
+                    params[param_name] = value
+                    condition_parts.append(f"node.{key} = ${param_name}")
+
+                return " AND ".join(condition_parts), params
+
+            param_counter = [0]
+
+            if isinstance(filter, dict):
+                if "or" in filter:
+                    or_conditions = []
+                    for condition in filter["or"]:
+                        if isinstance(condition, dict):
+                            condition_str, params = build_filter_condition(condition, param_counter)
+                            if condition_str:
+                                or_conditions.append(f"({condition_str})")
+                                filter_params.update(params)
+                    if or_conditions:
+                        where_clauses.append(f"({' OR '.join(or_conditions)})")
+
+                elif "and" in filter:
+                    for condition in filter["and"]:
+                        if isinstance(condition, dict):
+                            condition_str, params = build_filter_condition(condition, param_counter)
+                            if condition_str:
+                                where_clauses.append(f"({condition_str})")
+                                filter_params.update(params)
+
         where_clause = ""
         if where_clauses:
             where_clause = "WHERE " + " AND ".join(where_clauses)
@@ -716,7 +754,7 @@ class Neo4jGraphDB(BaseGraphDB):
         """
 
         parameters = {"embedding": vector, "k": top_k}
-
+        print("11111119999query:", query)
         if scope:
             parameters["scope"] = scope
         if status:
@@ -727,12 +765,16 @@ class Neo4jGraphDB(BaseGraphDB):
             else:
                 parameters["user_name"] = user_name
 
-        # Add search_filter parameters
         if search_filter:
             for key, value in search_filter.items():
                 param_name = f"filter_{key}"
                 parameters[param_name] = value
 
+        # Add filter parameters
+        if filter_params:
+            parameters.update(filter_params)
+
+        print("1111111filter_params:", filter_params)
         with self.driver.session(database=self.db_name) as session:
             result = session.run(query, parameters)
             records = [{"id": record["id"], "score": record["score"]} for record in result]
@@ -744,7 +786,7 @@ class Neo4jGraphDB(BaseGraphDB):
         return records
 
     def get_by_metadata(
-        self, filters: list[dict[str, Any]], user_name: str | None = None
+        self, filters: list[dict[str, Any]], user_name: str | None = None, filter: dict | None = None
     ) -> list[str]:
         """
         TODO:
@@ -806,8 +848,63 @@ class Neo4jGraphDB(BaseGraphDB):
             where_clauses.append("n.user_name = $user_name")
             params["user_name"] = user_name
 
+        # Add filter conditions (supports "or" and "and" logic)
+        filter_params = {}
+        if filter:
+            # Helper function to build a single filter condition
+            def build_filter_condition(condition_dict: dict, param_counter: list) -> tuple[str, dict]:
+                """Build a WHERE condition for a single filter item.
+
+                Args:
+                    condition_dict: A dict like {"id": "xxx"} or {"A": "xxx"}
+                    param_counter: List to track parameter counter for unique param names
+
+                Returns:
+                    Tuple of (condition_string, parameters_dict)
+                """
+                condition_parts = []
+                filter_params_inner = {}
+
+                for key, value in condition_dict.items():
+                    # All fields are stored as flat properties in Neo4j
+                    param_name = f"filter_meta_{key}_{param_counter[0]}"
+                    param_counter[0] += 1
+                    filter_params_inner[param_name] = value
+                    condition_parts.append(f"n.{key} = ${param_name}")
+
+                return " AND ".join(condition_parts), filter_params_inner
+
+            # Process filter structure
+            param_counter = [len(filters)]  # Use list to allow modification in nested function, start from len(filters) to avoid conflicts
+
+            if isinstance(filter, dict):
+                if "or" in filter:
+                    # OR logic: at least one condition must match
+                    or_conditions = []
+                    for condition in filter["or"]:
+                        if isinstance(condition, dict):
+                            condition_str, params = build_filter_condition(condition, param_counter)
+                            if condition_str:
+                                or_conditions.append(f"({condition_str})")
+                                filter_params.update(params)
+                    if or_conditions:
+                        where_clauses.append(f"({' OR '.join(or_conditions)})")
+
+                elif "and" in filter:
+                    # AND logic: all conditions must match
+                    for condition in filter["and"]:
+                        if isinstance(condition, dict):
+                            condition_str, params = build_filter_condition(condition, param_counter)
+                            if condition_str:
+                                where_clauses.append(f"({condition_str})")
+                                filter_params.update(params)
+
         where_str = " AND ".join(where_clauses)
         query = f"MATCH (n:Memory) WHERE {where_str} RETURN n.id AS id"
+
+        # Merge filter parameters
+        if filter_params:
+            params.update(filter_params)
 
         with self.driver.session(database=self.db_name) as session:
             result = session.run(query, params)
@@ -1026,7 +1123,7 @@ class Neo4jGraphDB(BaseGraphDB):
             {where_clause}
             RETURN n
             """
-
+        print("999999991111111query:",query)
         with self.driver.session(database=self.db_name) as session:
             results = session.run(query, params)
             return [self._parse_node(dict(record["n"])) for record in results]
