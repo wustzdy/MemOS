@@ -1645,7 +1645,10 @@ class PolarDBGraphDB(BaseGraphDB):
 
     @timed
     def get_by_metadata(
-        self, filters: list[dict[str, Any]], user_name: str | None = None
+        self,
+        filters: list[dict[str, Any]],
+        user_name: str | None = None,
+        filter: dict | None = None,
     ) -> list[str]:
         """
         Retrieve node IDs that match given metadata filters.
@@ -1718,7 +1721,52 @@ class PolarDBGraphDB(BaseGraphDB):
         escaped_user_name = user_name.replace("'", "''")
         where_conditions.append(f"n.user_name = '{escaped_user_name}'")
 
-        where_str = " AND ".join(where_conditions)
+        filter_where_clause = ""
+        if filter:
+
+            def escape_cypher_string(value: str) -> str:
+                return value.replace("'", "\\'")
+
+            def build_cypher_filter_condition(condition_dict: dict) -> str:
+                condition_parts = []
+                for key, value in condition_dict.items():
+                    if key.startswith("info."):
+                        info_field = key[5:]
+                        if isinstance(value, str):
+                            escaped_value = escape_cypher_string(value)
+                            condition_parts.append(f"n.info.{info_field} = '{escaped_value}'")
+                        else:
+                            condition_parts.append(f"n.info.{info_field} = {value}")
+                    else:
+                        if isinstance(value, str):
+                            escaped_value = escape_cypher_string(value)
+                            condition_parts.append(f"n.{key} = '{escaped_value}'")
+                        else:
+                            condition_parts.append(f"n.{key} = {value}")
+                return " AND ".join(condition_parts)
+
+            if isinstance(filter, dict):
+                if "or" in filter:
+                    or_conditions = []
+                    for condition in filter["or"]:
+                        if isinstance(condition, dict):
+                            condition_str = build_cypher_filter_condition(condition)
+                            if condition_str:
+                                or_conditions.append(f"({condition_str})")
+                    if or_conditions:
+                        filter_where_clause = " AND " + f"({' OR '.join(or_conditions)})"
+
+                elif "and" in filter:
+                    and_conditions = []
+                    for condition in filter["and"]:
+                        if isinstance(condition, dict):
+                            condition_str = build_cypher_filter_condition(condition)
+                            if condition_str:
+                                and_conditions.append(f"({condition_str})")
+                    if and_conditions:
+                        filter_where_clause = " AND " + " AND ".join(and_conditions)
+
+        where_str = " AND ".join(where_conditions) + filter_where_clause
 
         # Use cypher query
         cypher_query = f"""
@@ -2136,7 +2184,11 @@ class PolarDBGraphDB(BaseGraphDB):
 
     @timed
     def get_all_memory_items(
-        self, scope: str, include_embedding: bool = False, user_name: str | None = None
+        self,
+        scope: str,
+        include_embedding: bool = False,
+        user_name: str | None = None,
+        filter: dict | None = None,
     ) -> list[dict]:
         """
         Retrieve all memory items of a specific memory_type.
@@ -2153,13 +2205,59 @@ class PolarDBGraphDB(BaseGraphDB):
         if scope not in {"WorkingMemory", "LongTermMemory", "UserMemory", "OuterMemory"}:
             raise ValueError(f"Unsupported memory type scope: {scope}")
 
+        filter_where_clause = ""
+        if filter:
+
+            def escape_cypher_string(value: str) -> str:
+                """Escape single quotes in Cypher string."""
+                return value.replace("'", "\\'")
+
+            def build_cypher_filter_condition(condition_dict: dict) -> str:
+                condition_parts = []
+                for key, value in condition_dict.items():
+                    if key.startswith("info."):
+                        info_field = key[5:]
+                        if isinstance(value, str):
+                            escaped_value = escape_cypher_string(value)
+                            condition_parts.append(f"n.info.{info_field} = '{escaped_value}'")
+                        else:
+                            condition_parts.append(f"n.info.{info_field} = {value}")
+                    else:
+                        if isinstance(value, str):
+                            escaped_value = escape_cypher_string(value)
+                            condition_parts.append(f"n.{key} = '{escaped_value}'")
+                        else:
+                            condition_parts.append(f"n.{key} = {value}")
+                return " AND ".join(condition_parts)
+
+            if isinstance(filter, dict):
+                if "or" in filter:
+                    or_conditions = []
+                    for condition in filter["or"]:
+                        if isinstance(condition, dict):
+                            condition_str = build_cypher_filter_condition(condition)
+                            if condition_str:
+                                or_conditions.append(f"({condition_str})")
+                    if or_conditions:
+                        filter_where_clause = " AND " + f"({' OR '.join(or_conditions)})"
+
+                elif "and" in filter:
+                    and_conditions = []
+                    for condition in filter["and"]:
+                        if isinstance(condition, dict):
+                            condition_str = build_cypher_filter_condition(condition)
+                            if condition_str:
+                                and_conditions.append(f"({condition_str})")
+                    if and_conditions:
+                        filter_where_clause = " AND " + " AND ".join(and_conditions)
+
         # Use cypher query to retrieve memory items
         if include_embedding:
             cypher_query = f"""
                    WITH t as (
                        SELECT * FROM cypher('{self.db_name}_graph', $$
                        MATCH (n:Memory)
-                       WHERE n.memory_type = '{scope}' AND n.user_name = '{user_name}'
+                       WHERE n.memory_type = '{scope}' AND n.user_name = '{user_name}'{filter_where_clause}
                        RETURN id(n) as id1,n
                        LIMIT 100
                        $$) AS (id1 agtype,n agtype)
@@ -2205,7 +2303,7 @@ class PolarDBGraphDB(BaseGraphDB):
             cypher_query = f"""
                    SELECT * FROM cypher('{self.db_name}_graph', $$
                    MATCH (n:Memory)
-                   WHERE n.memory_type = '{scope}' AND n.user_name = '{user_name}'
+                   WHERE n.memory_type = '{scope}' AND n.user_name = '{user_name}'{filter_where_clause}
                    RETURN properties(n) as props
                    LIMIT 100
                    $$) AS (nprops agtype)
