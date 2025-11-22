@@ -1096,12 +1096,14 @@ class Neo4jGraphDB(BaseGraphDB):
                     target_id=edge["target"],
                 )
 
-    def get_all_memory_items(self, scope: str, **kwargs) -> list[dict]:
+    def get_all_memory_items(self, scope: str, filter: dict | None = None, **kwargs) -> list[dict]:
         """
         Retrieve all memory items of a specific memory_type.
 
         Args:
             scope (str): Must be one of 'WorkingMemory', 'LongTermMemory', or 'UserMemory'.
+            filter (dict, optional): Filter conditions with 'and' or 'or' logic for search results.
+                Example: {"and": [{"id": "xxx"}, {"A": "yyy"}]} or {"or": [{"id": "xxx"}, {"A": "yyy"}]}
         Returns:
 
         Returns:
@@ -1111,19 +1113,61 @@ class Neo4jGraphDB(BaseGraphDB):
         if scope not in {"WorkingMemory", "LongTermMemory", "UserMemory", "OuterMemory"}:
             raise ValueError(f"Unsupported memory type scope: {scope}")
 
-        where_clause = "WHERE n.memory_type = $scope"
+        where_clauses = ["n.memory_type = $scope"]
         params = {"scope": scope}
 
         if not self.config.use_multi_db and (self.config.user_name or user_name):
-            where_clause += " AND n.user_name = $user_name"
+            where_clauses.append("n.user_name = $user_name")
             params["user_name"] = user_name
+
+        filter_params = {}
+        if filter:
+            def build_filter_condition(condition_dict: dict, param_counter: list) -> tuple[str, dict]:
+
+                condition_parts = []
+                filter_params_inner = {}
+
+                for key, value in condition_dict.items():
+                    param_name = f"filter_flat_{key}_{param_counter[0]}"
+                    param_counter[0] += 1
+                    filter_params_inner[param_name] = value
+                    condition_parts.append(f"n.{key} = ${param_name}")
+
+                return " AND ".join(condition_parts), filter_params_inner
+
+            param_counter = [0]
+
+            if isinstance(filter, dict):
+                if "or" in filter:
+                    or_conditions = []
+                    for condition in filter["or"]:
+                        if isinstance(condition, dict):
+                            condition_str, filter_params_inner = build_filter_condition(condition, param_counter)
+                            if condition_str:
+                                or_conditions.append(f"({condition_str})")
+                                filter_params.update(filter_params_inner)
+                    if or_conditions:
+                        where_clauses.append(f"({' OR '.join(or_conditions)})")
+
+                elif "and" in filter:
+                    for condition in filter["and"]:
+                        if isinstance(condition, dict):
+                            condition_str, filter_params_inner = build_filter_condition(condition, param_counter)
+                            if condition_str:
+                                where_clauses.append(f"({condition_str})")
+                                filter_params.update(filter_params_inner)
+
+        where_clause = "WHERE " + " AND ".join(where_clauses)
+
+        if filter_params:
+            params.update(filter_params)
 
         query = f"""
             MATCH (n:Memory)
             {where_clause}
             RETURN n
             """
-        print("999999991111111query:",query)
+        print("999999991111111query:", query)
         with self.driver.session(database=self.db_name) as session:
             results = session.run(query, params)
             return [self._parse_node(dict(record["n"])) for record in results]
