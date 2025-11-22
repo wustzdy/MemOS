@@ -33,10 +33,10 @@ def getPolarDb(db_name):
     config = GraphDBConfigFactory(
         backend="polardb",
         config={
-            "host": os.getenv("POLARDB_HOST", "memory.pg.polardb.rds.aliyuncs.com"),
-            "port": int(os.getenv("POLARDB_PORT", "5432")),
-            "user": os.getenv("POLARDB_USER", "adimin"),
-            "password": os.getenv("POLARDB_PASSWORD", "Openmem0925"),
+            "host": os.getenv("POLAR_DB_HOST", "xxxxxxxxx"),
+            "port": int(os.getenv("POLAR_DB_PORT", "5432")),
+            "user": os.getenv("POLAR_DB_USER", "xxxxxxxxx"),
+            "password": os.getenv("POLAR_DB_PASSWORD", "xxxxxxxxx"),
             "db_name": db_name,
             "user_name": os.getenv("POLARDB_USER_NAME", "adimin"),
             "use_multi_db": os.getenv("POLARDB_USE_MULTI_DB", "True").lower() == "true",  # 设置为True，不添加user_name过滤条件
