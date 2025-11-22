@@ -2,7 +2,6 @@ import os
 import sys
 from typing import Optional
 
-
 src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 sys.path.insert(0, src_path)
 
@@ -10,14 +9,14 @@ from memos.configs.graph_db import GraphDBConfigFactory
 from memos.graph_dbs.factory import GraphStoreFactory
 
 
-def getNeo4j(db_name):
+def getNeo4j():
     config = GraphDBConfigFactory(
         backend="neo4j",
         config={
             "uri": os.getenv("NEO4J_URI", "bolt://localhost:7687"),
             "user": os.getenv("NEO4J_USER", "neo4j"),
             "password": os.getenv("NEO4J_PASSWORD", "password"),
-            "db_name": db_name,
+            "db_name": os.getenv("NEO4J_DB_NAME", "dbname"),
             "user_name": os.getenv("NEO4J_USER_NAME", "neo4j"),
             "use_multi_db": os.getenv("NEO4J_USE_MULTI_DB", "False").lower() == "true",
             "auto_create": True,
@@ -28,45 +27,38 @@ def getNeo4j(db_name):
     return graph
 
 
-def search_by_embedding(
-    db_name: str, vectorStr: list[float], user_name: Optional[str] = None, filter: Optional[dict] = None
-):
+def test_search_by_embedding(graph, vector: list[float], user_name: str, filter_example: Optional[dict] = None):
     """Test search_by_embedding function."""
-    graph = getNeo4j(db_name)
-
     # Query search_by_embedding
     nodes = graph.search_by_embedding(
-        vector=vectorStr,
+        vector=vector,
         top_k=100,
         user_name=user_name,
-        filter=filter,
+        filter=filter_example,
     )
-    print(f"search_by_embedding nodes count: {len(nodes)}")
-    print(f"search_by_embedding nodes: {nodes}")
+    print(f"test_search_by_embedding: nodes count: {len(nodes)}")
+    print(f"test_search_by_embedding: nodes: {nodes}")
     for node_i in nodes:
         print(f"Search result id: {node_i['id']}, score: {node_i.get('score', 'N/A')}")
 
 
-def get_all_memory_items(db_name, scope, include_embedding, user_name, filter=None):
+def test_get_all_memory_items(graph, scope: str, user_name: str, filter_example: Optional[dict] = None):
     """Test get_all_memory_items function."""
-    graph = getNeo4j(db_name)
     memory_items = graph.get_all_memory_items(
-        scope=scope, include_embedding=include_embedding, user_name=user_name, filter=filter
+        scope=scope, include_embedding=False, user_name=user_name, filter=filter_example
     )
-    # print(f"get_all_memory_items count: {len(memory_items)}")
-    print(f"get_all_memory_items: {memory_items}")
+    print(f"test_get_all_memory_items: count: {len(memory_items)}")
+    print(f"test_get_all_memory_items: {memory_items}")
 
 
-def get_by_metadata(db_name, filters, user_name, filter=None):
+def test_get_by_metadata(graph, filters: list[dict], user_name: str, filter_example: Optional[dict] = None):
     """Test get_by_metadata function."""
-    graph = getNeo4j(db_name)
-    ids = graph.get_by_metadata(filters=filters, user_name=user_name, filter=filter)
-    print(f"get_by_metadata count: {len(ids)}")
-    print(f"get_by_metadata: {ids}")
+    ids = graph.get_by_metadata(filters=filters, user_name=user_name, filter=filter_example)
+    print(f"test_get_by_metadata: count: {len(ids)}")
+    print(f"test_get_by_metadata: {ids}")
 
 
 if __name__ == "__main__":
-    # Example vector for testing
     vector = [
         0.00036784022813662887,
         0.011101230047643185,
@@ -1096,9 +1088,9 @@ if __name__ == "__main__":
     # Pad vector to 1024 dimensions (fill with zeros for testing)
     vector = vector + [0.0] * (1024 - len(vector))
 
-    # Example filter for testing
+    # Example filter for testing - common filter used by multiple tests
     filter_example = {
-        "or": [
+        "and": [
             {"id": "4534c646-50fe-4f8b-9488-91992ec8af91"},
             {"A": "湖北武当山"},
         ]
@@ -1109,27 +1101,11 @@ if __name__ == "__main__":
         {"field": "status", "op": "=", "value": "activated"},
     ]
 
-    # Test search_by_embedding
-    search_by_embedding(
-        db_name="pref-tmp-db-test",
-        vectorStr=vector,
-        user_name="memosfeebbc2bd1744d7bb5b5ec57f38e828d",
-        filter=filter_example,
-    )
+    graph = getNeo4j()
 
-    # Test get_all_memory_items
-    get_all_memory_items(
-        db_name="pref-tmp-db-test",
-        scope="WorkingMemory",
-        include_embedding=False,
-        user_name="memosfeebbc2bd1744d7bb5b5ec57f38e828d",
-        filter=filter_example,
-    )
-
-    # #Test get_by_metadata
-    get_by_metadata(
-        db_name="pref-tmp-db-test",
-        filters=filters_example,
-        user_name="memosfeebbc2bd1744d7bb5b5ec57f38e828d",
-        filter=filter_example
-    )
+    # Or run all tests
+    user_name = "memosfeebbc2bd1744d7bb5b5ec57f38e828d"
+    scope = "WorkingMemory"
+    test_search_by_embedding(graph, vector, user_name, filter_example)
+    test_get_all_memory_items(graph, scope, user_name, filter_example)
+    test_get_by_metadata(graph, filters_example, user_name, filter_example)
