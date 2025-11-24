@@ -1714,6 +1714,7 @@ class PolarDBGraphDB(BaseGraphDB):
         filters: list[dict[str, Any]],
         user_name: str | None = None,
         filter: dict | None = None,
+        knowledgebase_ids: list | None = None,
     ) -> list[str]:
         """
         Retrieve node IDs that match given metadata filters.
@@ -1782,20 +1783,78 @@ class PolarDBGraphDB(BaseGraphDB):
             else:
                 raise ValueError(f"Unsupported operator: {op}")
 
-        # Add user_name filter
-        escaped_user_name = user_name.replace("'", "''")
-        where_conditions.append(f"n.user_name = '{escaped_user_name}'")
+        # Build user_name filter with knowledgebase_ids support (OR relationship)
+        user_name_conditions = []
+        if user_name:
+            escaped_user_name = user_name.replace("'", "''")
+            user_name_conditions.append(f"n.user_name = '{escaped_user_name}'")
+        
+        # Add knowledgebase_ids conditions (checking user_name field in the data)
+        if knowledgebase_ids and isinstance(knowledgebase_ids, list) and len(knowledgebase_ids) > 0:
+            for kb_id in knowledgebase_ids:
+                if isinstance(kb_id, str):
+                    escaped_kb_id = kb_id.replace("'", "''")
+                    user_name_conditions.append(f"n.user_name = '{escaped_kb_id}'")
+        
+        # Add user_name WHERE clause
+        if user_name_conditions:
+            if len(user_name_conditions) == 1:
+                where_conditions.append(user_name_conditions[0])
+            else:
+                where_conditions.append(f"({' OR '.join(user_name_conditions)})")
 
         filter_where_clause = ""
+        filter = self.parse_filter(filter)
         if filter:
 
             def escape_cypher_string(value: str) -> str:
                 return value.replace("'", "\\'")
 
             def build_cypher_filter_condition(condition_dict: dict) -> str:
+                """Build a Cypher WHERE condition for a single filter item.
+                
+                Args:
+                    condition_dict: A dict like {"id": "xxx"} or {"info.B": "xxx"} or {"created_at": {"gt": "2025-11-01"}}
+                
+                Returns:
+                    Cypher condition string
+                """
                 condition_parts = []
                 for key, value in condition_dict.items():
-                    if key.startswith("info."):
+                    # Check if value is a dict with comparison operators (gt, lt, gte, lte)
+                    if isinstance(value, dict):
+                        # Handle comparison operators: gt (greater than), lt (less than), gte (greater than or equal), lte (less than or equal)
+                        for op, op_value in value.items():
+                            if op in ("gt", "lt", "gte", "lte"):
+                                # Map operator to Cypher operator
+                                cypher_op_map = {
+                                    "gt": ">",
+                                    "lt": "<",
+                                    "gte": ">=",
+                                    "lte": "<="
+                                }
+                                cypher_op = cypher_op_map[op]
+                                
+                                # Check if key starts with "info." prefix (for nested fields like info.A, info.B)
+                                # For direct properties like "created_at", this condition will be False
+                                if key.startswith("info."):
+                                    # Nested field access: n.info.field_name
+                                    info_field = key[5:]  # Remove "info." prefix
+                                    if isinstance(op_value, str):
+                                        escaped_value = escape_cypher_string(op_value)
+                                        condition_parts.append(f"n.info.{info_field} {cypher_op} '{escaped_value}'")
+                                    else:
+                                        condition_parts.append(f"n.info.{info_field} {cypher_op} {op_value}")
+                                else:
+                                    # Direct property access (e.g., "created_at" is directly in n, not in n.info)
+                                    # This handles fields like created_at, updated_at, etc. that are at the top level
+                                    if isinstance(op_value, str):
+                                        escaped_value = escape_cypher_string(op_value)
+                                        condition_parts.append(f"n.{key} {cypher_op} '{escaped_value}'")
+                                    else:
+                                        condition_parts.append(f"n.{key} {cypher_op} {op_value}")
+                    # Check if key starts with "info." prefix (for simple equality)
+                    elif key.startswith("info."):
                         info_field = key[5:]
                         if isinstance(value, str):
                             escaped_value = escape_cypher_string(value)
@@ -1803,6 +1862,7 @@ class PolarDBGraphDB(BaseGraphDB):
                         else:
                             condition_parts.append(f"n.info.{info_field} = {value}")
                     else:
+                        # Direct property access (simple equality)
                         if isinstance(value, str):
                             escaped_value = escape_cypher_string(value)
                             condition_parts.append(f"n.{key} = '{escaped_value}'")
@@ -1844,6 +1904,7 @@ class PolarDBGraphDB(BaseGraphDB):
 
         ids = []
         conn = self._get_connection()
+        print(f"get_by_metadata cypher_query: {cypher_query}")
         try:
             with conn.cursor() as cursor:
                 cursor.execute(cypher_query)

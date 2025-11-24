@@ -235,9 +235,9 @@ def get_edges(db_name: str, id: str, type: str, direction: str, user_name: Optio
     print("get_edges:", edges)
 
 
-def test_get_by_metadata(graph, filters: list[dict], user_name: str, filter: Optional[dict] = None):
+def test_get_by_metadata(graph, filters: list[dict], user_name: str, filter: Optional[dict] = None,knowledgebase_ids: Optional[list] = None):
     """Test get_by_metadata function."""
-    ids = graph.get_by_metadata(filters=filters, user_name=user_name, filter=filter)
+    ids = graph.get_by_metadata(filters=filters, user_name=user_name, filter=filter,knowledgebase_ids=knowledgebase_ids)
     print(f"test_get_by_metadata: count: {len(ids)}")
     print(f"test_get_by_metadata: {ids}")
 
@@ -1272,7 +1272,7 @@ if __name__ == "__main__":
     ]
     # Example filter for testing - common filter used by multiple tests
     filter_example = {
-        "and": [
+        "or": [
             {"id": "65c3a65b-78f7-4009-bc92-7ee1981deb3a"},
             {
                 # "info.A": "建议从基础语法开始，多做练习项目",
@@ -1299,9 +1299,9 @@ if __name__ == "__main__":
     knowledgebase_ids = ["adimin1","adimin2","adimi3","adimin4","adimin5","adimin6"]
 
     # Run all tests - uncomment the test you want to run
-    # test_search_by_embedding(graph, vector, user_name, filter_example,knowledgebase_ids)
-    test_get_all_memory_items(graph, "LongTermMemory", False, user_name, filter_example,knowledgebase_ids)
-    # test_get_by_metadata(graph, filters_example, user_name, filter_example)
+    test_search_by_embedding(graph, vector, user_name, filter_example,knowledgebase_ids)
+    # test_get_all_memory_items(graph, "LongTermMemory", False, user_name, filter_example,knowledgebase_ids)
+    # test_get_by_metadata(graph, filters_example, user_name, filter_example,knowledgebase_ids)
 
     # Or run all tests
 
