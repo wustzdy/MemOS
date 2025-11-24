@@ -1,5 +1,6 @@
 import json
 import random
+import textwrap
 
 from datetime import datetime
 from typing import Any, Literal
@@ -1461,6 +1462,7 @@ class PolarDBGraphDB(BaseGraphDB):
         search_filter: dict | None = None,
         user_name: str | None = None,
         filter: dict | None = None,
+        knowledgebase_ids: list[str] | None = None,
         **kwargs,
     ) -> list[dict]:
         """
@@ -1491,10 +1493,30 @@ class PolarDBGraphDB(BaseGraphDB):
         #     else:
         #         where_clauses.append(f"ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = '\"{user_name}\"'::agtype")
         """
+        # Build user_name filter with knowledgebase_ids support (OR relationship)
+        user_name_conditions = []
+        
+        # Add original user_name condition if provided
         user_name = user_name if user_name else self.config.user_name
-        where_clauses.append(
-            f"ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = '\"{user_name}\"'::agtype"
-        )
+        if user_name:
+            user_name_conditions.append(
+                f"ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = '\"{user_name}\"'::agtype"
+            )
+        
+        # Add knowledgebase_ids conditions (checking user_name field in the data)
+        if knowledgebase_ids and isinstance(knowledgebase_ids, list) and len(knowledgebase_ids) > 0:
+            for kb_id in knowledgebase_ids:
+                if isinstance(kb_id, str):
+                    user_name_conditions.append(
+                        f"ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = '\"{kb_id}\"'::agtype"
+                    )
+        
+        # Add OR condition if we have any user_name conditions
+        if user_name_conditions:
+            if len(user_name_conditions) == 1:
+                where_clauses.append(user_name_conditions[0])
+            else:
+                where_clauses.append(f"({' OR '.join(user_name_conditions)})")
 
         # Add search_filter conditions like nebular.py
         if search_filter:
@@ -1599,8 +1621,23 @@ class PolarDBGraphDB(BaseGraphDB):
         params = [vector]
         logger.debug(f"search_by_embedding query: {query}")
         logger.debug(f"search_by_embedding params: {params}")
+        
+        # Format SQL query for better console display (prevent truncation)
         print("=== SQL Query ===")
-        print(query)
+        #print(query)
+
+
+        # Split query by lines and wrap long lines to prevent terminal truncation
+        query_lines = query.strip().split('\n')
+        for line in query_lines:
+            # Wrap lines longer than 200 characters to prevent terminal truncation
+            if len(line) > 200:
+                wrapped_lines = textwrap.wrap(line, width=200, break_long_words=False, break_on_hyphens=False)
+                for wrapped_line in wrapped_lines:
+                    print(wrapped_line)
+            else:
+                print(line)
+
         print("=== Params ===")
         print(params)
         print("================")
