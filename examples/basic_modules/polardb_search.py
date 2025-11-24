@@ -1272,16 +1272,16 @@ if __name__ == "__main__":
     ]
     # Example filter for testing - common filter used by multiple tests
     filter_example = {
-        "and": [
+        "or": [
             {"id": "65c3a65b-78f7-4009-bc92-7ee1981deb3a"},
             {
-                # "info.A": "用户询问如何学习Python编程，助手建议从基础语法开始，并通过多做练习项目来提高技能。",
                 "info.A": "建议从基础语法开始，多做练习项目"
             },
-            # {"info.B": "建议从基础语法开始，多做练习项目"},
             {
                 "info.B": "用户询问如何学习Python编程，助手建议从基础语法开始，并通过多做练习项目来提高技能。"
             },
+            {"created_at":{"gt":"2025-09-19"}},
+            {"created_at": {"lt": "2025-11-12"}}
         ]
     }
 
@@ -1298,8 +1298,8 @@ if __name__ == "__main__":
 
     # Run all tests - uncomment the test you want to run
     test_search_by_embedding(graph, vector, user_name, filter_example,knowledgebase_ids)
-    test_get_all_memory_items(graph, "LongTermMemory", False, user_name, filter_example)
-    test_get_by_metadata(graph, filters_example, user_name, filter_example)
+    # test_get_all_memory_items(graph, "LongTermMemory", False, user_name, filter_example)
+    # test_get_by_metadata(graph, filters_example, user_name, filter_example)
 
     # Or run all tests
 

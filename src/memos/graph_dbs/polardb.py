@@ -1540,15 +1540,55 @@ class PolarDBGraphDB(BaseGraphDB):
                 """Build a WHERE condition for a single filter item.
 
                 Args:
-                    condition_dict: A dict like {"id": "xxx"} or {"info.B": "xxx"}
+                    condition_dict: A dict like {"id": "xxx"} or {"info.B": "xxx"} or {"created_at": {"gt": "2025-11-01"}}
 
                 Returns:
                     SQL condition string
                 """
                 condition_parts = []
                 for key, value in condition_dict.items():
-                    # Check if key starts with "info." prefix
-                    if key.startswith("info."):
+                    # Check if value is a dict with comparison operators (gt, lt, gte, lte)
+                    if isinstance(value, dict):
+                        # Handle comparison operators: gt (greater than), lt (less than), gte (greater than or equal), lte (less than or equal)
+                        for op, op_value in value.items():
+                            if op in ("gt", "lt", "gte", "lte"):
+                                # Map operator to SQL operator
+                                sql_op_map = {
+                                    "gt": ">",
+                                    "lt": "<",
+                                    "gte": ">=",
+                                    "lte": "<="
+                                }
+                                sql_op = sql_op_map[op]
+                                
+                                # Check if key starts with "info." prefix (for nested fields like info.A, info.B)
+                                # For direct properties like "created_at", this condition will be False
+                                if key.startswith("info."):
+                                    # Nested field access: properties->'info'->'field_name'
+                                    info_field = key[5:]  # Remove "info." prefix
+                                    if isinstance(op_value, str):
+                                        escaped_value = escape_sql_string(op_value)
+                                        condition_parts.append(
+                                            f"ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '\"info\"'::ag_catalog.agtype, '\"{info_field}\"'::ag_catalog.agtype]) {sql_op} '\"{escaped_value}\"'::agtype"
+                                        )
+                                    else:
+                                        condition_parts.append(
+                                            f"ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '\"info\"'::ag_catalog.agtype, '\"{info_field}\"'::ag_catalog.agtype]) {sql_op} {op_value}::agtype"
+                                        )
+                                else:
+                                    # Direct property access (e.g., "created_at" is directly in properties, not in properties.info)
+                                    # This handles fields like created_at, updated_at, etc. that are at the top level of properties
+                                    if isinstance(op_value, str):
+                                        escaped_value = escape_sql_string(op_value)
+                                        condition_parts.append(
+                                            f"ag_catalog.agtype_access_operator(properties, '\"{key}\"'::agtype) {sql_op} '\"{escaped_value}\"'::agtype"
+                                        )
+                                    else:
+                                        condition_parts.append(
+                                            f"ag_catalog.agtype_access_operator(properties, '\"{key}\"'::agtype) {sql_op} {op_value}::agtype"
+                                        )
+                    # Check if key starts with "info." prefix (for simple equality)
+                    elif key.startswith("info."):
                         # Extract the field name after "info."
                         info_field = key[5:]  # Remove "info." prefix (5 characters)
                         # Match in info field: properties->'info'->'B'
@@ -1567,6 +1607,7 @@ class PolarDBGraphDB(BaseGraphDB):
                                 f"ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '\"info\"'::ag_catalog.agtype, '\"{info_field}\"'::ag_catalog.agtype]) = '\"{value}\"'::agtype"
                             )
                     else:
+                        # Direct property access (simple equality)
                         if isinstance(value, str):
                             escaped_value = escape_sql_string(value)
                             condition_parts.append(
