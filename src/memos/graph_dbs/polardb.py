@@ -1468,8 +1468,6 @@ class PolarDBGraphDB(BaseGraphDB):
         """
         # Build WHERE clause dynamically like nebular.py
         where_clauses = []
-        # scope = "LongTermMemory"
-        # user_name = "adimin"
         if scope:
             where_clauses.append(
                 f"ag_catalog.agtype_access_operator(properties, '\"memory_type\"'::agtype) = '\"{scope}\"'::agtype"
@@ -1509,18 +1507,6 @@ class PolarDBGraphDB(BaseGraphDB):
                     where_clauses.append(
                         f"ag_catalog.agtype_access_operator(properties, '\"{key}\"'::agtype) = {value}::agtype"
                     )
-        # Add filter conditions (supports "or" and "and" logic)
-        # filter = {
-        #     "and": [
-        #         {"id": "2025-11-19-02"},
-        #         {
-        #             "info.B": "用户询问如何学习Python编程，助手建议从基础语法开始，并通过多做练习项目来提高技能。"
-        #         },
-        #         {"memory": "湖北武汉"},
-        #         {"info.A": "建议从基础语法开始，多做练习项目"},
-        #         {"user_id": "65c3a65b-78f7-4009-bc92-7ee1981deb3a"},
-        #     ]
-        # }
         if filter:
             # Helper function to escape string value for SQL
             def escape_sql_string(value: str) -> str:
