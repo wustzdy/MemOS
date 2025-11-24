@@ -2253,6 +2253,7 @@ class PolarDBGraphDB(BaseGraphDB):
         include_embedding: bool = False,
         user_name: str | None = None,
         filter: dict | None = None,
+        knowledgebase_ids: list | None = None,
     ) -> list[dict]:
         """
         Retrieve all memory items of a specific memory_type.
@@ -2269,6 +2270,27 @@ class PolarDBGraphDB(BaseGraphDB):
         if scope not in {"WorkingMemory", "LongTermMemory", "UserMemory", "OuterMemory"}:
             raise ValueError(f"Unsupported memory type scope: {scope}")
 
+        # Build user_name filter with knowledgebase_ids support (OR relationship)
+        user_name_conditions = []
+        if user_name:
+            user_name_conditions.append(f"n.user_name = '{user_name}'")
+        
+        # Add knowledgebase_ids conditions (checking user_name field in the data)
+        if knowledgebase_ids and isinstance(knowledgebase_ids, list) and len(knowledgebase_ids) > 0:
+            for kb_id in knowledgebase_ids:
+                if isinstance(kb_id, str):
+                    escaped_kb_id = kb_id.replace("'", "\\'")
+                    user_name_conditions.append(f"n.user_name = '{escaped_kb_id}'")
+        
+        # Build user_name WHERE clause
+        if user_name_conditions:
+            if len(user_name_conditions) == 1:
+                user_name_where = user_name_conditions[0]
+            else:
+                user_name_where = f"({' OR '.join(user_name_conditions)})"
+        else:
+            user_name_where = ""
+
         filter_where_clause = ""
         if filter:
 
@@ -2277,9 +2299,50 @@ class PolarDBGraphDB(BaseGraphDB):
                 return value.replace("'", "\\'")
 
             def build_cypher_filter_condition(condition_dict: dict) -> str:
+                """Build a Cypher WHERE condition for a single filter item.
+                
+                Args:
+                    condition_dict: A dict like {"id": "xxx"} or {"info.B": "xxx"} or {"created_at": {"gt": "2025-11-01"}}
+                
+                Returns:
+                    Cypher condition string
+                """
                 condition_parts = []
                 for key, value in condition_dict.items():
-                    if key.startswith("info."):
+                    # Check if value is a dict with comparison operators (gt, lt, gte, lte)
+                    if isinstance(value, dict):
+                        # Handle comparison operators: gt (greater than), lt (less than), gte (greater than or equal), lte (less than or equal)
+                        for op, op_value in value.items():
+                            if op in ("gt", "lt", "gte", "lte"):
+                                # Map operator to Cypher operator
+                                cypher_op_map = {
+                                    "gt": ">",
+                                    "lt": "<",
+                                    "gte": ">=",
+                                    "lte": "<="
+                                }
+                                cypher_op = cypher_op_map[op]
+                                
+                                # Check if key starts with "info." prefix (for nested fields like info.A, info.B)
+                                # For direct properties like "created_at", this condition will be False
+                                if key.startswith("info."):
+                                    # Nested field access: n.info.field_name
+                                    info_field = key[5:]  # Remove "info." prefix
+                                    if isinstance(op_value, str):
+                                        escaped_value = escape_cypher_string(op_value)
+                                        condition_parts.append(f"n.info.{info_field} {cypher_op} '{escaped_value}'")
+                                    else:
+                                        condition_parts.append(f"n.info.{info_field} {cypher_op} {op_value}")
+                                else:
+                                    # Direct property access (e.g., "created_at" is directly in n, not in n.info)
+                                    # This handles fields like created_at, updated_at, etc. that are at the top level
+                                    if isinstance(op_value, str):
+                                        escaped_value = escape_cypher_string(op_value)
+                                        condition_parts.append(f"n.{key} {cypher_op} '{escaped_value}'")
+                                    else:
+                                        condition_parts.append(f"n.{key} {cypher_op} {op_value}")
+                    # Check if key starts with "info." prefix (for simple equality)
+                    elif key.startswith("info."):
                         info_field = key[5:]
                         if isinstance(value, str):
                             escaped_value = escape_cypher_string(value)
@@ -2287,6 +2350,7 @@ class PolarDBGraphDB(BaseGraphDB):
                         else:
                             condition_parts.append(f"n.info.{info_field} = {value}")
                     else:
+                        # Direct property access (simple equality)
                         if isinstance(value, str):
                             escaped_value = escape_cypher_string(value)
                             condition_parts.append(f"n.{key} = '{escaped_value}'")
@@ -2317,11 +2381,22 @@ class PolarDBGraphDB(BaseGraphDB):
 
         # Use cypher query to retrieve memory items
         if include_embedding:
+            # Build WHERE clause with user_name/knowledgebase_ids and filter
+            where_parts = [f"n.memory_type = '{scope}'"]
+            if user_name_where:
+                # user_name_where already contains parentheses if it's an OR condition
+                where_parts.append(user_name_where)
+            if filter_where_clause:
+                # filter_where_clause already contains " AND " prefix, so we just append it
+                where_clause = " AND ".join(where_parts) + filter_where_clause
+            else:
+                where_clause = " AND ".join(where_parts)
+            
             cypher_query = f"""
                    WITH t as (
                        SELECT * FROM cypher('{self.db_name}_graph', $$
                        MATCH (n:Memory)
-                       WHERE n.memory_type = '{scope}' AND n.user_name = '{user_name}'{filter_where_clause}
+                       WHERE {where_clause}
                        RETURN id(n) as id1,n
                        LIMIT 100
                        $$) AS (id1 agtype,n agtype)
@@ -2364,10 +2439,21 @@ class PolarDBGraphDB(BaseGraphDB):
 
             return nodes
         else:
+            # Build WHERE clause with user_name/knowledgebase_ids and filter
+            where_parts = [f"n.memory_type = '{scope}'"]
+            if user_name_where:
+                # user_name_where already contains parentheses if it's an OR condition
+                where_parts.append(user_name_where)
+            if filter_where_clause:
+                # filter_where_clause already contains " AND " prefix, so we just append it
+                where_clause = " AND ".join(where_parts) + filter_where_clause
+            else:
+                where_clause = " AND ".join(where_parts)
+            
             cypher_query = f"""
                    SELECT * FROM cypher('{self.db_name}_graph', $$
                    MATCH (n:Memory)
-                   WHERE n.memory_type = '{scope}' AND n.user_name = '{user_name}'{filter_where_clause}
+                   WHERE {where_clause}
                    RETURN properties(n) as props
                    LIMIT 100
                    $$) AS (nprops agtype)
@@ -2375,6 +2461,7 @@ class PolarDBGraphDB(BaseGraphDB):
 
             nodes = []
             conn = self._get_connection()
+            print("1111111cypher_query:", cypher_query)
             try:
                 with conn.cursor() as cursor:
                     cursor.execute(cypher_query)

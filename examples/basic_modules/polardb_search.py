@@ -212,10 +212,10 @@ def get_structure_optimization_candidates(db_name, scope, include_embedding, use
 
 
 def test_get_all_memory_items(graph, scope: str, include_embedding: bool, user_name: str,
-                              filter: Optional[dict] = None):
+                              filter: Optional[dict] = None,knowledgebase_ids: Optional[list] = None):
     """Test get_all_memory_items function."""
     memory_items = graph.get_all_memory_items(
-        scope=scope, include_embedding=include_embedding, user_name=user_name, filter=filter
+        scope=scope, include_embedding=include_embedding, user_name=user_name, filter=filter,knowledgebase_ids=knowledgebase_ids
     )
     print(f"test_get_all_memory_items: count: {len(memory_items)}")
     print(f"test_get_all_memory_items: {memory_items}")
@@ -1272,7 +1272,7 @@ if __name__ == "__main__":
     ]
     # Example filter for testing - common filter used by multiple tests
     filter_example = {
-        "or": [
+        "and": [
             {"id": "65c3a65b-78f7-4009-bc92-7ee1981deb3a"},
             {
                 "info.A": "建议从基础语法开始，多做练习项目"
@@ -1297,8 +1297,8 @@ if __name__ == "__main__":
     knowledgebase_ids = ["adimin1","adimin2","adimi3","adimin4","adimin5","adimin6"]
 
     # Run all tests - uncomment the test you want to run
-    test_search_by_embedding(graph, vector, user_name, filter_example,knowledgebase_ids)
-    # test_get_all_memory_items(graph, "LongTermMemory", False, user_name, filter_example)
+    # test_search_by_embedding(graph, vector, user_name, filter_example,knowledgebase_ids)
+    test_get_all_memory_items(graph, "LongTermMemory", False, user_name, filter_example,knowledgebase_ids)
     # test_get_by_metadata(graph, filters_example, user_name, filter_example)
 
     # Or run all tests
