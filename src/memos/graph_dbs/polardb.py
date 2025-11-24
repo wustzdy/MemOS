@@ -2293,6 +2293,7 @@ class PolarDBGraphDB(BaseGraphDB):
             user_name_where = ""
 
         filter_where_clause = ""
+        filter = self.parse_filter(filter)
         if filter:
 
             def escape_cypher_string(value: str) -> str:
