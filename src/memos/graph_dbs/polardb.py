@@ -1904,7 +1904,7 @@ class PolarDBGraphDB(BaseGraphDB):
 
         ids = []
         conn = self._get_connection()
-        print(f"get_by_metadata cypher_query: {cypher_query}")
+        print(f"get_by_metadata : {cypher_query}")
         try:
             with conn.cursor() as cursor:
                 cursor.execute(cypher_query)

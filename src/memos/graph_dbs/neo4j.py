@@ -662,6 +662,7 @@ class Neo4jGraphDB(BaseGraphDB):
             search_filter: dict | None = None,
             user_name: str | None = None,
             filter: dict | None = None,
+            knowledgebase_ids: list[str] | None = None,
             **kwargs,
     ) -> list[dict]:
         """
@@ -696,8 +697,25 @@ class Neo4jGraphDB(BaseGraphDB):
             where_clauses.append("node.memory_type = $scope")
         if status:
             where_clauses.append("node.status = $status")
+        
+        # Build user_name filter with knowledgebase_ids support (OR relationship)
+        user_name_conditions = []
         if not self.config.use_multi_db and (self.config.user_name or user_name):
-            where_clauses.append("node.user_name = $user_name")
+            user_name_conditions.append("node.user_name = $user_name")
+        
+        # Add knowledgebase_ids conditions (checking user_name field in the data)
+        if knowledgebase_ids and isinstance(knowledgebase_ids, list) and len(knowledgebase_ids) > 0:
+            for idx, kb_id in enumerate(knowledgebase_ids):
+                if isinstance(kb_id, str):
+                    param_name = f"kb_id_{idx}"
+                    user_name_conditions.append(f"node.user_name = ${param_name}")
+        
+        # Add user_name WHERE clause
+        if user_name_conditions:
+            if len(user_name_conditions) == 1:
+                where_clauses.append(user_name_conditions[0])
+            else:
+                where_clauses.append(f"({' OR '.join(user_name_conditions)})")
 
         # Add search_filter conditions
         if search_filter:
@@ -708,15 +726,50 @@ class Neo4jGraphDB(BaseGraphDB):
         filter_params = {}
         if filter:
             def build_filter_condition(condition_dict: dict, param_counter: list) -> tuple[str, dict]:
+                """Build a WHERE condition for a single filter item.
+                
+                Args:
+                    condition_dict: A dict like {"id": "xxx"} or {"A": "xxx"} or {"created_at": {"gt": "2025-11-01"}}
+                    param_counter: List to track parameter counter for unique param names
+                
+                Returns:
+                    Tuple of (condition_string, parameters_dict)
+                """
                 condition_parts = []
                 params = {}
 
                 for key, value in condition_dict.items():
-                    # All fields are stored as flat properties in Neo4j
-                    param_name = f"filter_flat_{key}_{param_counter[0]}"
-                    param_counter[0] += 1
-                    params[param_name] = value
-                    condition_parts.append(f"node.{key} = ${param_name}")
+                    # Check if value is a dict with comparison operators (gt, lt, gte, lte)
+                    if isinstance(value, dict):
+                        # Handle comparison operators: gt (greater than), lt (less than), gte (greater than or equal), lte (less than or equal)
+                        for op, op_value in value.items():
+                            if op in ("gt", "lt", "gte", "lte"):
+                                # Map operator to Cypher operator
+                                cypher_op_map = {
+                                    "gt": ">",
+                                    "lt": "<",
+                                    "gte": ">=",
+                                    "lte": "<="
+                                }
+                                cypher_op = cypher_op_map[op]
+                                
+                                # All fields are stored as flat properties in Neo4j
+                                param_name = f"filter_flat_{key}_{op}_{param_counter[0]}"
+                                param_counter[0] += 1
+                                params[param_name] = op_value
+                                
+                                # Check if field is a date field (created_at, updated_at, etc.)
+                                # Use datetime() function for date comparisons
+                                if key in ("created_at", "updated_at") or key.endswith("_at"):
+                                    condition_parts.append(f"node.{key} {cypher_op} datetime(${param_name})")
+                                else:
+                                    condition_parts.append(f"node.{key} {cypher_op} ${param_name}")
+                    else:
+                        # All fields are stored as flat properties in Neo4j (simple equality)
+                        param_name = f"filter_flat_{key}_{param_counter[0]}"
+                        param_counter[0] += 1
+                        params[param_name] = value
+                        condition_parts.append(f"node.{key} = ${param_name}")
 
                 return " AND ".join(condition_parts), params
 
@@ -759,11 +812,20 @@ class Neo4jGraphDB(BaseGraphDB):
             parameters["scope"] = scope
         if status:
             parameters["status"] = status
+        
+        # Add user_name parameter
         if not self.config.use_multi_db and (self.config.user_name or user_name):
             if kwargs.get("cube_name"):
                 parameters["user_name"] = kwargs["cube_name"]
             else:
                 parameters["user_name"] = user_name
+        
+        # Add knowledgebase_ids parameters
+        if knowledgebase_ids and isinstance(knowledgebase_ids, list) and len(knowledgebase_ids) > 0:
+            for idx, kb_id in enumerate(knowledgebase_ids):
+                if isinstance(kb_id, str):
+                    param_name = f"kb_id_{idx}"
+                    parameters[param_name] = kb_id
 
         if search_filter:
             for key, value in search_filter.items():
@@ -786,7 +848,7 @@ class Neo4jGraphDB(BaseGraphDB):
         return records
 
     def get_by_metadata(
-        self, filters: list[dict[str, Any]], user_name: str | None = None, filter: dict | None = None
+        self, filters: list[dict[str, Any]], user_name: str | None = None, filter: dict | None = None, knowledgebase_ids: list[str] | None = None
     ) -> list[str]:
         """
         TODO:
@@ -844,9 +906,24 @@ class Neo4jGraphDB(BaseGraphDB):
             else:
                 raise ValueError(f"Unsupported operator: {op}")
 
+        # Build user_name filter with knowledgebase_ids support (OR relationship)
+        user_name_conditions = []
         if not self.config.use_multi_db and (self.config.user_name or user_name):
-            where_clauses.append("n.user_name = $user_name")
-            params["user_name"] = user_name
+            user_name_conditions.append("n.user_name = $user_name")
+        
+        # Add knowledgebase_ids conditions (checking user_name field in the data)
+        if knowledgebase_ids and isinstance(knowledgebase_ids, list) and len(knowledgebase_ids) > 0:
+            for idx, kb_id in enumerate(knowledgebase_ids):
+                if isinstance(kb_id, str):
+                    param_name = f"kb_id_{idx}"
+                    user_name_conditions.append(f"n.user_name = ${param_name}")
+        
+        # Add user_name WHERE clause
+        if user_name_conditions:
+            if len(user_name_conditions) == 1:
+                where_clauses.append(user_name_conditions[0])
+            else:
+                where_clauses.append(f"({' OR '.join(user_name_conditions)})")
 
         # Add filter conditions (supports "or" and "and" logic)
         filter_params = {}
@@ -856,7 +933,7 @@ class Neo4jGraphDB(BaseGraphDB):
                 """Build a WHERE condition for a single filter item.
 
                 Args:
-                    condition_dict: A dict like {"id": "xxx"} or {"A": "xxx"}
+                    condition_dict: A dict like {"id": "xxx"} or {"A": "xxx"} or {"created_at": {"gt": "2025-11-01"}}
                     param_counter: List to track parameter counter for unique param names
 
                 Returns:
@@ -866,11 +943,37 @@ class Neo4jGraphDB(BaseGraphDB):
                 filter_params_inner = {}
 
                 for key, value in condition_dict.items():
-                    # All fields are stored as flat properties in Neo4j
-                    param_name = f"filter_meta_{key}_{param_counter[0]}"
-                    param_counter[0] += 1
-                    filter_params_inner[param_name] = value
-                    condition_parts.append(f"n.{key} = ${param_name}")
+                    # Check if value is a dict with comparison operators (gt, lt, gte, lte)
+                    if isinstance(value, dict):
+                        # Handle comparison operators: gt (greater than), lt (less than), gte (greater than or equal), lte (less than or equal)
+                        for op, op_value in value.items():
+                            if op in ("gt", "lt", "gte", "lte"):
+                                # Map operator to Cypher operator
+                                cypher_op_map = {
+                                    "gt": ">",
+                                    "lt": "<",
+                                    "gte": ">=",
+                                    "lte": "<="
+                                }
+                                cypher_op = cypher_op_map[op]
+                                
+                                # All fields are stored as flat properties in Neo4j
+                                param_name = f"filter_meta_{key}_{op}_{param_counter[0]}"
+                                param_counter[0] += 1
+                                filter_params_inner[param_name] = op_value
+                                
+                                # Check if field is a date field (created_at, updated_at, etc.)
+                                # Use datetime() function for date comparisons
+                                if key in ("created_at", "updated_at") or key.endswith("_at"):
+                                    condition_parts.append(f"n.{key} {cypher_op} datetime(${param_name})")
+                                else:
+                                    condition_parts.append(f"n.{key} {cypher_op} ${param_name}")
+                    else:
+                        # All fields are stored as flat properties in Neo4j (simple equality)
+                        param_name = f"filter_meta_{key}_{param_counter[0]}"
+                        param_counter[0] += 1
+                        filter_params_inner[param_name] = value
+                        condition_parts.append(f"n.{key} = ${param_name}")
 
                 return " AND ".join(condition_parts), filter_params_inner
 
@@ -906,6 +1009,17 @@ class Neo4jGraphDB(BaseGraphDB):
         else:
             query = "MATCH (n:Memory) RETURN n.id AS id"
 
+        # Add user_name parameter
+        if not self.config.use_multi_db and (self.config.user_name or user_name):
+            params["user_name"] = user_name
+        
+        # Add knowledgebase_ids parameters
+        if knowledgebase_ids and isinstance(knowledgebase_ids, list) and len(knowledgebase_ids) > 0:
+            for idx, kb_id in enumerate(knowledgebase_ids):
+                if isinstance(kb_id, str):
+                    param_name = f"kb_id_{idx}"
+                    params[param_name] = kb_id
+        
         # Merge filter parameters
         if filter_params:
             params.update(filter_params)
@@ -1102,7 +1216,7 @@ class Neo4jGraphDB(BaseGraphDB):
                     target_id=edge["target"],
                 )
 
-    def get_all_memory_items(self, scope: str, filter: dict | None = None, **kwargs) -> list[dict]:
+    def get_all_memory_items(self, scope: str, filter: dict | None = None, knowledgebase_ids: list[str] | None = None, **kwargs) -> list[dict]:
         """
         Retrieve all memory items of a specific memory_type.
 
@@ -1122,22 +1236,72 @@ class Neo4jGraphDB(BaseGraphDB):
         where_clauses = ["n.memory_type = $scope"]
         params = {"scope": scope}
 
+        # Build user_name filter with knowledgebase_ids support (OR relationship)
+        user_name_conditions = []
         if not self.config.use_multi_db and (self.config.user_name or user_name):
-            where_clauses.append("n.user_name = $user_name")
-            params["user_name"] = user_name
+            user_name_conditions.append("n.user_name = $user_name")
+        
+        # Add knowledgebase_ids conditions (checking user_name field in the data)
+        if knowledgebase_ids and isinstance(knowledgebase_ids, list) and len(knowledgebase_ids) > 0:
+            for idx, kb_id in enumerate(knowledgebase_ids):
+                if isinstance(kb_id, str):
+                    param_name = f"kb_id_{idx}"
+                    user_name_conditions.append(f"n.user_name = ${param_name}")
+        
+        # Add user_name WHERE clause
+        if user_name_conditions:
+            if len(user_name_conditions) == 1:
+                where_clauses.append(user_name_conditions[0])
+            else:
+                where_clauses.append(f"({' OR '.join(user_name_conditions)})")
 
         filter_params = {}
         if filter:
             def build_filter_condition(condition_dict: dict, param_counter: list) -> tuple[str, dict]:
-
+                """Build a WHERE condition for a single filter item.
+                
+                Args:
+                    condition_dict: A dict like {"id": "xxx"} or {"A": "xxx"} or {"created_at": {"gt": "2025-11-01"}}
+                    param_counter: List to track parameter counter for unique param names
+                
+                Returns:
+                    Tuple of (condition_string, parameters_dict)
+                """
                 condition_parts = []
                 filter_params_inner = {}
 
                 for key, value in condition_dict.items():
-                    param_name = f"filter_flat_{key}_{param_counter[0]}"
-                    param_counter[0] += 1
-                    filter_params_inner[param_name] = value
-                    condition_parts.append(f"n.{key} = ${param_name}")
+                    # Check if value is a dict with comparison operators (gt, lt, gte, lte)
+                    if isinstance(value, dict):
+                        # Handle comparison operators: gt (greater than), lt (less than), gte (greater than or equal), lte (less than or equal)
+                        for op, op_value in value.items():
+                            if op in ("gt", "lt", "gte", "lte"):
+                                # Map operator to Cypher operator
+                                cypher_op_map = {
+                                    "gt": ">",
+                                    "lt": "<",
+                                    "gte": ">=",
+                                    "lte": "<="
+                                }
+                                cypher_op = cypher_op_map[op]
+                                
+                                # All fields are stored as flat properties in Neo4j
+                                param_name = f"filter_flat_{key}_{op}_{param_counter[0]}"
+                                param_counter[0] += 1
+                                filter_params_inner[param_name] = op_value
+                                
+                                # Check if field is a date field (created_at, updated_at, etc.)
+                                # Use datetime() function for date comparisons
+                                if key in ("created_at", "updated_at") or key.endswith("_at"):
+                                    condition_parts.append(f"n.{key} {cypher_op} datetime(${param_name})")
+                                else:
+                                    condition_parts.append(f"n.{key} {cypher_op} ${param_name}")
+                    else:
+                        # All fields are stored as flat properties in Neo4j (simple equality)
+                        param_name = f"filter_flat_{key}_{param_counter[0]}"
+                        param_counter[0] += 1
+                        filter_params_inner[param_name] = value
+                        condition_parts.append(f"n.{key} = ${param_name}")
 
                 return " AND ".join(condition_parts), filter_params_inner
 
@@ -1164,6 +1328,17 @@ class Neo4jGraphDB(BaseGraphDB):
                                 filter_params.update(filter_params_inner)
 
         where_clause = "WHERE " + " AND ".join(where_clauses)
+
+        # Add user_name parameter
+        if not self.config.use_multi_db and (self.config.user_name or user_name):
+            params["user_name"] = user_name
+        
+        # Add knowledgebase_ids parameters
+        if knowledgebase_ids and isinstance(knowledgebase_ids, list) and len(knowledgebase_ids) > 0:
+            for idx, kb_id in enumerate(knowledgebase_ids):
+                if isinstance(kb_id, str):
+                    param_name = f"kb_id_{idx}"
+                    params[param_name] = kb_id
 
         if filter_params:
             params.update(filter_params)
