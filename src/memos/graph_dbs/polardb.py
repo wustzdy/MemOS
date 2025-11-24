@@ -1529,6 +1529,7 @@ class PolarDBGraphDB(BaseGraphDB):
                     where_clauses.append(
                         f"ag_catalog.agtype_access_operator(properties, '\"{key}\"'::agtype) = {value}::agtype"
                     )
+        filter = self.parse_filter(filter)
         if filter:
             # Helper function to escape string value for SQL
             def escape_sql_string(value: str) -> str:
@@ -3423,3 +3424,55 @@ class PolarDBGraphDB(BaseGraphDB):
         else:
             # Add double quotes
             return f'"{value}"'
+
+    def parse_filter(self, filter_dict: dict | None = None,):
+        if filter_dict is None:
+            return None
+        full_fields = {
+            "id", "key", "tags", "type", "usage", "memory", "status", "sources",
+            "user_id", "graph_id", "user_name", "background", "confidence",
+            "created_at", "session_id", "updated_at", "memory_type", "node_type", "info"
+        }
+
+        def process_condition(condition):
+
+            if not isinstance(condition, dict):
+                return condition
+
+            new_condition = {}
+
+            for key, value in condition.items():
+
+                if key.lower() in ['or', 'and']:
+                    if isinstance(value, list):
+
+                        processed_items = []
+                        for item in value:
+                            if isinstance(item, dict):
+                                processed_item = {}
+                                for item_key, item_value in item.items():
+
+                                    if item_key not in full_fields and not item_key.startswith('info.'):
+                                        new_item_key = f"info.{item_key}"
+                                    else:
+                                        new_item_key = item_key
+                                    processed_item[new_item_key] = item_value
+                                processed_items.append(processed_item)
+                            else:
+                                processed_items.append(item)
+                        new_condition[key] = processed_items
+                    else:
+                        new_condition[key] = value
+                else:
+                    if key not in full_fields and not key.startswith('info.'):
+                        new_key = f"info.{key}"
+                    else:
+                        new_key = key
+
+                    new_condition[new_key] = value
+
+            return new_condition
+
+        return process_condition(filter_dict)
+
+
