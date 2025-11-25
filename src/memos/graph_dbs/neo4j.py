@@ -45,6 +45,33 @@ def _prepare_node_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     return metadata
 
 
+def _flatten_info_fields(metadata: dict[str, Any]) -> dict[str, Any]:
+    """
+    Flatten the 'info' field in metadata to the top level.
+    
+    If metadata contains an 'info' field that is a dictionary, all its key-value pairs
+    will be moved to the top level of metadata, and the 'info' field will be removed.
+    
+    Args:
+        metadata: Dictionary that may contain an 'info' field
+        
+    Returns:
+        Dictionary with 'info' fields flattened to top level
+        
+    Example:
+        Input:  {"user_id": "xxx", "info": {"A": "value1", "B": "value2"}}
+        Output: {"user_id": "xxx", "A": "value1", "B": "value2"}
+    """
+    if "info" in metadata and isinstance(metadata["info"], dict):
+        # Copy info fields to top level
+        info_dict = metadata.pop("info")
+        for key, value in info_dict.items():
+            # Only add if key doesn't already exist at top level (to avoid overwriting)
+            if key not in metadata:
+                metadata[key] = value
+    return metadata
+
+
 class Neo4jGraphDB(BaseGraphDB):
     """Neo4j-based implementation of a graph memory store."""
 
@@ -170,12 +197,16 @@ class Neo4jGraphDB(BaseGraphDB):
     def add_node(
             self, id: str, memory: str, metadata: dict[str, Any], user_name: str | None = None
     ) -> None:
+        print("add_node metadata:",metadata)
         user_name = user_name if user_name else self.config.user_name
         if not self.config.use_multi_db and (self.config.user_name or user_name):
             metadata["user_name"] = user_name
 
         # Safely process metadata
         metadata = _prepare_node_metadata(metadata)
+        
+        # Flatten info fields to top level (for Neo4j flat structure)
+        metadata = _flatten_info_fields(metadata)
 
         # Merge node and set metadata
         created_at = metadata.pop("created_at")
@@ -193,6 +224,7 @@ class Neo4jGraphDB(BaseGraphDB):
         if metadata["sources"]:
             for idx in range(len(metadata["sources"])):
                 metadata["sources"][idx] = json.dumps(metadata["sources"][idx])
+        print("111add_node id:",id)
 
         with self.driver.session(database=self.db_name) as session:
             session.run(

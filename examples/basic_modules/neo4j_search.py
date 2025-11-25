@@ -1092,13 +1092,13 @@ if __name__ == "__main__":
     # Example filter for testing - common filter used by multiple tests
     filter_example = {
         "and": [
-            {"id": "4534c646-50fe-4f8b-9488-91992ec8af91"},
-            {"A": "湖北武当山"},
-            {"created_at": {"gt": "2025-09-19"}},
-            {"created_at": {"lt": "2025-11-22"}}
+            {"id": "33687a04-6ad0-43ca-8289-43500412ac73"},
+            {"A": "新疆乌鲁木齐市"},
+            # {"created_at": {"gt": "2025-09-19"}},
+            # {"created_at": {"lt": "2025-11-20"}}
         ]
     }
-    knowledgebase_ids = ["adimin1", "adimin2", "adimi3", "adimin4", "adimin5", "adimin6"]
+    knowledgebase_ids = ["adimin1", "adimin2"]
 
     # Example filters for get_by_metadata
     filters_example = [
@@ -1110,6 +1110,6 @@ if __name__ == "__main__":
     # Or run all tests
     user_name = "memosfeebbc2bd1744d7bb5b5ec57f38e828d"
     scope = "WorkingMemory"
-    test_search_by_embedding(graph, vector, user_name, filter_example,knowledgebase_ids)
+    # test_search_by_embedding(graph, vector, user_name, filter_example,knowledgebase_ids)
     test_get_all_memory_items(graph, scope, user_name, filter_example, knowledgebase_ids)
-    test_get_by_metadata(graph, filters_example, user_name, filter_example, knowledgebase_ids)
+    # test_get_by_metadata(graph, filters_example, user_name, filter_example, knowledgebase_ids)
