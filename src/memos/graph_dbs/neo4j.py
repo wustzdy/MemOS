@@ -197,7 +197,9 @@ class Neo4jGraphDB(BaseGraphDB):
     def add_node(
             self, id: str, memory: str, metadata: dict[str, Any], user_name: str | None = None
     ) -> None:
-        print("add_node metadata:",metadata)
+        logger.info(f"[add_node] metadata: {metadata},info: {metadata.get('info')}")
+        print(f"[add_node] metadata: {metadata},info: {metadata.get('info')}")
+
         user_name = user_name if user_name else self.config.user_name
         if not self.config.use_multi_db and (self.config.user_name or user_name):
             metadata["user_name"] = user_name
@@ -906,6 +908,8 @@ class Neo4jGraphDB(BaseGraphDB):
             - Supports structured querying such as tag/category/importance/time filtering.
             - Can be used for faceted recall or prefiltering before embedding rerank.
         """
+        logger.info(f"[get_by_metadata] filters: {filters},user_name: {user_name},filter: {filter},knowledgebase_ids: {knowledgebase_ids}")
+        print(f"[get_by_metadata] filters: {filters},user_name: {user_name},filter: {filter},knowledgebase_ids: {knowledgebase_ids}")
         user_name = user_name if user_name else self.config.user_name
         where_clauses = []
         params = {}
@@ -1055,8 +1059,8 @@ class Neo4jGraphDB(BaseGraphDB):
         # Merge filter parameters
         if filter_params:
             params.update(filter_params)
-        print("1111111query:", query)
-        print("1111111params:", params)
+        logger.info(f"[get_by_metadata] query: {query},params: {params}")
+        print(f"[get_by_metadata] query: {query},params: {params}")
 
         with self.driver.session(database=self.db_name) as session:
             result = session.run(query, params)
@@ -1261,6 +1265,9 @@ class Neo4jGraphDB(BaseGraphDB):
         Returns:
             list[dict]: Full list of memory items under this scope.
         """
+        logger.info(f"[get_all_memory_items] scope: {scope},filter: {filter},knowledgebase_ids: {knowledgebase_ids}")
+        print(f"[get_all_memory_items] scope: {scope},filter: {filter},knowledgebase_ids: {knowledgebase_ids}")
+
         user_name = kwargs.get("user_name") if kwargs.get("user_name") else self.config.user_name
         if scope not in {"WorkingMemory", "LongTermMemory", "UserMemory", "OuterMemory"}:
             raise ValueError(f"Unsupported memory type scope: {scope}")
@@ -1380,7 +1387,9 @@ class Neo4jGraphDB(BaseGraphDB):
             {where_clause}
             RETURN n
             """
-        print("999999991111111query:", query)
+        logger.info(f"[get_all_memory_items] query: {query},params: {params}")
+        print(f"[get_all_memory_items] query: {query},params: {params}")
+
         with self.driver.session(database=self.db_name) as session:
             results = session.run(query, params)
             return [self._parse_node(dict(record["n"])) for record in results]

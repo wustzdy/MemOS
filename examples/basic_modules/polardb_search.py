@@ -1272,36 +1272,35 @@ if __name__ == "__main__":
     ]
     # Example filter for testing - common filter used by multiple tests
     filter_example = {
-        "or": [
-            {"id": "65c3a65b-78f7-4009-bc92-7ee1981deb3a"},
-            {
-                # "info.A": "建议从基础语法开始，多做练习项目",
-                "A": "建议从基础语法开始，多做练习项目"
-            },
-            {
-                # "info.B": "用户询问如何学习Python编程，助手建议从基础语法开始，并通过多做练习项目来提高技能。"
-                "B": "用户询问如何学习Python编程，助手建议从基础语法开始，并通过多做练习项目来提高技能。"
-            },
-            {"created_at":{"gt":"2025-09-19"}},
-            {"created_at": {"lt": "2025-11-12"}}
+        "and": [
+            {"id": "45a4f936-2182-44c6-8c4f-4a9476941e51"},
+            # {
+            #     "A": "新疆乌鲁木齐市"
+            # },
+            # {
+            #     "B": "用户询问如何学习Python编程，助手建议从基础语法开始，并通过多做练习项目来提高技能。"
+            # },
+            # {"created_at":{"gt":"2025-09-19"}},
+            # {"created_at": {"lt": "2025-11-12"}}
         ]
     }
 
     # Example filters for get_by_metadata
     filters_example = [
-        {"field": "tags", "op": "contains", "value": "Python"},
+        {"field": "tags", "op": "contains", "value": "mode:fast"},
     ]
 
     # Create connection once - shared by all tests
     graph = getPolarDb()
     user_name = "adimin"
     scope = "WorkingMemory"
-    knowledgebase_ids = ["adimin1","adimin2","adimi3","adimin4","adimin5","adimin6"]
+    knowledgebase_ids = ["memosfeebbc2bd1744d7bb5b5ec57f38e828d","adimin2"]
 
     # Run all tests - uncomment the test you want to run
-    test_search_by_embedding(graph, vector, user_name, filter_example,knowledgebase_ids)
-    # test_get_all_memory_items(graph, "LongTermMemory", False, user_name, filter_example,knowledgebase_ids)
+    # test_search_by_embedding(graph, vector, user_name, filter_example,knowledgebase_ids)
+    # test_get_all_memory_items(graph, "WorkingMemory", False, user_name, filter_example,knowledgebase_ids)
     # test_get_by_metadata(graph, filters_example, user_name, filter_example,knowledgebase_ids)
+    test_get_by_metadata(graph, filters_example, user_name, filter_example,knowledgebase_ids)
 
     # Or run all tests
 

@@ -1092,8 +1092,8 @@ if __name__ == "__main__":
     # Example filter for testing - common filter used by multiple tests
     filter_example = {
         "and": [
-            {"id": "33687a04-6ad0-43ca-8289-43500412ac73"},
-            {"A": "新疆乌鲁木齐市"},
+            {"id": "cfe42bd6-ee78-4f6f-b997-8baa0ea957e1"},
+            # {"A": "新疆乌鲁木齐市"},
             # {"created_at": {"gt": "2025-09-19"}},
             # {"created_at": {"lt": "2025-11-20"}}
         ]
@@ -1109,7 +1109,7 @@ if __name__ == "__main__":
 
     # Or run all tests
     user_name = "memosfeebbc2bd1744d7bb5b5ec57f38e828d"
-    scope = "WorkingMemory"
+    scope = "LongTermMemory"
     # test_search_by_embedding(graph, vector, user_name, filter_example,knowledgebase_ids)
-    test_get_all_memory_items(graph, scope, user_name, filter_example, knowledgebase_ids)
-    # test_get_by_metadata(graph, filters_example, user_name, filter_example, knowledgebase_ids)
+    # test_get_all_memory_items(graph, scope, user_name, filter_example, knowledgebase_ids)
+    test_get_by_metadata(graph, filters_example, user_name, filter_example, knowledgebase_ids)
