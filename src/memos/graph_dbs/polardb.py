@@ -1733,6 +1733,9 @@ class PolarDBGraphDB(BaseGraphDB):
         Returns:
             list[str]: Node IDs whose metadata match the filter conditions. (AND logic).
         """
+        logger.info(f"[get_by_metadata] filter: {filter}, knowledgebase_ids: {knowledgebase_ids}")
+        print(f"[get_by_metadata] filter: {filter}, knowledgebase_ids: {knowledgebase_ids}")
+
         user_name = user_name if user_name else self._get_config_value("user_name")
 
         # Build WHERE conditions for cypher query
@@ -1904,7 +1907,8 @@ class PolarDBGraphDB(BaseGraphDB):
 
         ids = []
         conn = self._get_connection()
-        print(f"get_by_metadata : {cypher_query}")
+        logger.info(f"[get_by_metadata] cypher_query: {cypher_query}")
+        print(f"[get_by_metadata] cypher_query: {cypher_query}")
         try:
             with conn.cursor() as cursor:
                 cursor.execute(cypher_query)
@@ -2328,6 +2332,9 @@ class PolarDBGraphDB(BaseGraphDB):
         Returns:
             list[dict]: Full list of memory items under this scope.
         """
+        logger.info(f"[get_all_memory_items] filter: {filter}, knowledgebase_ids: {knowledgebase_ids}")
+        print(f"[get_all_memory_items] filter: {filter}, knowledgebase_ids: {knowledgebase_ids}")
+
         user_name = user_name if user_name else self._get_config_value("user_name")
         if scope not in {"WorkingMemory", "LongTermMemory", "UserMemory", "OuterMemory"}:
             raise ValueError(f"Unsupported memory type scope: {scope}")
@@ -2512,7 +2519,7 @@ class PolarDBGraphDB(BaseGraphDB):
                 where_clause = " AND ".join(where_parts) + filter_where_clause
             else:
                 where_clause = " AND ".join(where_parts)
-            
+
             cypher_query = f"""
                    SELECT * FROM cypher('{self.db_name}_graph', $$
                    MATCH (n:Memory)
@@ -2524,7 +2531,8 @@ class PolarDBGraphDB(BaseGraphDB):
 
             nodes = []
             conn = self._get_connection()
-            print("1111111cypher_query:", cypher_query)
+            logger.info(f"[get_all_memory_items] cypher_query: {cypher_query}")
+            print(f"[get_all_memory_items] cypher_query: {cypher_query}")
             try:
                 with conn.cursor() as cursor:
                     cursor.execute(cypher_query)
@@ -2899,7 +2907,9 @@ class PolarDBGraphDB(BaseGraphDB):
         self, id: str, memory: str, metadata: dict[str, Any], user_name: str | None = None
     ) -> None:
         """Add a memory node to the graph."""
-        logger.info(f"In add node polardb: id-{id} memory-{memory}")
+        logger.info(f"[add_node] id: {id}, memory: {memory}, metadata: {metadata}")
+        print(f"[add_node] metadata: {metadata}, info: {metadata.get('info')}")
+
 
         # user_name comes from metadata; fallback to config if missing
         metadata["user_name"] = user_name if user_name else self.config.user_name
@@ -2981,6 +2991,8 @@ class PolarDBGraphDB(BaseGraphDB):
                     cursor.execute(
                         insert_query, (id, json.dumps(properties), json.dumps(embedding_vector))
                     )
+                    logger.info(f"[add_node] [embedding_vector-true] insert_query: {insert_query}, properties: {json.dumps(properties)}")
+                    print(f"[add_node] [embedding_vector-true] insert_query: {insert_query}, properties: {json.dumps(properties)}")
                 else:
                     insert_query = f"""
                         INSERT INTO {self.db_name}_graph."Memory"(id, properties)
@@ -2990,7 +3002,9 @@ class PolarDBGraphDB(BaseGraphDB):
                         )
                     """
                     cursor.execute(insert_query, (id, json.dumps(properties)))
-                    logger.info(f"Added node {id} to graph '{self.db_name}_graph'.")
+                    logger.info(f"[add_node] [embedding_vector-false] insert_query: {insert_query}, properties: {json.dumps(properties)}")
+                    print(f"[add_node] [embedding_vector-false] insert_query: {insert_query}, properties: {json.dumps(properties)}")
+
         finally:
             logger.info(f"In add node polardb: id-{id} memory-{memory} query-{insert_query}")
             self._return_connection(conn)
