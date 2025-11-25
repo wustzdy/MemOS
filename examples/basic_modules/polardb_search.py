@@ -1272,16 +1272,16 @@ if __name__ == "__main__":
     ]
     # Example filter for testing - common filter used by multiple tests
     filter_example = {
-        "and": [
+        "or": [
             {"id": "45a4f936-2182-44c6-8c4f-4a9476941e51"},
-            # {
-            #     "A": "新疆乌鲁木齐市"
-            # },
-            # {
-            #     "B": "用户询问如何学习Python编程，助手建议从基础语法开始，并通过多做练习项目来提高技能。"
-            # },
-            # {"created_at":{"gt":"2025-09-19"}},
-            # {"created_at": {"lt": "2025-11-12"}}
+            {
+                "A": "广西狗肉"
+            },
+            {
+                "B": "广西啤酒鸭"
+            },
+            {"created_at":{"gt":"2025-09-19"}},
+            {"created_at": {"lt": "2025-11-12"}}
         ]
     }
 
