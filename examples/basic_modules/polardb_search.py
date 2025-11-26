@@ -1272,16 +1272,17 @@ if __name__ == "__main__":
     ]
     # Example filter for testing - common filter used by multiple tests
     filter_example = {
-        "or": [
+        "and": [
             {"id": "45a4f936-2182-44c6-8c4f-4a9476941e51"},
             {
-                "A": "广西狗肉"
+                "A": "中国广西"
             },
             {
-                "B": "广西啤酒鸭"
+                "B": "狗肉"
             },
             {"created_at":{"gt":"2025-09-19"}},
-            {"created_at": {"lt": "2025-11-12"}}
+            {"created_at": {"lt": "2025-11-26"}},
+            # {"tags": {"=": "mode:fast"}}
         ]
     }
 
@@ -1297,10 +1298,9 @@ if __name__ == "__main__":
     knowledgebase_ids = ["memosfeebbc2bd1744d7bb5b5ec57f38e828d","adimin2"]
 
     # Run all tests - uncomment the test you want to run
-    # test_search_by_embedding(graph, vector, user_name, filter_example,knowledgebase_ids)
+    test_search_by_embedding(graph, vector, user_name, filter_example,knowledgebase_ids)
     # test_get_all_memory_items(graph, "WorkingMemory", False, user_name, filter_example,knowledgebase_ids)
     # test_get_by_metadata(graph, filters_example, user_name, filter_example,knowledgebase_ids)
-    test_get_by_metadata(graph, filters_example, user_name, filter_example,knowledgebase_ids)
 
     # Or run all tests
 

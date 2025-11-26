@@ -1118,7 +1118,7 @@ class PolarDBGraphDB(BaseGraphDB):
             return edges
 
     def get_neighbors(
-        self, id: str, type: str, direction: Literal["in", "out", "both"] = "out"
+            self, id: str, type: str, direction: Literal["in", "out", "both"] = "out"
     ) -> list[str]:
         """Get connected node IDs in a specific direction and relationship type."""
         raise NotImplementedError
@@ -1493,24 +1493,13 @@ class PolarDBGraphDB(BaseGraphDB):
         #     else:
         #         where_clauses.append(f"ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = '\"{user_name}\"'::agtype")
         """
-        # Build user_name filter with knowledgebase_ids support (OR relationship)
-        user_name_conditions = []
-        
-        # Add original user_name condition if provided
-        user_name = user_name if user_name else self.config.user_name
-        if user_name:
-            user_name_conditions.append(
-                f"ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = '\"{user_name}\"'::agtype"
-            )
-        
-        # Add knowledgebase_ids conditions (checking user_name field in the data)
-        if knowledgebase_ids and isinstance(knowledgebase_ids, list) and len(knowledgebase_ids) > 0:
-            for kb_id in knowledgebase_ids:
-                if isinstance(kb_id, str):
-                    user_name_conditions.append(
-                        f"ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = '\"{kb_id}\"'::agtype"
-                    )
-        
+        # Build user_name filter with knowledgebase_ids support (OR relationship) using common method
+        user_name_conditions = self._build_user_name_and_kb_ids_conditions_sql(
+            user_name=user_name,
+            knowledgebase_ids=knowledgebase_ids,
+            default_user_name=self.config.user_name,
+        )
+
         # Add OR condition if we have any user_name conditions
         if user_name_conditions:
             if len(user_name_conditions) == 1:
@@ -1529,117 +1518,10 @@ class PolarDBGraphDB(BaseGraphDB):
                     where_clauses.append(
                         f"ag_catalog.agtype_access_operator(properties, '\"{key}\"'::agtype) = {value}::agtype"
                     )
-        filter = self.parse_filter(filter)
-        if filter:
-            # Helper function to escape string value for SQL
-            def escape_sql_string(value: str) -> str:
-                """Escape single quotes in SQL string."""
-                return value.replace("'", "''")
 
-            # Helper function to build a single filter condition
-            def build_filter_condition(condition_dict: dict) -> str:
-                """Build a WHERE condition for a single filter item.
-
-                Args:
-                    condition_dict: A dict like {"id": "xxx"} or {"info.B": "xxx"} or {"created_at": {"gt": "2025-11-01"}}
-
-                Returns:
-                    SQL condition string
-                """
-                condition_parts = []
-                for key, value in condition_dict.items():
-                    # Check if value is a dict with comparison operators (gt, lt, gte, lte)
-                    if isinstance(value, dict):
-                        # Handle comparison operators: gt (greater than), lt (less than), gte (greater than or equal), lte (less than or equal)
-                        for op, op_value in value.items():
-                            if op in ("gt", "lt", "gte", "lte"):
-                                # Map operator to SQL operator
-                                sql_op_map = {
-                                    "gt": ">",
-                                    "lt": "<",
-                                    "gte": ">=",
-                                    "lte": "<="
-                                }
-                                sql_op = sql_op_map[op]
-                                
-                                # Check if key starts with "info." prefix (for nested fields like info.A, info.B)
-                                # For direct properties like "created_at", this condition will be False
-                                if key.startswith("info."):
-                                    # Nested field access: properties->'info'->'field_name'
-                                    info_field = key[5:]  # Remove "info." prefix
-                                    if isinstance(op_value, str):
-                                        escaped_value = escape_sql_string(op_value)
-                                        condition_parts.append(
-                                            f"ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '\"info\"'::ag_catalog.agtype, '\"{info_field}\"'::ag_catalog.agtype]) {sql_op} '\"{escaped_value}\"'::agtype"
-                                        )
-                                    else:
-                                        condition_parts.append(
-                                            f"ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '\"info\"'::ag_catalog.agtype, '\"{info_field}\"'::ag_catalog.agtype]) {sql_op} {op_value}::agtype"
-                                        )
-                                else:
-                                    # Direct property access (e.g., "created_at" is directly in properties, not in properties.info)
-                                    # This handles fields like created_at, updated_at, etc. that are at the top level of properties
-                                    if isinstance(op_value, str):
-                                        escaped_value = escape_sql_string(op_value)
-                                        condition_parts.append(
-                                            f"ag_catalog.agtype_access_operator(properties, '\"{key}\"'::agtype) {sql_op} '\"{escaped_value}\"'::agtype"
-                                        )
-                                    else:
-                                        condition_parts.append(
-                                            f"ag_catalog.agtype_access_operator(properties, '\"{key}\"'::agtype) {sql_op} {op_value}::agtype"
-                                        )
-                    # Check if key starts with "info." prefix (for simple equality)
-                    elif key.startswith("info."):
-                        # Extract the field name after "info."
-                        info_field = key[5:]  # Remove "info." prefix (5 characters)
-                        # Match in info field: properties->'info'->'B'
-                        # For nested access, use agtype_access_operator with nested structure
-                        if isinstance(value, str):
-                            escaped_value = escape_sql_string(value)
-                            # Access nested field: properties->'info'->'B'
-                            # First get info object, then get the field inside it
-                            condition_parts.append(
-                                # f"ag_catalog.agtype_access_operator(ag_catalog.agtype_access_operator(properties, '\"info\"'::agtype), '\"{info_field}\"'::agtype) = '\"{escaped_value}\"'::agtype"
-                                f"ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '\"info\"'::ag_catalog.agtype, '\"{info_field}\"'::ag_catalog.agtype]) = '\"{escaped_value}\"'::agtype"
-                            )
-                        else:
-                            condition_parts.append(
-                                # f"ag_catalog.agtype_access_operator(ag_catalog.agtype_access_operator(properties, '\"info\"'::agtype), '\"{info_field}\"'::agtype) = {value}::agtype"
-                                f"ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '\"info\"'::ag_catalog.agtype, '\"{info_field}\"'::ag_catalog.agtype]) = '\"{value}\"'::agtype"
-                            )
-                    else:
-                        # Direct property access (simple equality)
-                        if isinstance(value, str):
-                            escaped_value = escape_sql_string(value)
-                            condition_parts.append(
-                                f"ag_catalog.agtype_access_operator(properties, '\"{key}\"'::agtype) = '\"{escaped_value}\"'::agtype"
-                            )
-                        else:
-                            condition_parts.append(
-                                f"ag_catalog.agtype_access_operator(properties, '\"{key}\"'::agtype) = {value}::agtype"
-                            )
-                return " AND ".join(condition_parts)
-
-            # Process filter structure
-            if isinstance(filter, dict):
-                if "or" in filter:
-                    # OR logic: at least one condition must match
-                    or_conditions = []
-                    for condition in filter["or"]:
-                        if isinstance(condition, dict):
-                            condition_str = build_filter_condition(condition)
-                            if condition_str:
-                                or_conditions.append(f"({condition_str})")
-                    if or_conditions:
-                        where_clauses.append(f"({' OR '.join(or_conditions)})")
-
-                elif "and" in filter:
-                    # AND logic: all conditions must match
-                    for condition in filter["and"]:
-                        if isinstance(condition, dict):
-                            condition_str = build_filter_condition(condition)
-                            if condition_str:
-                                where_clauses.append(f"({condition_str})")
+        # Build filter conditions using common method
+        filter_conditions = self._build_filter_conditions_sql(filter)
+        where_clauses.extend(filter_conditions)
 
         where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
@@ -1663,11 +1545,10 @@ class PolarDBGraphDB(BaseGraphDB):
         params = [vector]
         logger.debug(f"search_by_embedding query: {query}")
         logger.debug(f"search_by_embedding params: {params}")
-        
+
         # Format SQL query for better console display (prevent truncation)
         print("=== SQL Query ===")
-        #print(query)
-
+        # print(query)
 
         # Split query by lines and wrap long lines to prevent terminal truncation
         query_lines = query.strip().split('\n')
@@ -1786,19 +1667,13 @@ class PolarDBGraphDB(BaseGraphDB):
             else:
                 raise ValueError(f"Unsupported operator: {op}")
 
-        # Build user_name filter with knowledgebase_ids support (OR relationship)
-        user_name_conditions = []
-        if user_name:
-            escaped_user_name = user_name.replace("'", "''")
-            user_name_conditions.append(f"n.user_name = '{escaped_user_name}'")
-        
-        # Add knowledgebase_ids conditions (checking user_name field in the data)
-        if knowledgebase_ids and isinstance(knowledgebase_ids, list) and len(knowledgebase_ids) > 0:
-            for kb_id in knowledgebase_ids:
-                if isinstance(kb_id, str):
-                    escaped_kb_id = kb_id.replace("'", "''")
-                    user_name_conditions.append(f"n.user_name = '{escaped_kb_id}'")
-        
+        # Build user_name filter with knowledgebase_ids support (OR relationship) using common method
+        user_name_conditions = self._build_user_name_and_kb_ids_conditions_cypher(
+            user_name=user_name,
+            knowledgebase_ids=knowledgebase_ids,
+            default_user_name=self._get_config_value("user_name"),
+        )
+
         # Add user_name WHERE clause
         if user_name_conditions:
             if len(user_name_conditions) == 1:
@@ -1806,93 +1681,8 @@ class PolarDBGraphDB(BaseGraphDB):
             else:
                 where_conditions.append(f"({' OR '.join(user_name_conditions)})")
 
-        filter_where_clause = ""
-        filter = self.parse_filter(filter)
-        if filter:
-
-            def escape_cypher_string(value: str) -> str:
-                return value.replace("'", "\\'")
-
-            def build_cypher_filter_condition(condition_dict: dict) -> str:
-                """Build a Cypher WHERE condition for a single filter item.
-                
-                Args:
-                    condition_dict: A dict like {"id": "xxx"} or {"info.B": "xxx"} or {"created_at": {"gt": "2025-11-01"}}
-                
-                Returns:
-                    Cypher condition string
-                """
-                condition_parts = []
-                for key, value in condition_dict.items():
-                    # Check if value is a dict with comparison operators (gt, lt, gte, lte)
-                    if isinstance(value, dict):
-                        # Handle comparison operators: gt (greater than), lt (less than), gte (greater than or equal), lte (less than or equal)
-                        for op, op_value in value.items():
-                            if op in ("gt", "lt", "gte", "lte"):
-                                # Map operator to Cypher operator
-                                cypher_op_map = {
-                                    "gt": ">",
-                                    "lt": "<",
-                                    "gte": ">=",
-                                    "lte": "<="
-                                }
-                                cypher_op = cypher_op_map[op]
-                                
-                                # Check if key starts with "info." prefix (for nested fields like info.A, info.B)
-                                # For direct properties like "created_at", this condition will be False
-                                if key.startswith("info."):
-                                    # Nested field access: n.info.field_name
-                                    info_field = key[5:]  # Remove "info." prefix
-                                    if isinstance(op_value, str):
-                                        escaped_value = escape_cypher_string(op_value)
-                                        condition_parts.append(f"n.info.{info_field} {cypher_op} '{escaped_value}'")
-                                    else:
-                                        condition_parts.append(f"n.info.{info_field} {cypher_op} {op_value}")
-                                else:
-                                    # Direct property access (e.g., "created_at" is directly in n, not in n.info)
-                                    # This handles fields like created_at, updated_at, etc. that are at the top level
-                                    if isinstance(op_value, str):
-                                        escaped_value = escape_cypher_string(op_value)
-                                        condition_parts.append(f"n.{key} {cypher_op} '{escaped_value}'")
-                                    else:
-                                        condition_parts.append(f"n.{key} {cypher_op} {op_value}")
-                    # Check if key starts with "info." prefix (for simple equality)
-                    elif key.startswith("info."):
-                        info_field = key[5:]
-                        if isinstance(value, str):
-                            escaped_value = escape_cypher_string(value)
-                            condition_parts.append(f"n.info.{info_field} = '{escaped_value}'")
-                        else:
-                            condition_parts.append(f"n.info.{info_field} = {value}")
-                    else:
-                        # Direct property access (simple equality)
-                        if isinstance(value, str):
-                            escaped_value = escape_cypher_string(value)
-                            condition_parts.append(f"n.{key} = '{escaped_value}'")
-                        else:
-                            condition_parts.append(f"n.{key} = {value}")
-                return " AND ".join(condition_parts)
-
-            if isinstance(filter, dict):
-                if "or" in filter:
-                    or_conditions = []
-                    for condition in filter["or"]:
-                        if isinstance(condition, dict):
-                            condition_str = build_cypher_filter_condition(condition)
-                            if condition_str:
-                                or_conditions.append(f"({condition_str})")
-                    if or_conditions:
-                        filter_where_clause = " AND " + f"({' OR '.join(or_conditions)})"
-
-                elif "and" in filter:
-                    and_conditions = []
-                    for condition in filter["and"]:
-                        if isinstance(condition, dict):
-                            condition_str = build_cypher_filter_condition(condition)
-                            if condition_str:
-                                and_conditions.append(f"({condition_str})")
-                    if and_conditions:
-                        filter_where_clause = " AND " + " AND ".join(and_conditions)
+        # Build filter conditions using common method
+        filter_where_clause = self._build_filter_conditions_cypher(filter)
 
         where_str = " AND ".join(where_conditions) + filter_where_clause
 
@@ -2339,18 +2129,13 @@ class PolarDBGraphDB(BaseGraphDB):
         if scope not in {"WorkingMemory", "LongTermMemory", "UserMemory", "OuterMemory"}:
             raise ValueError(f"Unsupported memory type scope: {scope}")
 
-        # Build user_name filter with knowledgebase_ids support (OR relationship)
-        user_name_conditions = []
-        if user_name:
-            user_name_conditions.append(f"n.user_name = '{user_name}'")
-        
-        # Add knowledgebase_ids conditions (checking user_name field in the data)
-        if knowledgebase_ids and isinstance(knowledgebase_ids, list) and len(knowledgebase_ids) > 0:
-            for kb_id in knowledgebase_ids:
-                if isinstance(kb_id, str):
-                    escaped_kb_id = kb_id.replace("'", "\\'")
-                    user_name_conditions.append(f"n.user_name = '{escaped_kb_id}'")
-        
+        # Build user_name filter with knowledgebase_ids support (OR relationship) using common method
+        user_name_conditions = self._build_user_name_and_kb_ids_conditions_cypher(
+            user_name=user_name,
+            knowledgebase_ids=knowledgebase_ids,
+            default_user_name=self._get_config_value("user_name"),
+        )
+
         # Build user_name WHERE clause
         if user_name_conditions:
             if len(user_name_conditions) == 1:
@@ -2360,94 +2145,8 @@ class PolarDBGraphDB(BaseGraphDB):
         else:
             user_name_where = ""
 
-        filter_where_clause = ""
-        filter = self.parse_filter(filter)
-        if filter:
-
-            def escape_cypher_string(value: str) -> str:
-                """Escape single quotes in Cypher string."""
-                return value.replace("'", "\\'")
-
-            def build_cypher_filter_condition(condition_dict: dict) -> str:
-                """Build a Cypher WHERE condition for a single filter item.
-                
-                Args:
-                    condition_dict: A dict like {"id": "xxx"} or {"info.B": "xxx"} or {"created_at": {"gt": "2025-11-01"}}
-                
-                Returns:
-                    Cypher condition string
-                """
-                condition_parts = []
-                for key, value in condition_dict.items():
-                    # Check if value is a dict with comparison operators (gt, lt, gte, lte)
-                    if isinstance(value, dict):
-                        # Handle comparison operators: gt (greater than), lt (less than), gte (greater than or equal), lte (less than or equal)
-                        for op, op_value in value.items():
-                            if op in ("gt", "lt", "gte", "lte"):
-                                # Map operator to Cypher operator
-                                cypher_op_map = {
-                                    "gt": ">",
-                                    "lt": "<",
-                                    "gte": ">=",
-                                    "lte": "<="
-                                }
-                                cypher_op = cypher_op_map[op]
-                                
-                                # Check if key starts with "info." prefix (for nested fields like info.A, info.B)
-                                # For direct properties like "created_at", this condition will be False
-                                if key.startswith("info."):
-                                    # Nested field access: n.info.field_name
-                                    info_field = key[5:]  # Remove "info." prefix
-                                    if isinstance(op_value, str):
-                                        escaped_value = escape_cypher_string(op_value)
-                                        condition_parts.append(f"n.info.{info_field} {cypher_op} '{escaped_value}'")
-                                    else:
-                                        condition_parts.append(f"n.info.{info_field} {cypher_op} {op_value}")
-                                else:
-                                    # Direct property access (e.g., "created_at" is directly in n, not in n.info)
-                                    # This handles fields like created_at, updated_at, etc. that are at the top level
-                                    if isinstance(op_value, str):
-                                        escaped_value = escape_cypher_string(op_value)
-                                        condition_parts.append(f"n.{key} {cypher_op} '{escaped_value}'")
-                                    else:
-                                        condition_parts.append(f"n.{key} {cypher_op} {op_value}")
-                    # Check if key starts with "info." prefix (for simple equality)
-                    elif key.startswith("info."):
-                        info_field = key[5:]
-                        if isinstance(value, str):
-                            escaped_value = escape_cypher_string(value)
-                            condition_parts.append(f"n.info.{info_field} = '{escaped_value}'")
-                        else:
-                            condition_parts.append(f"n.info.{info_field} = {value}")
-                    else:
-                        # Direct property access (simple equality)
-                        if isinstance(value, str):
-                            escaped_value = escape_cypher_string(value)
-                            condition_parts.append(f"n.{key} = '{escaped_value}'")
-                        else:
-                            condition_parts.append(f"n.{key} = {value}")
-                return " AND ".join(condition_parts)
-
-            if isinstance(filter, dict):
-                if "or" in filter:
-                    or_conditions = []
-                    for condition in filter["or"]:
-                        if isinstance(condition, dict):
-                            condition_str = build_cypher_filter_condition(condition)
-                            if condition_str:
-                                or_conditions.append(f"({condition_str})")
-                    if or_conditions:
-                        filter_where_clause = " AND " + f"({' OR '.join(or_conditions)})"
-
-                elif "and" in filter:
-                    and_conditions = []
-                    for condition in filter["and"]:
-                        if isinstance(condition, dict):
-                            condition_str = build_cypher_filter_condition(condition)
-                            if condition_str:
-                                and_conditions.append(f"({condition_str})")
-                    if and_conditions:
-                        filter_where_clause = " AND " + " AND ".join(and_conditions)
+        # Build filter conditions using common method
+        filter_where_clause = self._build_filter_conditions_cypher(filter)
 
         # Use cypher query to retrieve memory items
         if include_embedding:
@@ -3501,7 +3200,282 @@ class PolarDBGraphDB(BaseGraphDB):
             # Add double quotes
             return f'"{value}"'
 
-    def parse_filter(self, filter_dict: dict | None = None,):
+    def _build_user_name_and_kb_ids_conditions_cypher(
+            self,
+            user_name: str | None,
+            knowledgebase_ids: list | None,
+            default_user_name: str | None = None,
+    ) -> list[str]:
+        """
+        Build user_name and knowledgebase_ids conditions for Cypher queries.
+
+        Args:
+            user_name: User name for filtering
+            knowledgebase_ids: List of knowledgebase IDs
+            default_user_name: Default user name from config if user_name is None
+
+        Returns:
+            List of condition strings (will be joined with OR)
+        """
+        user_name_conditions = []
+        effective_user_name = user_name if user_name else default_user_name
+
+        if effective_user_name:
+            escaped_user_name = effective_user_name.replace("'", "''")
+            user_name_conditions.append(f"n.user_name = '{escaped_user_name}'")
+
+        # Add knowledgebase_ids conditions (checking user_name field in the data)
+        if knowledgebase_ids and isinstance(knowledgebase_ids, list) and len(knowledgebase_ids) > 0:
+            for kb_id in knowledgebase_ids:
+                if isinstance(kb_id, str):
+                    escaped_kb_id = kb_id.replace("'", "''")
+                    user_name_conditions.append(f"n.user_name = '{escaped_kb_id}'")
+
+        return user_name_conditions
+
+    def _build_user_name_and_kb_ids_conditions_sql(
+            self,
+            user_name: str | None,
+            knowledgebase_ids: list | None,
+            default_user_name: str | None = None,
+    ) -> list[str]:
+        """
+        Build user_name and knowledgebase_ids conditions for SQL queries.
+
+        Args:
+            user_name: User name for filtering
+            knowledgebase_ids: List of knowledgebase IDs
+            default_user_name: Default user name from config if user_name is None
+
+        Returns:
+            List of condition strings (will be joined with OR)
+        """
+        user_name_conditions = []
+        effective_user_name = user_name if user_name else default_user_name
+
+        if effective_user_name:
+            user_name_conditions.append(
+                f"ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = '\"{effective_user_name}\"'::agtype"
+            )
+
+        # Add knowledgebase_ids conditions (checking user_name field in the data)
+        if knowledgebase_ids and isinstance(knowledgebase_ids, list) and len(knowledgebase_ids) > 0:
+            for kb_id in knowledgebase_ids:
+                if isinstance(kb_id, str):
+                    user_name_conditions.append(
+                        f"ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = '\"{kb_id}\"'::agtype"
+                    )
+
+        return user_name_conditions
+
+    def _build_filter_conditions_cypher(
+            self,
+            filter: dict | None,
+    ) -> str:
+        """
+        Build filter conditions for Cypher queries.
+
+        Args:
+            filter: Filter dictionary with "or" or "and" logic
+
+        Returns:
+            Filter WHERE clause string (empty string if no filter)
+        """
+        filter_where_clause = ""
+        filter = self.parse_filter(filter)
+        if filter:
+
+            def escape_cypher_string(value: str) -> str:
+                return value.replace("'", "\\'")
+
+            def build_cypher_filter_condition(condition_dict: dict) -> str:
+                """Build a Cypher WHERE condition for a single filter item."""
+                condition_parts = []
+                for key, value in condition_dict.items():
+                    # Check if value is a dict with comparison operators (gt, lt, gte, lte)
+                    if isinstance(value, dict):
+                        # Handle comparison operators: gt (greater than), lt (less than), gte (greater than or equal), lte (less than or equal)
+                        for op, op_value in value.items():
+                            if op in ("gt", "lt", "gte", "lte"):
+                                # Map operator to Cypher operator
+                                cypher_op_map = {
+                                    "gt": ">",
+                                    "lt": "<",
+                                    "gte": ">=",
+                                    "lte": "<="
+                                }
+                                cypher_op = cypher_op_map[op]
+
+                                # Check if key starts with "info." prefix (for nested fields like info.A, info.B)
+                                if key.startswith("info."):
+                                    # Nested field access: n.info.field_name
+                                    info_field = key[5:]  # Remove "info." prefix
+                                    if isinstance(op_value, str):
+                                        escaped_value = escape_cypher_string(op_value)
+                                        condition_parts.append(f"n.info.{info_field} {cypher_op} '{escaped_value}'")
+                                    else:
+                                        condition_parts.append(f"n.info.{info_field} {cypher_op} {op_value}")
+                                else:
+                                    # Direct property access (e.g., "created_at" is directly in n, not in n.info)
+                                    if isinstance(op_value, str):
+                                        escaped_value = escape_cypher_string(op_value)
+                                        condition_parts.append(f"n.{key} {cypher_op} '{escaped_value}'")
+                                    else:
+                                        condition_parts.append(f"n.{key} {cypher_op} {op_value}")
+                    # Check if key starts with "info." prefix (for simple equality)
+                    elif key.startswith("info."):
+                        info_field = key[5:]
+                        if isinstance(value, str):
+                            escaped_value = escape_cypher_string(value)
+                            condition_parts.append(f"n.info.{info_field} = '{escaped_value}'")
+                        else:
+                            condition_parts.append(f"n.info.{info_field} = {value}")
+                    else:
+                        # Direct property access (simple equality)
+                        if isinstance(value, str):
+                            escaped_value = escape_cypher_string(value)
+                            condition_parts.append(f"n.{key} = '{escaped_value}'")
+                        else:
+                            condition_parts.append(f"n.{key} = {value}")
+                return " AND ".join(condition_parts)
+
+            if isinstance(filter, dict):
+                if "or" in filter:
+                    or_conditions = []
+                    for condition in filter["or"]:
+                        if isinstance(condition, dict):
+                            condition_str = build_cypher_filter_condition(condition)
+                            if condition_str:
+                                or_conditions.append(f"({condition_str})")
+                    if or_conditions:
+                        filter_where_clause = " AND " + f"({' OR '.join(or_conditions)})"
+
+                elif "and" in filter:
+                    and_conditions = []
+                    for condition in filter["and"]:
+                        if isinstance(condition, dict):
+                            condition_str = build_cypher_filter_condition(condition)
+                            if condition_str:
+                                and_conditions.append(f"({condition_str})")
+                    if and_conditions:
+                        filter_where_clause = " AND " + " AND ".join(and_conditions)
+
+        return filter_where_clause
+
+    def _build_filter_conditions_sql(
+            self,
+            filter: dict | None,
+    ) -> list[str]:
+        """
+        Build filter conditions for SQL queries.
+
+        Args:
+            filter: Filter dictionary with "or" or "and" logic
+
+        Returns:
+            List of filter WHERE clause strings (empty list if no filter)
+        """
+        filter_conditions = []
+        filter = self.parse_filter(filter)
+        if filter:
+            # Helper function to escape string value for SQL
+            def escape_sql_string(value: str) -> str:
+                """Escape single quotes in SQL string."""
+                return value.replace("'", "''")
+
+            # Helper function to build a single filter condition
+            def build_filter_condition(condition_dict: dict) -> str:
+                """Build a WHERE condition for a single filter item."""
+                condition_parts = []
+                for key, value in condition_dict.items():
+                    # Check if value is a dict with comparison operators (gt, lt, gte, lte)
+                    if isinstance(value, dict):
+                        # Handle comparison operators: gt (greater than), lt (less than), gte (greater than or equal), lte (less than or equal)
+                        for op, op_value in value.items():
+                            if op in ("gt", "lt", "gte", "lte"):
+                                # Map operator to SQL operator
+                                sql_op_map = {
+                                    "gt": ">",
+                                    "lt": "<",
+                                    "gte": ">=",
+                                    "lte": "<="
+                                }
+                                sql_op = sql_op_map[op]
+
+                                # Check if key starts with "info." prefix (for nested fields like info.A, info.B)
+                                if key.startswith("info."):
+                                    # Nested field access: properties->'info'->'field_name'
+                                    info_field = key[5:]  # Remove "info." prefix
+                                    if isinstance(op_value, str):
+                                        escaped_value = escape_sql_string(op_value)
+                                        condition_parts.append(
+                                            f"ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '\"info\"'::ag_catalog.agtype, '\"{info_field}\"'::ag_catalog.agtype]) {sql_op} '\"{escaped_value}\"'::agtype"
+                                        )
+                                    else:
+                                        condition_parts.append(
+                                            f"ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '\"info\"'::ag_catalog.agtype, '\"{info_field}\"'::ag_catalog.agtype]) {sql_op} {op_value}::agtype"
+                                        )
+                                else:
+                                    # Direct property access (e.g., "created_at" is directly in properties, not in properties.info)
+                                    if isinstance(op_value, str):
+                                        escaped_value = escape_sql_string(op_value)
+                                        condition_parts.append(
+                                            f"ag_catalog.agtype_access_operator(properties, '\"{key}\"'::agtype) {sql_op} '\"{escaped_value}\"'::agtype"
+                                        )
+                                    else:
+                                        condition_parts.append(
+                                            f"ag_catalog.agtype_access_operator(properties, '\"{key}\"'::agtype) {sql_op} {op_value}::agtype"
+                                        )
+                    # Check if key starts with "info." prefix (for simple equality)
+                    elif key.startswith("info."):
+                        # Extract the field name after "info."
+                        info_field = key[5:]  # Remove "info." prefix (5 characters)
+                        if isinstance(value, str):
+                            escaped_value = escape_sql_string(value)
+                            condition_parts.append(
+                                f"ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '\"info\"'::ag_catalog.agtype, '\"{info_field}\"'::ag_catalog.agtype]) = '\"{escaped_value}\"'::agtype"
+                            )
+                        else:
+                            condition_parts.append(
+                                f"ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '\"info\"'::ag_catalog.agtype, '\"{info_field}\"'::ag_catalog.agtype]) = '\"{value}\"'::agtype"
+                            )
+                    else:
+                        # Direct property access (simple equality)
+                        if isinstance(value, str):
+                            escaped_value = escape_sql_string(value)
+                            condition_parts.append(
+                                f"ag_catalog.agtype_access_operator(properties, '\"{key}\"'::agtype) = '\"{escaped_value}\"'::agtype"
+                            )
+                        else:
+                            condition_parts.append(
+                                f"ag_catalog.agtype_access_operator(properties, '\"{key}\"'::agtype) = {value}::agtype"
+                            )
+                return " AND ".join(condition_parts)
+
+            # Process filter structure
+            if isinstance(filter, dict):
+                if "or" in filter:
+                    # OR logic: at least one condition must match
+                    or_conditions = []
+                    for condition in filter["or"]:
+                        if isinstance(condition, dict):
+                            condition_str = build_filter_condition(condition)
+                            if condition_str:
+                                or_conditions.append(f"({condition_str})")
+                    if or_conditions:
+                        filter_conditions.append(f"({' OR '.join(or_conditions)})")
+
+                elif "and" in filter:
+                    # AND logic: all conditions must match
+                    for condition in filter["and"]:
+                        if isinstance(condition, dict):
+                            condition_str = build_filter_condition(condition)
+                            if condition_str:
+                                filter_conditions.append(f"({condition_str})")
+
+        return filter_conditions
+
+    def parse_filter(self, filter_dict: dict | None = None, ):
         if filter_dict is None:
             return None
         full_fields = {
