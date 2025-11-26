@@ -731,19 +731,15 @@ class Neo4jGraphDB(BaseGraphDB):
             where_clauses.append("node.memory_type = $scope")
         if status:
             where_clauses.append("node.status = $status")
-        
-        # Build user_name filter with knowledgebase_ids support (OR relationship)
-        user_name_conditions = []
-        if not self.config.use_multi_db and (self.config.user_name or user_name):
-            user_name_conditions.append("node.user_name = $user_name")
-        
-        # Add knowledgebase_ids conditions (checking user_name field in the data)
-        if knowledgebase_ids and isinstance(knowledgebase_ids, list) and len(knowledgebase_ids) > 0:
-            for idx, kb_id in enumerate(knowledgebase_ids):
-                if isinstance(kb_id, str):
-                    param_name = f"kb_id_{idx}"
-                    user_name_conditions.append(f"node.user_name = ${param_name}")
-        
+
+        # Build user_name filter with knowledgebase_ids support (OR relationship) using common method
+        user_name_conditions, user_name_params = self._build_user_name_and_kb_ids_conditions_cypher(
+            user_name=user_name,
+            knowledgebase_ids=knowledgebase_ids,
+            default_user_name=self.config.user_name,
+            node_alias="node",
+        )
+
         # Add user_name WHERE clause
         if user_name_conditions:
             if len(user_name_conditions) == 1:
@@ -757,77 +753,13 @@ class Neo4jGraphDB(BaseGraphDB):
                 param_name = f"filter_{key}"
                 where_clauses.append(f"node.{key} = ${param_name}")
 
-        filter_params = {}
-        if filter:
-            def build_filter_condition(condition_dict: dict, param_counter: list) -> tuple[str, dict]:
-                """Build a WHERE condition for a single filter item.
-                
-                Args:
-                    condition_dict: A dict like {"id": "xxx"} or {"A": "xxx"} or {"created_at": {"gt": "2025-11-01"}}
-                    param_counter: List to track parameter counter for unique param names
-                
-                Returns:
-                    Tuple of (condition_string, parameters_dict)
-                """
-                condition_parts = []
-                params = {}
-
-                for key, value in condition_dict.items():
-                    # Check if value is a dict with comparison operators (gt, lt, gte, lte)
-                    if isinstance(value, dict):
-                        # Handle comparison operators: gt (greater than), lt (less than), gte (greater than or equal), lte (less than or equal)
-                        for op, op_value in value.items():
-                            if op in ("gt", "lt", "gte", "lte"):
-                                # Map operator to Cypher operator
-                                cypher_op_map = {
-                                    "gt": ">",
-                                    "lt": "<",
-                                    "gte": ">=",
-                                    "lte": "<="
-                                }
-                                cypher_op = cypher_op_map[op]
-                                
-                                # All fields are stored as flat properties in Neo4j
-                                param_name = f"filter_flat_{key}_{op}_{param_counter[0]}"
-                                param_counter[0] += 1
-                                params[param_name] = op_value
-                                
-                                # Check if field is a date field (created_at, updated_at, etc.)
-                                # Use datetime() function for date comparisons
-                                if key in ("created_at", "updated_at") or key.endswith("_at"):
-                                    condition_parts.append(f"node.{key} {cypher_op} datetime(${param_name})")
-                                else:
-                                    condition_parts.append(f"node.{key} {cypher_op} ${param_name}")
-                    else:
-                        # All fields are stored as flat properties in Neo4j (simple equality)
-                        param_name = f"filter_flat_{key}_{param_counter[0]}"
-                        param_counter[0] += 1
-                        params[param_name] = value
-                        condition_parts.append(f"node.{key} = ${param_name}")
-
-                return " AND ".join(condition_parts), params
-
-            param_counter = [0]
-
-            if isinstance(filter, dict):
-                if "or" in filter:
-                    or_conditions = []
-                    for condition in filter["or"]:
-                        if isinstance(condition, dict):
-                            condition_str, params = build_filter_condition(condition, param_counter)
-                            if condition_str:
-                                or_conditions.append(f"({condition_str})")
-                                filter_params.update(params)
-                    if or_conditions:
-                        where_clauses.append(f"({' OR '.join(or_conditions)})")
-
-                elif "and" in filter:
-                    for condition in filter["and"]:
-                        if isinstance(condition, dict):
-                            condition_str, params = build_filter_condition(condition, param_counter)
-                            if condition_str:
-                                where_clauses.append(f"({condition_str})")
-                                filter_params.update(params)
+        # Build filter conditions using common method
+        filter_conditions, filter_params = self._build_filter_conditions_cypher(
+            filter=filter,
+            param_counter_start=0,
+            node_alias="node",
+        )
+        where_clauses.extend(filter_conditions)
 
         where_clause = ""
         if where_clauses:
@@ -841,25 +773,18 @@ class Neo4jGraphDB(BaseGraphDB):
         """
 
         parameters = {"embedding": vector, "k": top_k}
-        print("11111119999query:", query)
+
         if scope:
             parameters["scope"] = scope
         if status:
             parameters["status"] = status
-        
-        # Add user_name parameter
-        if not self.config.use_multi_db and (self.config.user_name or user_name):
-            if kwargs.get("cube_name"):
-                parameters["user_name"] = kwargs["cube_name"]
-            else:
-                parameters["user_name"] = user_name
-        
-        # Add knowledgebase_ids parameters
-        if knowledgebase_ids and isinstance(knowledgebase_ids, list) and len(knowledgebase_ids) > 0:
-            for idx, kb_id in enumerate(knowledgebase_ids):
-                if isinstance(kb_id, str):
-                    param_name = f"kb_id_{idx}"
-                    parameters[param_name] = kb_id
+
+        # Add user_name and knowledgebase_ids parameters using common method
+        parameters.update(user_name_params)
+
+        # Handle cube_name override for user_name
+        if kwargs.get("cube_name"):
+            parameters["user_name"] = kwargs["cube_name"]
 
         if search_filter:
             for key, value in search_filter.items():
@@ -870,7 +795,8 @@ class Neo4jGraphDB(BaseGraphDB):
         if filter_params:
             parameters.update(filter_params)
 
-        print("1111111filter_params:", filter_params)
+        logger.info(f"[search_by_embedding] query: {query},parameters: {parameters}")
+        print(f"[search_by_embedding] query: {query},parameters: {parameters}")
         with self.driver.session(database=self.db_name) as session:
             result = session.run(query, parameters)
             records = [{"id": record["id"], "score": record["score"]} for record in result]
@@ -942,18 +868,14 @@ class Neo4jGraphDB(BaseGraphDB):
             else:
                 raise ValueError(f"Unsupported operator: {op}")
 
-        # Build user_name filter with knowledgebase_ids support (OR relationship)
-        user_name_conditions = []
-        if not self.config.use_multi_db and (self.config.user_name or user_name):
-            user_name_conditions.append("n.user_name = $user_name")
-        
-        # Add knowledgebase_ids conditions (checking user_name field in the data)
-        if knowledgebase_ids and isinstance(knowledgebase_ids, list) and len(knowledgebase_ids) > 0:
-            for idx, kb_id in enumerate(knowledgebase_ids):
-                if isinstance(kb_id, str):
-                    param_name = f"kb_id_{idx}"
-                    user_name_conditions.append(f"n.user_name = ${param_name}")
-        
+        # Build user_name filter with knowledgebase_ids support (OR relationship) using common method
+        user_name_conditions, user_name_params = self._build_user_name_and_kb_ids_conditions_cypher(
+            user_name=user_name,
+            knowledgebase_ids=knowledgebase_ids,
+            default_user_name=self.config.user_name,
+            node_alias="n",
+        )
+
         # Add user_name WHERE clause
         if user_name_conditions:
             if len(user_name_conditions) == 1:
@@ -961,83 +883,13 @@ class Neo4jGraphDB(BaseGraphDB):
             else:
                 where_clauses.append(f"({' OR '.join(user_name_conditions)})")
 
-        # Add filter conditions (supports "or" and "and" logic)
-        filter_params = {}
-        if filter:
-            # Helper function to build a single filter condition
-            def build_filter_condition(condition_dict: dict, param_counter: list) -> tuple[str, dict]:
-                """Build a WHERE condition for a single filter item.
-
-                Args:
-                    condition_dict: A dict like {"id": "xxx"} or {"A": "xxx"} or {"created_at": {"gt": "2025-11-01"}}
-                    param_counter: List to track parameter counter for unique param names
-
-                Returns:
-                    Tuple of (condition_string, parameters_dict)
-                """
-                condition_parts = []
-                filter_params_inner = {}
-
-                for key, value in condition_dict.items():
-                    # Check if value is a dict with comparison operators (gt, lt, gte, lte)
-                    if isinstance(value, dict):
-                        # Handle comparison operators: gt (greater than), lt (less than), gte (greater than or equal), lte (less than or equal)
-                        for op, op_value in value.items():
-                            if op in ("gt", "lt", "gte", "lte"):
-                                # Map operator to Cypher operator
-                                cypher_op_map = {
-                                    "gt": ">",
-                                    "lt": "<",
-                                    "gte": ">=",
-                                    "lte": "<="
-                                }
-                                cypher_op = cypher_op_map[op]
-                                
-                                # All fields are stored as flat properties in Neo4j
-                                param_name = f"filter_meta_{key}_{op}_{param_counter[0]}"
-                                param_counter[0] += 1
-                                filter_params_inner[param_name] = op_value
-                                
-                                # Check if field is a date field (created_at, updated_at, etc.)
-                                # Use datetime() function for date comparisons
-                                if key in ("created_at", "updated_at") or key.endswith("_at"):
-                                    condition_parts.append(f"n.{key} {cypher_op} datetime(${param_name})")
-                                else:
-                                    condition_parts.append(f"n.{key} {cypher_op} ${param_name}")
-                    else:
-                        # All fields are stored as flat properties in Neo4j (simple equality)
-                        param_name = f"filter_meta_{key}_{param_counter[0]}"
-                        param_counter[0] += 1
-                        filter_params_inner[param_name] = value
-                        condition_parts.append(f"n.{key} = ${param_name}")
-
-                return " AND ".join(condition_parts), filter_params_inner
-
-            # Process filter structure
-            param_counter = [
-                len(filters)]  # Use list to allow modification in nested function, start from len(filters) to avoid conflicts
-
-            if isinstance(filter, dict):
-                if "or" in filter:
-                    # OR logic: at least one condition must match
-                    or_conditions = []
-                    for condition in filter["or"]:
-                        if isinstance(condition, dict):
-                            condition_str, filter_params_inner = build_filter_condition(condition, param_counter)
-                            if condition_str:
-                                or_conditions.append(f"({condition_str})")
-                                filter_params.update(filter_params_inner)
-                    if or_conditions:
-                        where_clauses.append(f"({' OR '.join(or_conditions)})")
-
-                elif "and" in filter:
-                    # AND logic: all conditions must match
-                    for condition in filter["and"]:
-                        if isinstance(condition, dict):
-                            condition_str, filter_params_inner = build_filter_condition(condition, param_counter)
-                            if condition_str:
-                                where_clauses.append(f"({condition_str})")
-                                filter_params.update(filter_params_inner)
+        # Build filter conditions using common method
+        filter_conditions, filter_params = self._build_filter_conditions_cypher(
+            filter=filter,
+            param_counter_start=len(filters),  # Start from len(filters) to avoid conflicts
+            node_alias="n",
+        )
+        where_clauses.extend(filter_conditions)
 
         where_str = " AND ".join(where_clauses) if where_clauses else ""
         if where_str:
@@ -1045,17 +897,9 @@ class Neo4jGraphDB(BaseGraphDB):
         else:
             query = "MATCH (n:Memory) RETURN n.id AS id"
 
-        # Add user_name parameter
-        if not self.config.use_multi_db and (self.config.user_name or user_name):
-            params["user_name"] = user_name
-        
-        # Add knowledgebase_ids parameters
-        if knowledgebase_ids and isinstance(knowledgebase_ids, list) and len(knowledgebase_ids) > 0:
-            for idx, kb_id in enumerate(knowledgebase_ids):
-                if isinstance(kb_id, str):
-                    param_name = f"kb_id_{idx}"
-                    params[param_name] = kb_id
-        
+        # Add user_name and knowledgebase_ids parameters using common method
+        params.update(user_name_params)
+
         # Merge filter parameters
         if filter_params:
             params.update(filter_params)
@@ -1275,18 +1119,14 @@ class Neo4jGraphDB(BaseGraphDB):
         where_clauses = ["n.memory_type = $scope"]
         params = {"scope": scope}
 
-        # Build user_name filter with knowledgebase_ids support (OR relationship)
-        user_name_conditions = []
-        if not self.config.use_multi_db and (self.config.user_name or user_name):
-            user_name_conditions.append("n.user_name = $user_name")
-        
-        # Add knowledgebase_ids conditions (checking user_name field in the data)
-        if knowledgebase_ids and isinstance(knowledgebase_ids, list) and len(knowledgebase_ids) > 0:
-            for idx, kb_id in enumerate(knowledgebase_ids):
-                if isinstance(kb_id, str):
-                    param_name = f"kb_id_{idx}"
-                    user_name_conditions.append(f"n.user_name = ${param_name}")
-        
+        # Build user_name filter with knowledgebase_ids support (OR relationship) using common method
+        user_name_conditions, user_name_params = self._build_user_name_and_kb_ids_conditions_cypher(
+            user_name=user_name,
+            knowledgebase_ids=knowledgebase_ids,
+            default_user_name=self.config.user_name,
+            node_alias="n",
+        )
+
         # Add user_name WHERE clause
         if user_name_conditions:
             if len(user_name_conditions) == 1:
@@ -1294,91 +1134,20 @@ class Neo4jGraphDB(BaseGraphDB):
             else:
                 where_clauses.append(f"({' OR '.join(user_name_conditions)})")
 
-        filter_params = {}
-        if filter:
-            def build_filter_condition(condition_dict: dict, param_counter: list) -> tuple[str, dict]:
-                """Build a WHERE condition for a single filter item.
-                
-                Args:
-                    condition_dict: A dict like {"id": "xxx"} or {"A": "xxx"} or {"created_at": {"gt": "2025-11-01"}}
-                    param_counter: List to track parameter counter for unique param names
-                
-                Returns:
-                    Tuple of (condition_string, parameters_dict)
-                """
-                condition_parts = []
-                filter_params_inner = {}
-
-                for key, value in condition_dict.items():
-                    # Check if value is a dict with comparison operators (gt, lt, gte, lte)
-                    if isinstance(value, dict):
-                        # Handle comparison operators: gt (greater than), lt (less than), gte (greater than or equal), lte (less than or equal)
-                        for op, op_value in value.items():
-                            if op in ("gt", "lt", "gte", "lte"):
-                                # Map operator to Cypher operator
-                                cypher_op_map = {
-                                    "gt": ">",
-                                    "lt": "<",
-                                    "gte": ">=",
-                                    "lte": "<="
-                                }
-                                cypher_op = cypher_op_map[op]
-                                
-                                # All fields are stored as flat properties in Neo4j
-                                param_name = f"filter_flat_{key}_{op}_{param_counter[0]}"
-                                param_counter[0] += 1
-                                filter_params_inner[param_name] = op_value
-                                
-                                # Check if field is a date field (created_at, updated_at, etc.)
-                                # Use datetime() function for date comparisons
-                                if key in ("created_at", "updated_at") or key.endswith("_at"):
-                                    condition_parts.append(f"n.{key} {cypher_op} datetime(${param_name})")
-                                else:
-                                    condition_parts.append(f"n.{key} {cypher_op} ${param_name}")
-                    else:
-                        # All fields are stored as flat properties in Neo4j (simple equality)
-                        param_name = f"filter_flat_{key}_{param_counter[0]}"
-                        param_counter[0] += 1
-                        filter_params_inner[param_name] = value
-                        condition_parts.append(f"n.{key} = ${param_name}")
-
-                return " AND ".join(condition_parts), filter_params_inner
-
-            param_counter = [0]
-
-            if isinstance(filter, dict):
-                if "or" in filter:
-                    or_conditions = []
-                    for condition in filter["or"]:
-                        if isinstance(condition, dict):
-                            condition_str, filter_params_inner = build_filter_condition(condition, param_counter)
-                            if condition_str:
-                                or_conditions.append(f"({condition_str})")
-                                filter_params.update(filter_params_inner)
-                    if or_conditions:
-                        where_clauses.append(f"({' OR '.join(or_conditions)})")
-
-                elif "and" in filter:
-                    for condition in filter["and"]:
-                        if isinstance(condition, dict):
-                            condition_str, filter_params_inner = build_filter_condition(condition, param_counter)
-                            if condition_str:
-                                where_clauses.append(f"({condition_str})")
-                                filter_params.update(filter_params_inner)
+        # Build filter conditions using common method
+        filter_conditions, filter_params = self._build_filter_conditions_cypher(
+            filter=filter,
+            param_counter_start=0,
+            node_alias="n",
+        )
+        where_clauses.extend(filter_conditions)
 
         where_clause = "WHERE " + " AND ".join(where_clauses)
 
-        # Add user_name parameter
-        if not self.config.use_multi_db and (self.config.user_name or user_name):
-            params["user_name"] = user_name
-        
-        # Add knowledgebase_ids parameters
-        if knowledgebase_ids and isinstance(knowledgebase_ids, list) and len(knowledgebase_ids) > 0:
-            for idx, kb_id in enumerate(knowledgebase_ids):
-                if isinstance(kb_id, str):
-                    param_name = f"kb_id_{idx}"
-                    params[param_name] = kb_id
+        # Add user_name and knowledgebase_ids parameters using common method
+        params.update(user_name_params)
 
+        # Add filter parameters
         if filter_params:
             params.update(filter_params)
 
@@ -1545,6 +1314,141 @@ class Neo4jGraphDB(BaseGraphDB):
                 if record["name"] == index_name:
                     return True
         return False
+
+    def _build_user_name_and_kb_ids_conditions_cypher(
+            self,
+            user_name: str | None,
+            knowledgebase_ids: list[str] | None,
+            default_user_name: str | None = None,
+            node_alias: str = "node",
+    ) -> tuple[list[str], dict[str, Any]]:
+        """
+        Build user_name and knowledgebase_ids conditions for Cypher queries.
+
+        Args:
+            user_name: User name for filtering
+            knowledgebase_ids: List of knowledgebase IDs
+            default_user_name: Default user name from config if user_name is None
+            node_alias: Node alias in Cypher query (default: "node" or "n")
+
+        Returns:
+            Tuple of (condition_strings_list, parameters_dict)
+        """
+        user_name_conditions = []
+        params = {}
+        effective_user_name = user_name if user_name else default_user_name
+
+        # Only add user_name condition if not using multi-db mode
+        if not self.config.use_multi_db and (self.config.user_name or effective_user_name):
+            user_name_conditions.append(f"{node_alias}.user_name = $user_name")
+            params["user_name"] = effective_user_name
+
+        # Add knowledgebase_ids conditions (checking user_name field in the data)
+        if knowledgebase_ids and isinstance(knowledgebase_ids, list) and len(knowledgebase_ids) > 0:
+            for idx, kb_id in enumerate(knowledgebase_ids):
+                if isinstance(kb_id, str):
+                    param_name = f"kb_id_{idx}"
+                    user_name_conditions.append(f"{node_alias}.user_name = ${param_name}")
+                    params[param_name] = kb_id
+
+        return user_name_conditions, params
+
+    def _build_filter_conditions_cypher(
+            self,
+            filter: dict | None,
+            param_counter_start: int = 0,
+            node_alias: str = "node",
+    ) -> tuple[list[str], dict[str, Any]]:
+        """
+        Build filter conditions for Cypher queries.
+
+        Args:
+            filter: Filter dictionary with "or" or "and" logic
+            param_counter_start: Starting value for parameter counter (to avoid conflicts)
+            node_alias: Node alias in Cypher query (default: "node" or "n")
+
+        Returns:
+            Tuple of (condition_strings_list, parameters_dict)
+        """
+        filter_conditions = []
+        filter_params = {}
+
+        if not filter:
+            return filter_conditions, filter_params
+
+        def build_filter_condition(condition_dict: dict, param_counter: list) -> tuple[str, dict]:
+            """Build a WHERE condition for a single filter item.
+
+            Args:
+                condition_dict: A dict like {"id": "xxx"} or {"A": "xxx"} or {"created_at": {"gt": "2025-11-01"}}
+                param_counter: List to track parameter counter for unique param names
+
+            Returns:
+                Tuple of (condition_string, parameters_dict)
+            """
+            condition_parts = []
+            params = {}
+
+            for key, value in condition_dict.items():
+                # Check if value is a dict with comparison operators (gt, lt, gte, lte)
+                if isinstance(value, dict):
+                    # Handle comparison operators: gt (greater than), lt (less than), gte (greater than or equal), lte (less than or equal)
+                    for op, op_value in value.items():
+                        if op in ("gt", "lt", "gte", "lte"):
+                            # Map operator to Cypher operator
+                            cypher_op_map = {
+                                "gt": ">",
+                                "lt": "<",
+                                "gte": ">=",
+                                "lte": "<="
+                            }
+                            cypher_op = cypher_op_map[op]
+
+                            # All fields are stored as flat properties in Neo4j
+                            param_name = f"filter_{key}_{op}_{param_counter[0]}"
+                            param_counter[0] += 1
+                            params[param_name] = op_value
+
+                            # Check if field is a date field (created_at, updated_at, etc.)
+                            # Use datetime() function for date comparisons
+                            if key in ("created_at", "updated_at") or key.endswith("_at"):
+                                condition_parts.append(f"{node_alias}.{key} {cypher_op} datetime(${param_name})")
+                            else:
+                                condition_parts.append(f"{node_alias}.{key} {cypher_op} ${param_name}")
+                else:
+                    # All fields are stored as flat properties in Neo4j (simple equality)
+                    param_name = f"filter_{key}_{param_counter[0]}"
+                    param_counter[0] += 1
+                    params[param_name] = value
+                    condition_parts.append(f"{node_alias}.{key} = ${param_name}")
+
+            return " AND ".join(condition_parts), params
+
+        param_counter = [param_counter_start]
+
+        if isinstance(filter, dict):
+            if "or" in filter:
+                # OR logic: at least one condition must match
+                or_conditions = []
+                for condition in filter["or"]:
+                    if isinstance(condition, dict):
+                        condition_str, params = build_filter_condition(condition, param_counter)
+                        if condition_str:
+                            or_conditions.append(f"({condition_str})")
+                            filter_params.update(params)
+                if or_conditions:
+                    filter_conditions.append(f"({' OR '.join(or_conditions)})")
+
+            elif "and" in filter:
+                # AND logic: all conditions must match
+                for condition in filter["and"]:
+                    if isinstance(condition, dict):
+                        condition_str, params = build_filter_condition(condition, param_counter)
+                        if condition_str:
+                            filter_conditions.append(f"({condition_str})")
+                            filter_params.update(params)
+
+        return filter_conditions, filter_params
 
     def _parse_node(self, node_data: dict[str, Any]) -> dict[str, Any]:
         node = node_data.copy()

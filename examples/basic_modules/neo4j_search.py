@@ -1093,9 +1093,9 @@ if __name__ == "__main__":
     filter_example = {
         "and": [
             {"id": "cfe42bd6-ee78-4f6f-b997-8baa0ea957e1"},
-            # {"A": "新疆乌鲁木齐市"},
-            # {"created_at": {"gt": "2025-09-19"}},
-            # {"created_at": {"lt": "2025-11-20"}}
+            {"A": "中国广西"},
+            {"created_at": {"gt": "2025-09-19"}},
+            {"created_at": {"lt": "2025-11-26"}}
         ]
     }
     knowledgebase_ids = ["adimin1", "adimin2"]
