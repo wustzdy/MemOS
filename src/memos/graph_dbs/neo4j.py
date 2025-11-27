@@ -1415,6 +1415,25 @@ class Neo4jGraphDB(BaseGraphDB):
                                 condition_parts.append(f"{node_alias}.{key} {cypher_op} datetime(${param_name})")
                             else:
                                 condition_parts.append(f"{node_alias}.{key} {cypher_op} ${param_name}")
+                        elif op == "contains":
+                            # Handle contains operator (for array fields like tags, sources)
+                            param_name = f"filter_{key}_{op}_{param_counter[0]}"
+                            param_counter[0] += 1
+                            params[param_name] = op_value
+                            
+                            # For array fields, check if element is in array
+                            if key in ("tags", "sources"):
+                                condition_parts.append(f"${param_name} IN {node_alias}.{key}")
+                            else:
+                                # For non-array fields, contains might not be applicable, but we'll treat it as IN for consistency
+                                condition_parts.append(f"${param_name} IN {node_alias}.{key}")
+                        elif op == "like":
+                            # Handle like operator (for fuzzy matching, similar to SQL LIKE '%value%')
+                            # Neo4j uses CONTAINS for string matching
+                            param_name = f"filter_{key}_{op}_{param_counter[0]}"
+                            param_counter[0] += 1
+                            params[param_name] = op_value
+                            condition_parts.append(f"{node_alias}.{key} CONTAINS ${param_name}")
                 else:
                     # All fields are stored as flat properties in Neo4j (simple equality)
                     param_name = f"filter_{key}_{param_counter[0]}"
