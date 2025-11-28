@@ -3781,7 +3781,6 @@ class PolarDBGraphDB(BaseGraphDB):
             "memory_type",
             "node_type",
             "info",
-            "sources",
             "app_id",
             "agent_id"
         }
