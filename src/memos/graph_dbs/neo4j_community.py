@@ -1,4 +1,6 @@
 import json
+import re
+from datetime import datetime
 
 from typing import Any
 
@@ -135,17 +137,17 @@ class Neo4jCommunityGraphDB(Neo4jGraphDB):
 
     # Search / recall operations
     def search_by_embedding(
-        self,
-        vector: list[float],
-        top_k: int = 5,
-        scope: str | None = None,
-        status: str | None = None,
-        threshold: float | None = None,
-        search_filter: dict | None = None,
-        user_name: str | None = None,
-        filter: dict | None = None,
-        knowledgebase_ids: list[str] | None = None,
-        **kwargs,
+            self,
+            vector: list[float],
+            top_k: int = 5,
+            scope: str | None = None,
+            status: str | None = None,
+            threshold: float | None = None,
+            search_filter: dict | None = None,
+            user_name: str | None = None,
+            filter: dict | None = None,
+            knowledgebase_ids: list[str] | None = None,
+            **kwargs,
     ) -> list[dict]:
         """
         Retrieve node IDs based on vector similarity using external vector DB.
@@ -158,7 +160,8 @@ class Neo4jCommunityGraphDB(Neo4jGraphDB):
             threshold (float, optional): Minimum similarity score threshold (0 ~ 1).
             search_filter (dict, optional): Additional metadata filters to apply.
             filter (dict, optional): Filter conditions with 'and' or 'or' logic for search results.
-            knowledgebase_ids (list[str], optional): List of knowledgebase IDs to filter by user_name.
+                Example: {"and": [{"id": "xxx"}, {"A": "yyy"}]} or {"or": [{"id": "xxx"}, {"A": "yyy"}]}
+            knowledgebase_ids (list[str], optional): List of knowledgebase IDs to filter by.
 
         Returns:
             list[dict]: A list of dicts with 'id' and 'score', ordered by similarity.
@@ -169,12 +172,12 @@ class Neo4jCommunityGraphDB(Neo4jGraphDB):
             - If 'status' is provided, it further filters nodes by status.
             - If 'threshold' is provided, only results with score >= threshold will be returned.
             - If 'search_filter' is provided, it applies additional metadata-based filtering.
-            - If 'filter' is provided, it applies additional WHERE clauses in Neo4j after vector search.
-            - If 'knowledgebase_ids' is provided, it filters by user_name with OR logic.
+            - If 'filter' is provided, it applies complex filter conditions with AND/OR logic.
             - The returned IDs can be used to fetch full node data from Neo4j if needed.
         """
         user_name = user_name if user_name else self.config.user_name
-        # Build VecDB filter
+
+        # First, perform vector search in external vector DB
         vec_filter = {}
         if scope:
             vec_filter["memory_type"] = scope
@@ -190,148 +193,268 @@ class Neo4jCommunityGraphDB(Neo4jGraphDB):
         if search_filter:
             vec_filter.update(search_filter)
 
-        # Perform vector search - get more results if we need to filter in Neo4j
-        search_top_k = top_k * 2 if (filter or knowledgebase_ids) else top_k
-        results = self.vec_db.search(query_vector=vector, top_k=search_top_k, filter=vec_filter)
+        # Perform vector search
+        vec_results = []
+        if self.vec_db:
+            try:
+                vec_results = self.vec_db.search(query_vector=vector, top_k=top_k, filter=vec_filter)
+            except Exception as e:
+                logger.warning(f"[VecDB] search failed: {e}")
 
         # Filter by threshold
         if threshold is not None:
-            results = [r for r in results if r.score is None or r.score >= threshold]
+            vec_results = [r for r in vec_results if r.score is None or r.score >= threshold]
 
-        # If we have filter or knowledgebase_ids, need to filter in Neo4j
-        if filter or knowledgebase_ids:
-            # Get IDs from vector search results
-            vec_result_ids = [r.id for r in results]
-            
-            if not vec_result_ids:
-                return []
+        # If no filter or knowledgebase_ids provided, return vector search results directly
+        if not filter and not knowledgebase_ids:
+            return [{"id": r.id, "score": r.score} for r in vec_results]
 
-            # Build WHERE clause for Neo4j filtering
-            where_clauses = [f"node.id IN $vec_ids"]
-            params = {"vec_ids": vec_result_ids}
+        # Extract IDs from vector search results
+        vec_ids = [r.id for r in vec_results]
+        if not vec_ids:
+            return []
 
-            # Build user_name filter with knowledgebase_ids support (OR relationship)
-            user_name_conditions = []
-            if not self.config.use_multi_db and (self.config.user_name or user_name):
-                user_name_conditions.append("node.user_name = $user_name")
-                params["user_name"] = user_name
-            
-            # Add knowledgebase_ids conditions (checking user_name field in the data)
-            if knowledgebase_ids and isinstance(knowledgebase_ids, list) and len(knowledgebase_ids) > 0:
-                for idx, kb_id in enumerate(knowledgebase_ids):
-                    if isinstance(kb_id, str):
-                        param_name = f"kb_id_{idx}"
-                        user_name_conditions.append(f"node.user_name = ${param_name}")
-                        params[param_name] = kb_id
-            
-            # Add user_name WHERE clause
-            if user_name_conditions:
-                if len(user_name_conditions) == 1:
-                    where_clauses.append(user_name_conditions[0])
-                else:
-                    where_clauses.append(f"({' OR '.join(user_name_conditions)})")
+        # Build WHERE clause for Neo4j filtering
+        where_clauses = ["n.id IN $vec_ids"]
+        params = {"vec_ids": vec_ids}
 
-            # Add filter conditions
-            filter_params = {}
-            if filter:
-                def build_filter_condition(condition_dict: dict, param_counter: list) -> tuple[str, dict]:
-                    """Build a WHERE condition for a single filter item."""
-                    condition_parts = []
-                    filter_params_inner = {}
+        # Build user_name filter with knowledgebase_ids support (OR relationship) using common method
+        user_name_conditions, user_name_params = self._build_user_name_and_kb_ids_conditions_cypher(
+            user_name=user_name,
+            knowledgebase_ids=knowledgebase_ids,
+            default_user_name=self.config.user_name,
+            node_alias="n",
+        )
 
-                    for key, value in condition_dict.items():
-                        # Check if value is a dict with comparison operators (gt, lt, gte, lte)
-                        if isinstance(value, dict):
-                            for op, op_value in value.items():
-                                if op in ("gt", "lt", "gte", "lte"):
-                                    cypher_op_map = {
-                                        "gt": ">",
-                                        "lt": "<",
-                                        "gte": ">=",
-                                        "lte": "<="
-                                    }
-                                    cypher_op = cypher_op_map[op]
-                                    
-                                    param_name = f"filter_flat_{key}_{op}_{param_counter[0]}"
-                                    param_counter[0] += 1
-                                    filter_params_inner[param_name] = op_value
-                                    
-                                    # Use datetime() function for date comparisons
-                                    if key in ("created_at", "updated_at") or key.endswith("_at"):
-                                        condition_parts.append(f"node.{key} {cypher_op} datetime(${param_name})")
-                                    else:
-                                        condition_parts.append(f"node.{key} {cypher_op} ${param_name}")
+        # Add user_name WHERE clause
+        if user_name_conditions:
+            if len(user_name_conditions) == 1:
+                where_clauses.append(user_name_conditions[0])
+            else:
+                where_clauses.append(f"({' OR '.join(user_name_conditions)})")
+
+        # Build filter conditions using common method
+        filter_conditions, filter_params = self._build_filter_conditions_cypher(
+            filter=filter,
+            param_counter_start=0,
+            node_alias="n",
+        )
+        where_clauses.extend(filter_conditions)
+
+        where_clause = "WHERE " + " AND ".join(where_clauses)
+
+        # Add user_name and knowledgebase_ids parameters using common method
+        params.update(user_name_params)
+
+        # Add filter parameters
+        if filter_params:
+            params.update(filter_params)
+
+        # Query Neo4j to filter results
+        query = f"""
+            MATCH (n:Memory)
+            {where_clause}
+            RETURN n.id AS id
+        """
+        logger.info(f"[search_by_embedding] query: {query}, params: {params}")
+
+        with self.driver.session(database=self.db_name) as session:
+            neo4j_results = session.run(query, params)
+            filtered_ids = {record["id"] for record in neo4j_results}
+
+        # Filter vector results by Neo4j filtered IDs and return with scores
+        filtered_results = [
+            {"id": r.id, "score": r.score}
+            for r in vec_results
+            if r.id in filtered_ids
+        ]
+
+        return filtered_results
+
+    def _normalize_date_string(self, date_str: str) -> str:
+        """
+        Normalize date string to ISO 8601 format for Neo4j datetime() function.
+
+        Args:
+            date_str: Date string in various formats (e.g., "2025-09-19", "2025-09-19T00:00:00Z")
+
+        Returns:
+            ISO 8601 formatted date string (e.g., "2025-09-19T00:00:00Z")
+        """
+        if not isinstance(date_str, str):
+            return date_str
+
+        # If already in ISO 8601 format with time, return as is
+        if "T" in date_str or date_str.endswith("Z") or "+" in date_str or "-" in date_str[-6:]:
+            return date_str
+
+        # Check if it's a simple date format (YYYY-MM-DD)
+        date_pattern = re.match(r"^(\d{4})-(\d{2})-(\d{2})$", date_str)
+        if date_pattern:
+            # Convert to ISO 8601 format: YYYY-MM-DDTHH:MM:SSZ
+            # For "gt" (greater than), use 00:00:00 of the next day
+            # For "lt" (less than), use 00:00:00 of the same day
+            # For "gte" (greater than or equal), use 00:00:00 of the same day
+            # For "lte" (less than or equal), use 23:59:59.999999999 of the same day
+            # But we'll use 00:00:00Z as default and let the caller handle the logic
+            return f"{date_str}T00:00:00Z"
+
+        # If it's already a datetime string, try to parse and reformat
+        try:
+            # Try to parse various datetime formats
+            dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+            return dt.isoformat().replace("+00:00", "Z")
+        except (ValueError, AttributeError):
+            # If parsing fails, return as is
+            return date_str
+
+    def _build_filter_conditions_cypher(
+            self,
+            filter: dict | None,
+            param_counter_start: int = 0,
+            node_alias: str = "node",
+    ) -> tuple[list[str], dict[str, Any]]:
+        """
+        Build filter conditions for Cypher queries with date normalization.
+
+        This method extends the parent class method by normalizing date strings
+        to ISO 8601 format before building conditions.
+
+        Args:
+            filter: Filter dictionary with "or" or "and" logic
+            param_counter_start: Starting value for parameter counter (to avoid conflicts)
+            node_alias: Node alias in Cypher query (default: "node" or "n")
+
+        Returns:
+            Tuple of (condition_strings_list, parameters_dict)
+        """
+        # Preprocess filter to normalize date strings
+        if filter:
+            normalized_filter = self._normalize_filter_dates(filter)
+        else:
+            normalized_filter = filter
+
+        # Call parent method with normalized filter
+        return super()._build_filter_conditions_cypher(
+            filter=normalized_filter,
+            param_counter_start=param_counter_start,
+            node_alias=node_alias,
+        )
+
+    def _normalize_filter_dates(self, filter: dict) -> dict:
+        """
+        Recursively normalize date strings in filter dictionary.
+
+        Args:
+            filter: Filter dictionary that may contain date strings
+
+        Returns:
+            Filter dictionary with normalized date strings
+        """
+        if not isinstance(filter, dict):
+            return filter
+
+        normalized = {}
+
+        if "and" in filter:
+            normalized["and"] = [
+                self._normalize_condition_dates(cond) if isinstance(cond, dict) else cond
+                for cond in filter["and"]
+            ]
+        elif "or" in filter:
+            normalized["or"] = [
+                self._normalize_condition_dates(cond) if isinstance(cond, dict) else cond
+                for cond in filter["or"]
+            ]
+        else:
+            # Single condition
+            normalized = self._normalize_condition_dates(filter)
+
+        return normalized
+
+    def _normalize_condition_dates(self, condition: dict) -> dict:
+        """
+        Normalize date strings in a single condition dictionary.
+
+        Args:
+            condition: A condition dict like {"created_at": {"gt": "2025-09-19"}}
+
+        Returns:
+            Condition dict with normalized date strings
+        """
+        from datetime import timedelta
+
+        normalized = {}
+
+        for key, value in condition.items():
+            # Check if this is a date field
+            is_date_field = key in ("created_at", "updated_at") or key.endswith("_at")
+
+            if isinstance(value, dict):
+                # Handle comparison operators
+                normalized_value = {}
+                for op, op_value in value.items():
+                    if op in ("gt", "lt", "gte", "lte") and is_date_field:
+                        # Normalize date string for date comparisons
+                        if isinstance(op_value, str):
+                            # Check if it's a simple date format (YYYY-MM-DD)
+                            date_pattern = re.match(r"^(\d{4})-(\d{2})-(\d{2})$", op_value)
+                            if date_pattern:
+                                try:
+                                    # Parse the date
+                                    dt = datetime.fromisoformat(op_value + "T00:00:00")
+
+                                    if op == "gt":
+                                        # "gt": "2025-09-19" means > 2025-09-19 00:00:00
+                                        # So we keep it as 2025-09-19T00:00:00Z
+                                        normalized_value[op] = dt.isoformat() + "Z"
+                                    elif op == "gte":
+                                        # "gte": "2025-09-19" means >= 2025-09-19 00:00:00
+                                        normalized_value[op] = dt.isoformat() + "Z"
+                                    elif op == "lt":
+                                        # "lt": "2025-11-29" means < 2025-11-29 (exclude the entire day)
+                                        # So we convert to the start of the next day: 2025-11-30T00:00:00Z
+                                        # This ensures all times on 2025-11-29 are included
+                                        dt_next = dt + timedelta(days=1)
+                                        normalized_value[op] = dt_next.isoformat() + "Z"
+                                    elif op == "lte":
+                                        # "lte": "2025-11-29" means <= 2025-11-29 23:59:59.999999
+                                        # So we convert to end of day: 2025-11-29T23:59:59.999999Z
+                                        dt_end = dt + timedelta(days=1) - timedelta(microseconds=1)
+                                        normalized_value[op] = dt_end.isoformat() + "Z"
+                                except ValueError:
+                                    # If parsing fails, use the original normalization
+                                    normalized_value[op] = self._normalize_date_string(op_value)
+                            else:
+                                # Already in a more complex format, just normalize it
+                                normalized_value[op] = self._normalize_date_string(op_value)
                         else:
-                            # Simple equality
-                            param_name = f"filter_flat_{key}_{param_counter[0]}"
-                            param_counter[0] += 1
-                            filter_params_inner[param_name] = value
-                            condition_parts.append(f"node.{key} = ${param_name}")
+                            normalized_value[op] = op_value
+                    else:
+                        normalized_value[op] = op_value
+                normalized[key] = normalized_value
+            else:
+                normalized[key] = value
 
-                    return " AND ".join(condition_parts), filter_params_inner
+        return normalized
 
-                param_counter = [0]
-
-                if isinstance(filter, dict):
-                    if "or" in filter:
-                        or_conditions = []
-                        for condition in filter["or"]:
-                            if isinstance(condition, dict):
-                                condition_str, filter_params_inner = build_filter_condition(condition, param_counter)
-                                if condition_str:
-                                    or_conditions.append(f"({condition_str})")
-                                    filter_params.update(filter_params_inner)
-                        if or_conditions:
-                            where_clauses.append(f"({' OR '.join(or_conditions)})")
-
-                    elif "and" in filter:
-                        for condition in filter["and"]:
-                            if isinstance(condition, dict):
-                                condition_str, filter_params_inner = build_filter_condition(condition, param_counter)
-                                if condition_str:
-                                    where_clauses.append(f"({condition_str})")
-                                    filter_params.update(filter_params_inner)
-
-            if filter_params:
-                params.update(filter_params)
-
-            where_clause = "WHERE " + " AND ".join(where_clauses)
-
-            # Query Neo4j to filter results
-            query = f"""
-                MATCH (node:Memory)
-                {where_clause}
-                RETURN node.id AS id
-            """
-
-            with self.driver.session(database=self.db_name) as session:
-                neo4j_results = session.run(query, params)
-                filtered_ids = {record["id"] for record in neo4j_results}
-
-            # Filter vector search results by Neo4j filtered IDs and keep scores
-            filtered_results = [r for r in results if r.id in filtered_ids]
-            
-            # Return top_k results
-            return [{"id": r.id, "score": r.score} for r in filtered_results[:top_k]]
-
-        # Return consistent format
-        return [{"id": r.id, "score": r.score} for r in results[:top_k]]
-
-    def get_all_memory_items(self, scope: str, filter: dict | None = None, knowledgebase_ids: list[str] | None = None, **kwargs) -> list[dict]:
+    def get_all_memory_items(
+            self, scope: str, filter: dict | None = None, knowledgebase_ids: list[str] | None = None, **kwargs
+    ) -> list[dict]:
         """
         Retrieve all memory items of a specific memory_type.
 
         Args:
-            scope (str): Must be one of 'WorkingMemory', 'LongTermMemory', or 'UserMemory'.
+            scope (str): Must be one of 'WorkingMemory', 'LongTermMemory', 'UserMemory', or 'OuterMemory'.
             filter (dict, optional): Filter conditions with 'and' or 'or' logic for search results.
                 Example: {"and": [{"id": "xxx"}, {"A": "yyy"}]} or {"or": [{"id": "xxx"}, {"A": "yyy"}]}
-            knowledgebase_ids (list[str], optional): List of knowledgebase IDs to filter by user_name.
+            knowledgebase_ids (list[str], optional): List of knowledgebase IDs to filter by.
 
         Returns:
             list[dict]: Full list of memory items under this scope.
         """
-        logger.info(f"[get_all_memory_items] scope: {scope},filter: {filter},knowledgebase_ids: {knowledgebase_ids}")
-        print(f"[get_all_memory_items] scope: {scope},filter: {filter},knowledgebase_ids: {knowledgebase_ids}")
+        logger.info(f"[get_all_memory_items] scope: {scope}, filter: {filter}, knowledgebase_ids: {knowledgebase_ids}")
+        print(f"[get_all_memory_items] scope: {scope}, filter: {filter}, knowledgebase_ids: {knowledgebase_ids}")
 
         user_name = kwargs.get("user_name") if kwargs.get("user_name") else self.config.user_name
         if scope not in {"WorkingMemory", "LongTermMemory", "UserMemory", "OuterMemory"}:
@@ -340,18 +463,14 @@ class Neo4jCommunityGraphDB(Neo4jGraphDB):
         where_clauses = ["n.memory_type = $scope"]
         params = {"scope": scope}
 
-        # Build user_name filter with knowledgebase_ids support (OR relationship)
-        user_name_conditions = []
-        if not self.config.use_multi_db and (self.config.user_name or user_name):
-            user_name_conditions.append("n.user_name = $user_name")
-        
-        # Add knowledgebase_ids conditions (checking user_name field in the data)
-        if knowledgebase_ids and isinstance(knowledgebase_ids, list) and len(knowledgebase_ids) > 0:
-            for idx, kb_id in enumerate(knowledgebase_ids):
-                if isinstance(kb_id, str):
-                    param_name = f"kb_id_{idx}"
-                    user_name_conditions.append(f"n.user_name = ${param_name}")
-        
+        # Build user_name filter with knowledgebase_ids support (OR relationship) using common method
+        user_name_conditions, user_name_params = self._build_user_name_and_kb_ids_conditions_cypher(
+            user_name=user_name,
+            knowledgebase_ids=knowledgebase_ids,
+            default_user_name=self.config.user_name,
+            node_alias="n",
+        )
+
         # Add user_name WHERE clause
         if user_name_conditions:
             if len(user_name_conditions) == 1:
@@ -359,91 +478,20 @@ class Neo4jCommunityGraphDB(Neo4jGraphDB):
             else:
                 where_clauses.append(f"({' OR '.join(user_name_conditions)})")
 
-        filter_params = {}
-        if filter:
-            def build_filter_condition(condition_dict: dict, param_counter: list) -> tuple[str, dict]:
-                """Build a WHERE condition for a single filter item.
-                
-                Args:
-                    condition_dict: A dict like {"id": "xxx"} or {"A": "xxx"} or {"created_at": {"gt": "2025-11-01"}}
-                    param_counter: List to track parameter counter for unique param names
-                
-                Returns:
-                    Tuple of (condition_string, parameters_dict)
-                """
-                condition_parts = []
-                filter_params_inner = {}
-
-                for key, value in condition_dict.items():
-                    # Check if value is a dict with comparison operators (gt, lt, gte, lte)
-                    if isinstance(value, dict):
-                        # Handle comparison operators: gt (greater than), lt (less than), gte (greater than or equal), lte (less than or equal)
-                        for op, op_value in value.items():
-                            if op in ("gt", "lt", "gte", "lte"):
-                                # Map operator to Cypher operator
-                                cypher_op_map = {
-                                    "gt": ">",
-                                    "lt": "<",
-                                    "gte": ">=",
-                                    "lte": "<="
-                                }
-                                cypher_op = cypher_op_map[op]
-                                
-                                # All fields are stored as flat properties in Neo4j
-                                param_name = f"filter_flat_{key}_{op}_{param_counter[0]}"
-                                param_counter[0] += 1
-                                filter_params_inner[param_name] = op_value
-                                
-                                # Check if field is a date field (created_at, updated_at, etc.)
-                                # Use datetime() function for date comparisons
-                                if key in ("created_at", "updated_at") or key.endswith("_at"):
-                                    condition_parts.append(f"n.{key} {cypher_op} datetime(${param_name})")
-                                else:
-                                    condition_parts.append(f"n.{key} {cypher_op} ${param_name}")
-                    else:
-                        # All fields are stored as flat properties in Neo4j (simple equality)
-                        param_name = f"filter_flat_{key}_{param_counter[0]}"
-                        param_counter[0] += 1
-                        filter_params_inner[param_name] = value
-                        condition_parts.append(f"n.{key} = ${param_name}")
-
-                return " AND ".join(condition_parts), filter_params_inner
-
-            param_counter = [0]
-
-            if isinstance(filter, dict):
-                if "or" in filter:
-                    or_conditions = []
-                    for condition in filter["or"]:
-                        if isinstance(condition, dict):
-                            condition_str, filter_params_inner = build_filter_condition(condition, param_counter)
-                            if condition_str:
-                                or_conditions.append(f"({condition_str})")
-                                filter_params.update(filter_params_inner)
-                    if or_conditions:
-                        where_clauses.append(f"({' OR '.join(or_conditions)})")
-
-                elif "and" in filter:
-                    for condition in filter["and"]:
-                        if isinstance(condition, dict):
-                            condition_str, filter_params_inner = build_filter_condition(condition, param_counter)
-                            if condition_str:
-                                where_clauses.append(f"({condition_str})")
-                                filter_params.update(filter_params_inner)
+        # Build filter conditions using common method
+        filter_conditions, filter_params = self._build_filter_conditions_cypher(
+            filter=filter,
+            param_counter_start=0,
+            node_alias="n",
+        )
+        where_clauses.extend(filter_conditions)
 
         where_clause = "WHERE " + " AND ".join(where_clauses)
 
-        # Add user_name parameter
-        if not self.config.use_multi_db and (self.config.user_name or user_name):
-            params["user_name"] = user_name
-        
-        # Add knowledgebase_ids parameters
-        if knowledgebase_ids and isinstance(knowledgebase_ids, list) and len(knowledgebase_ids) > 0:
-            for idx, kb_id in enumerate(knowledgebase_ids):
-                if isinstance(kb_id, str):
-                    param_name = f"kb_id_{idx}"
-                    params[param_name] = kb_id
+        # Add user_name and knowledgebase_ids parameters using common method
+        params.update(user_name_params)
 
+        # Add filter parameters
         if filter_params:
             params.update(filter_params)
 
@@ -452,8 +500,8 @@ class Neo4jCommunityGraphDB(Neo4jGraphDB):
             {where_clause}
             RETURN n
             """
-        logger.info(f"[get_all_memory_items] query: {query},params: {params}")
-        print(f"[get_all_memory_items] query: {query},params: {params}")
+        logger.info(f"[get_all_memory_items] query: {query}, params: {params}")
+        print(f"[get_all_memory_items] query: {query}, params: {params}")
 
         with self.driver.session(database=self.db_name) as session:
             results = session.run(query, params)
