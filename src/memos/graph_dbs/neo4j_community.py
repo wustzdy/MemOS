@@ -1,7 +1,7 @@
 import json
 import re
-from datetime import datetime
 
+from datetime import datetime
 from typing import Any
 
 from memos.configs.graph_db import Neo4jGraphDBConfig
@@ -137,17 +137,17 @@ class Neo4jCommunityGraphDB(Neo4jGraphDB):
 
     # Search / recall operations
     def search_by_embedding(
-            self,
-            vector: list[float],
-            top_k: int = 5,
-            scope: str | None = None,
-            status: str | None = None,
-            threshold: float | None = None,
-            search_filter: dict | None = None,
-            user_name: str | None = None,
-            filter: dict | None = None,
-            knowledgebase_ids: list[str] | None = None,
-            **kwargs,
+        self,
+        vector: list[float],
+        top_k: int = 5,
+        scope: str | None = None,
+        status: str | None = None,
+        threshold: float | None = None,
+        search_filter: dict | None = None,
+        user_name: str | None = None,
+        filter: dict | None = None,
+        knowledgebase_ids: list[str] | None = None,
+        **kwargs,
     ) -> list[dict]:
         """
         Retrieve node IDs based on vector similarity using external vector DB.
@@ -197,7 +197,9 @@ class Neo4jCommunityGraphDB(Neo4jGraphDB):
         vec_results = []
         if self.vec_db:
             try:
-                vec_results = self.vec_db.search(query_vector=vector, top_k=top_k, filter=vec_filter)
+                vec_results = self.vec_db.search(
+                    query_vector=vector, top_k=top_k, filter=vec_filter
+                )
             except Exception as e:
                 logger.warning(f"[VecDB] search failed: {e}")
 
@@ -264,9 +266,7 @@ class Neo4jCommunityGraphDB(Neo4jGraphDB):
 
         # Filter vector results by Neo4j filtered IDs and return with scores
         filtered_results = [
-            {"id": r.id, "score": r.score}
-            for r in vec_results
-            if r.id in filtered_ids
+            {"id": r.id, "score": r.score} for r in vec_results if r.id in filtered_ids
         ]
 
         return filtered_results
@@ -309,10 +309,10 @@ class Neo4jCommunityGraphDB(Neo4jGraphDB):
             return date_str
 
     def _build_filter_conditions_cypher(
-            self,
-            filter: dict | None,
-            param_counter_start: int = 0,
-            node_alias: str = "node",
+        self,
+        filter: dict | None,
+        param_counter_start: int = 0,
+        node_alias: str = "node",
     ) -> tuple[list[str], dict[str, Any]]:
         """
         Build filter conditions for Cypher queries with date normalization.
@@ -328,11 +328,7 @@ class Neo4jCommunityGraphDB(Neo4jGraphDB):
         Returns:
             Tuple of (condition_strings_list, parameters_dict)
         """
-        # Preprocess filter to normalize date strings
-        if filter:
-            normalized_filter = self._normalize_filter_dates(filter)
-        else:
-            normalized_filter = filter
+        normalized_filter = self._normalize_filter_dates(filter) if filter else filter
 
         # Call parent method with normalized filter
         return super()._build_filter_conditions_cypher(
@@ -439,7 +435,11 @@ class Neo4jCommunityGraphDB(Neo4jGraphDB):
         return normalized
 
     def get_all_memory_items(
-            self, scope: str, filter: dict | None = None, knowledgebase_ids: list[str] | None = None, **kwargs
+        self,
+        scope: str,
+        filter: dict | None = None,
+        knowledgebase_ids: list[str] | None = None,
+        **kwargs,
     ) -> list[dict]:
         """
         Retrieve all memory items of a specific memory_type.
@@ -453,8 +453,12 @@ class Neo4jCommunityGraphDB(Neo4jGraphDB):
         Returns:
             list[dict]: Full list of memory items under this scope.
         """
-        logger.info(f"[get_all_memory_items] scope: {scope}, filter: {filter}, knowledgebase_ids: {knowledgebase_ids}")
-        print(f"[get_all_memory_items] scope: {scope}, filter: {filter}, knowledgebase_ids: {knowledgebase_ids}")
+        logger.info(
+            f"[get_all_memory_items] scope: {scope}, filter: {filter}, knowledgebase_ids: {knowledgebase_ids}"
+        )
+        print(
+            f"[get_all_memory_items] scope: {scope}, filter: {filter}, knowledgebase_ids: {knowledgebase_ids}"
+        )
 
         user_name = kwargs.get("user_name") if kwargs.get("user_name") else self.config.user_name
         if scope not in {"WorkingMemory", "LongTermMemory", "UserMemory", "OuterMemory"}:
@@ -508,7 +512,11 @@ class Neo4jCommunityGraphDB(Neo4jGraphDB):
             return [self._parse_node(dict(record["n"])) for record in results]
 
     def get_by_metadata(
-        self, filters: list[dict[str, Any]], user_name: str | None = None, filter: dict | None = None, knowledgebase_ids: list[str] | None = None
+        self,
+        filters: list[dict[str, Any]],
+        user_name: str | None = None,
+        filter: dict | None = None,
+        knowledgebase_ids: list[str] | None = None,
     ) -> list[str]:
         """
         Retrieve node IDs that match given metadata filters.
@@ -532,8 +540,12 @@ class Neo4jCommunityGraphDB(Neo4jGraphDB):
             - Supports structured querying such as tag/category/importance/time filtering.
             - Can be used for faceted recall or prefiltering before embedding rerank.
         """
-        logger.info(f"[get_by_metadata] filters: {filters},user_name: {user_name},filter: {filter},knowledgebase_ids: {knowledgebase_ids}")
-        print(f"[get_by_metadata] filters: {filters},user_name: {user_name},filter: {filter},knowledgebase_ids: {knowledgebase_ids}")
+        logger.info(
+            f"[get_by_metadata] filters: {filters},user_name: {user_name},filter: {filter},knowledgebase_ids: {knowledgebase_ids}"
+        )
+        print(
+            f"[get_by_metadata] filters: {filters},user_name: {user_name},filter: {filter},knowledgebase_ids: {knowledgebase_ids}"
+        )
         user_name = user_name if user_name else self.config.user_name
         where_clauses = []
         params = {}
@@ -570,14 +582,14 @@ class Neo4jCommunityGraphDB(Neo4jGraphDB):
         user_name_conditions = []
         if not self.config.use_multi_db and (self.config.user_name or user_name):
             user_name_conditions.append("n.user_name = $user_name")
-        
+
         # Add knowledgebase_ids conditions (checking user_name field in the data)
         if knowledgebase_ids and isinstance(knowledgebase_ids, list) and len(knowledgebase_ids) > 0:
             for idx, kb_id in enumerate(knowledgebase_ids):
                 if isinstance(kb_id, str):
                     param_name = f"kb_id_{idx}"
                     user_name_conditions.append(f"n.user_name = ${param_name}")
-        
+
         # Add user_name WHERE clause
         if user_name_conditions:
             if len(user_name_conditions) == 1:
@@ -589,7 +601,9 @@ class Neo4jCommunityGraphDB(Neo4jGraphDB):
         filter_params = {}
         if filter:
             # Helper function to build a single filter condition
-            def build_filter_condition(condition_dict: dict, param_counter: list) -> tuple[str, dict]:
+            def build_filter_condition(
+                condition_dict: dict, param_counter: list
+            ) -> tuple[str, dict]:
                 """Build a WHERE condition for a single filter item.
 
                 Args:
@@ -609,23 +623,20 @@ class Neo4jCommunityGraphDB(Neo4jGraphDB):
                         for op, op_value in value.items():
                             if op in ("gt", "lt", "gte", "lte"):
                                 # Map operator to Cypher operator
-                                cypher_op_map = {
-                                    "gt": ">",
-                                    "lt": "<",
-                                    "gte": ">=",
-                                    "lte": "<="
-                                }
+                                cypher_op_map = {"gt": ">", "lt": "<", "gte": ">=", "lte": "<="}
                                 cypher_op = cypher_op_map[op]
-                                
+
                                 # All fields are stored as flat properties in Neo4j
                                 param_name = f"filter_meta_{key}_{op}_{param_counter[0]}"
                                 param_counter[0] += 1
                                 filter_params_inner[param_name] = op_value
-                                
+
                                 # Check if field is a date field (created_at, updated_at, etc.)
                                 # Use datetime() function for date comparisons
                                 if key in ("created_at", "updated_at") or key.endswith("_at"):
-                                    condition_parts.append(f"n.{key} {cypher_op} datetime(${param_name})")
+                                    condition_parts.append(
+                                        f"n.{key} {cypher_op} datetime(${param_name})"
+                                    )
                                 else:
                                     condition_parts.append(f"n.{key} {cypher_op} ${param_name}")
                     else:
@@ -639,7 +650,8 @@ class Neo4jCommunityGraphDB(Neo4jGraphDB):
 
             # Process filter structure
             param_counter = [
-                len(filters)]  # Use list to allow modification in nested function, start from len(filters) to avoid conflicts
+                len(filters)
+            ]  # Use list to allow modification in nested function, start from len(filters) to avoid conflicts
 
             if isinstance(filter, dict):
                 if "or" in filter:
@@ -647,7 +659,9 @@ class Neo4jCommunityGraphDB(Neo4jGraphDB):
                     or_conditions = []
                     for condition in filter["or"]:
                         if isinstance(condition, dict):
-                            condition_str, filter_params_inner = build_filter_condition(condition, param_counter)
+                            condition_str, filter_params_inner = build_filter_condition(
+                                condition, param_counter
+                            )
                             if condition_str:
                                 or_conditions.append(f"({condition_str})")
                                 filter_params.update(filter_params_inner)
@@ -658,7 +672,9 @@ class Neo4jCommunityGraphDB(Neo4jGraphDB):
                     # AND logic: all conditions must match
                     for condition in filter["and"]:
                         if isinstance(condition, dict):
-                            condition_str, filter_params_inner = build_filter_condition(condition, param_counter)
+                            condition_str, filter_params_inner = build_filter_condition(
+                                condition, param_counter
+                            )
                             if condition_str:
                                 where_clauses.append(f"({condition_str})")
                                 filter_params.update(filter_params_inner)
@@ -672,14 +688,14 @@ class Neo4jCommunityGraphDB(Neo4jGraphDB):
         # Add user_name parameter
         if not self.config.use_multi_db and (self.config.user_name or user_name):
             params["user_name"] = user_name
-        
+
         # Add knowledgebase_ids parameters
         if knowledgebase_ids and isinstance(knowledgebase_ids, list) and len(knowledgebase_ids) > 0:
             for idx, kb_id in enumerate(knowledgebase_ids):
                 if isinstance(kb_id, str):
                     param_name = f"kb_id_{idx}"
                     params[param_name] = kb_id
-        
+
         # Merge filter parameters
         if filter_params:
             params.update(filter_params)

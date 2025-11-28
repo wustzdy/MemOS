@@ -48,16 +48,16 @@ def _prepare_node_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
 def _flatten_info_fields(metadata: dict[str, Any]) -> dict[str, Any]:
     """
     Flatten the 'info' field in metadata to the top level.
-    
+
     If metadata contains an 'info' field that is a dictionary, all its key-value pairs
     will be moved to the top level of metadata, and the 'info' field will be removed.
-    
+
     Args:
         metadata: Dictionary that may contain an 'info' field
-        
+
     Returns:
         Dictionary with 'info' fields flattened to top level
-        
+
     Example:
         Input:  {"user_id": "xxx", "info": {"A": "value1", "B": "value2"}}
         Output: {"user_id": "xxx", "A": "value1", "B": "value2"}
@@ -195,7 +195,7 @@ class Neo4jGraphDB(BaseGraphDB):
             session.run(query)
 
     def add_node(
-            self, id: str, memory: str, metadata: dict[str, Any], user_name: str | None = None
+        self, id: str, memory: str, metadata: dict[str, Any], user_name: str | None = None
     ) -> None:
         logger.info(f"[add_node] metadata: {metadata},info: {metadata.get('info')}")
         print(f"[add_node] metadata: {metadata},info: {metadata.get('info')}")
@@ -206,7 +206,7 @@ class Neo4jGraphDB(BaseGraphDB):
 
         # Safely process metadata
         metadata = _prepare_node_metadata(metadata)
-        
+
         # Flatten info fields to top level (for Neo4j flat structure)
         metadata = _flatten_info_fields(metadata)
 
@@ -226,7 +226,6 @@ class Neo4jGraphDB(BaseGraphDB):
         if metadata["sources"]:
             for idx in range(len(metadata["sources"])):
                 metadata["sources"][idx] = json.dumps(metadata["sources"][idx])
-        print("111add_node id:",id)
 
         with self.driver.session(database=self.db_name) as session:
             session.run(
@@ -593,7 +592,7 @@ class Neo4jGraphDB(BaseGraphDB):
             ]
 
     def get_path(
-            self, source_id: str, target_id: str, max_depth: int = 3, user_name: str | None = None
+        self, source_id: str, target_id: str, max_depth: int = 3, user_name: str | None = None
     ) -> list[str]:
         """
         Get the path of nodes from source to target within a limited depth.
@@ -687,17 +686,17 @@ class Neo4jGraphDB(BaseGraphDB):
 
     # Search / recall operations
     def search_by_embedding(
-            self,
-            vector: list[float],
-            top_k: int = 5,
-            scope: str | None = None,
-            status: str | None = None,
-            threshold: float | None = None,
-            search_filter: dict | None = None,
-            user_name: str | None = None,
-            filter: dict | None = None,
-            knowledgebase_ids: list[str] | None = None,
-            **kwargs,
+        self,
+        vector: list[float],
+        top_k: int = 5,
+        scope: str | None = None,
+        status: str | None = None,
+        threshold: float | None = None,
+        search_filter: dict | None = None,
+        user_name: str | None = None,
+        filter: dict | None = None,
+        knowledgebase_ids: list[str] | None = None,
+        **kwargs,
     ) -> list[dict]:
         """
         Retrieve node IDs based on vector similarity.
@@ -808,7 +807,11 @@ class Neo4jGraphDB(BaseGraphDB):
         return records
 
     def get_by_metadata(
-        self, filters: list[dict[str, Any]], user_name: str | None = None, filter: dict | None = None, knowledgebase_ids: list[str] | None = None
+        self,
+        filters: list[dict[str, Any]],
+        user_name: str | None = None,
+        filter: dict | None = None,
+        knowledgebase_ids: list[str] | None = None,
     ) -> list[str]:
         """
         TODO:
@@ -834,8 +837,12 @@ class Neo4jGraphDB(BaseGraphDB):
             - Supports structured querying such as tag/category/importance/time filtering.
             - Can be used for faceted recall or prefiltering before embedding rerank.
         """
-        logger.info(f"[get_by_metadata] filters: {filters},user_name: {user_name},filter: {filter},knowledgebase_ids: {knowledgebase_ids}")
-        print(f"[get_by_metadata] filters: {filters},user_name: {user_name},filter: {filter},knowledgebase_ids: {knowledgebase_ids}")
+        logger.info(
+            f"[get_by_metadata] filters: {filters},user_name: {user_name},filter: {filter},knowledgebase_ids: {knowledgebase_ids}"
+        )
+        print(
+            f"[get_by_metadata] filters: {filters},user_name: {user_name},filter: {filter},knowledgebase_ids: {knowledgebase_ids}"
+        )
         user_name = user_name if user_name else self.config.user_name
         where_clauses = []
         params = {}
@@ -1096,7 +1103,13 @@ class Neo4jGraphDB(BaseGraphDB):
                     target_id=edge["target"],
                 )
 
-    def get_all_memory_items(self, scope: str, filter: dict | None = None, knowledgebase_ids: list[str] | None = None, **kwargs) -> list[dict]:
+    def get_all_memory_items(
+        self,
+        scope: str,
+        filter: dict | None = None,
+        knowledgebase_ids: list[str] | None = None,
+        **kwargs,
+    ) -> list[dict]:
         """
         Retrieve all memory items of a specific memory_type.
 
@@ -1109,8 +1122,12 @@ class Neo4jGraphDB(BaseGraphDB):
         Returns:
             list[dict]: Full list of memory items under this scope.
         """
-        logger.info(f"[get_all_memory_items] scope: {scope},filter: {filter},knowledgebase_ids: {knowledgebase_ids}")
-        print(f"[get_all_memory_items] scope: {scope},filter: {filter},knowledgebase_ids: {knowledgebase_ids}")
+        logger.info(
+            f"[get_all_memory_items] scope: {scope},filter: {filter},knowledgebase_ids: {knowledgebase_ids}"
+        )
+        print(
+            f"[get_all_memory_items] scope: {scope},filter: {filter},knowledgebase_ids: {knowledgebase_ids}"
+        )
 
         user_name = kwargs.get("user_name") if kwargs.get("user_name") else self.config.user_name
         if scope not in {"WorkingMemory", "LongTermMemory", "UserMemory", "OuterMemory"}:
@@ -1316,11 +1333,11 @@ class Neo4jGraphDB(BaseGraphDB):
         return False
 
     def _build_user_name_and_kb_ids_conditions_cypher(
-            self,
-            user_name: str | None,
-            knowledgebase_ids: list[str] | None,
-            default_user_name: str | None = None,
-            node_alias: str = "node",
+        self,
+        user_name: str | None,
+        knowledgebase_ids: list[str] | None,
+        default_user_name: str | None = None,
+        node_alias: str = "node",
     ) -> tuple[list[str], dict[str, Any]]:
         """
         Build user_name and knowledgebase_ids conditions for Cypher queries.
@@ -1354,10 +1371,10 @@ class Neo4jGraphDB(BaseGraphDB):
         return user_name_conditions, params
 
     def _build_filter_conditions_cypher(
-            self,
-            filter: dict | None,
-            param_counter_start: int = 0,
-            node_alias: str = "node",
+        self,
+        filter: dict | None,
+        param_counter_start: int = 0,
+        node_alias: str = "node",
     ) -> tuple[list[str], dict[str, Any]]:
         """
         Build filter conditions for Cypher queries.
@@ -1396,12 +1413,7 @@ class Neo4jGraphDB(BaseGraphDB):
                     for op, op_value in value.items():
                         if op in ("gt", "lt", "gte", "lte"):
                             # Map operator to Cypher operator
-                            cypher_op_map = {
-                                "gt": ">",
-                                "lt": "<",
-                                "gte": ">=",
-                                "lte": "<="
-                            }
+                            cypher_op_map = {"gt": ">", "lt": "<", "gte": ">=", "lte": "<="}
                             cypher_op = cypher_op_map[op]
 
                             # All fields are stored as flat properties in Neo4j
@@ -1412,15 +1424,19 @@ class Neo4jGraphDB(BaseGraphDB):
                             # Check if field is a date field (created_at, updated_at, etc.)
                             # Use datetime() function for date comparisons
                             if key in ("created_at", "updated_at") or key.endswith("_at"):
-                                condition_parts.append(f"{node_alias}.{key} {cypher_op} datetime(${param_name})")
+                                condition_parts.append(
+                                    f"{node_alias}.{key} {cypher_op} datetime(${param_name})"
+                                )
                             else:
-                                condition_parts.append(f"{node_alias}.{key} {cypher_op} ${param_name}")
+                                condition_parts.append(
+                                    f"{node_alias}.{key} {cypher_op} ${param_name}"
+                                )
                         elif op == "contains":
                             # Handle contains operator (for array fields like tags, sources)
                             param_name = f"filter_{key}_{op}_{param_counter[0]}"
                             param_counter[0] += 1
                             params[param_name] = op_value
-                            
+
                             # For array fields, check if element is in array
                             if key in ("tags", "sources"):
                                 condition_parts.append(f"${param_name} IN {node_alias}.{key}")
