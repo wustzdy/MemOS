@@ -3833,3 +3833,104 @@ class PolarDBGraphDB(BaseGraphDB):
             return new_condition
 
         return process_condition(filter_dict)
+
+    @timed
+    def delete_node_by_prams(
+            self,
+            memory_ids: list[str] | None = None,
+            file_ids: list[str] | None = None,
+    ) -> int:
+        """
+        Delete nodes by memory_ids or file_ids.
+
+        Args:
+            memory_ids (list[str], optional): List of memory node IDs to delete.
+            file_ids (list[str], optional): List of file node IDs to delete.
+
+        Returns:
+            int: Number of nodes deleted.
+        """
+        # Build WHERE conditions for different ID types
+        where_conditions = []
+
+        # Build condition for memory_ids (query n.id)
+        if memory_ids and len(memory_ids) > 0:
+            memory_id_conditions = []
+            for node_id in memory_ids:
+                # Escape single quotes in node IDs
+                escaped_id = str(node_id).replace("'", "\\'")
+                memory_id_conditions.append(f"'{escaped_id}'")
+            where_conditions.append(f"n.id IN [{', '.join(memory_id_conditions)}]")
+
+        # Build condition for file_ids (query n.file_id)
+        if file_ids and len(file_ids) > 0:
+            file_id_conditions = []
+            for node_id in file_ids:
+                # Escape single quotes in node IDs
+                escaped_id = str(node_id).replace("'", "\\'")
+                file_id_conditions.append(f"'{escaped_id}'")
+            where_conditions.append(f"n.file_id IN [{', '.join(file_id_conditions)}]")
+
+        # If no IDs to delete, return 0
+        if not where_conditions:
+            logger.warning("[delete_node_by_prams] No nodes to delete")
+            return 0
+
+        # Build WHERE clause - use OR if both conditions exist
+        ids_where = " OR ".join(where_conditions) if len(where_conditions) > 1 else where_conditions[0]
+
+        # Use Cypher DELETE query
+        # First count matching nodes to get accurate count
+        count_query = f"""
+                SELECT * FROM cypher('{self.db_name}_graph', $$
+                MATCH (n:Memory)
+                WHERE {ids_where}
+                RETURN count(n) AS node_count
+                $$) AS (node_count agtype)
+            """
+        logger.info(f"[delete_node_by_prams] count_query: {count_query}")
+        print(f"[delete_node_by_prams] count_query: {count_query}")
+
+        # Then delete nodes
+        delete_query = f"""
+                SELECT * FROM cypher('{self.db_name}_graph', $$
+                MATCH (n:Memory)
+                WHERE {ids_where}
+                DETACH DELETE n
+                $$) AS (result agtype)
+            """
+
+        # Calculate total count for logging
+        total_count = (len(memory_ids) if memory_ids else 0) + (len(file_ids) if file_ids else 0)
+        logger.info(f"[delete_node_by_prams] Deleting nodes - memory_ids: {memory_ids}, file_ids: {file_ids}")
+        print(f"[delete_node_by_prams] Deleting {total_count} nodes - memory_ids: {memory_ids}, file_ids: {file_ids}")
+        logger.info(f"[delete_node_by_prams] delete_query: {delete_query}")
+        print(f"[delete_node_by_prams] delete_query: {delete_query}")
+
+        conn = self._get_connection()
+        deleted_count = 0
+        try:
+            with conn.cursor() as cursor:
+                # Count nodes before deletion
+                cursor.execute(count_query)
+                count_results = cursor.fetchall()
+                expected_count = total_count
+                if count_results and len(count_results) > 0:
+                    count_str = str(count_results[0][0])
+                    count_str = count_str.strip('"').strip("'")
+                    expected_count = int(count_str) if count_str.isdigit() else total_count
+
+                # Delete nodes
+                cursor.execute(delete_query)
+                # Use the count from before deletion as the actual deleted count
+                deleted_count = expected_count
+                conn.commit()
+        except Exception as e:
+            logger.error(f"[delete_node_by_prams] Failed to delete nodes: {e}", exc_info=True)
+            conn.rollback()
+            raise
+        finally:
+            self._return_connection(conn)
+
+        logger.info(f"[delete_node_by_prams] Successfully deleted {deleted_count} nodes")
+        return deleted_count
