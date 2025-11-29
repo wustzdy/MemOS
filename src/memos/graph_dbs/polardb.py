@@ -1619,6 +1619,7 @@ class PolarDBGraphDB(BaseGraphDB):
         user_name: str | None = None,
         filter: dict | None = None,
         knowledgebase_ids: list | None = None,
+        user_name_flag: bool = True,
     ) -> list[str]:
         """
         Retrieve node IDs that match given metadata filters.
@@ -1693,11 +1694,14 @@ class PolarDBGraphDB(BaseGraphDB):
                 raise ValueError(f"Unsupported operator: {op}")
 
         # Build user_name filter with knowledgebase_ids support (OR relationship) using common method
-        user_name_conditions = self._build_user_name_and_kb_ids_conditions_cypher(
-            user_name=user_name,
-            knowledgebase_ids=knowledgebase_ids,
-            default_user_name=self._get_config_value("user_name"),
-        )
+        user_name_conditions = []
+        if user_name_flag:
+            user_name_conditions = self._build_user_name_and_kb_ids_conditions_cypher(
+                user_name=user_name,
+                knowledgebase_ids=knowledgebase_ids,
+                default_user_name=self._get_config_value("user_name"),
+            )
+        print(f"[get_by_metadata] user_name_conditions: {user_name_conditions}")
 
         # Add user_name WHERE clause
         if user_name_conditions:
@@ -1709,16 +1713,26 @@ class PolarDBGraphDB(BaseGraphDB):
         # Build filter conditions using common method
         filter_where_clause = self._build_filter_conditions_cypher(filter)
 
-        where_str = " AND ".join(where_conditions) + filter_where_clause
+        # Build WHERE clause: if where_conditions is empty, filter_where_clause should not have " AND " prefix
+        if where_conditions:
+            where_str = " AND ".join(where_conditions) + filter_where_clause
+        else:
+            # If no other conditions, remove " AND " prefix from filter_where_clause if present
+            if filter_where_clause.startswith(" AND "):
+                where_str = filter_where_clause[5:]  # Remove " AND " prefix
+            else:
+                where_str = filter_where_clause
 
         # Use cypher query
+        # Only include WHERE clause if where_str is not empty
+        where_clause = f"WHERE {where_str}" if where_str else ""
         cypher_query = f"""
-            SELECT * FROM cypher('{self.db_name}_graph', $$
-            MATCH (n:Memory)
-            WHERE {where_str}
-            RETURN n.id AS id
-            $$) AS (id agtype)
-        """
+                    SELECT * FROM cypher('{self.db_name}_graph', $$
+                    MATCH (n:Memory)
+                    {where_clause}
+                    RETURN n.id AS id
+                    $$) AS (id agtype)
+                """
 
         ids = []
         conn = self._get_connection()
@@ -3253,6 +3267,7 @@ class PolarDBGraphDB(BaseGraphDB):
         """
         user_name_conditions = []
         effective_user_name = user_name if user_name else default_user_name
+        print(f"[delete_node_by_prams] effective_user_name: {effective_user_name}")
 
         if effective_user_name:
             escaped_user_name = effective_user_name.replace("'", "''")
@@ -3839,45 +3854,66 @@ class PolarDBGraphDB(BaseGraphDB):
             self,
             memory_ids: list[str] | None = None,
             file_ids: list[str] | None = None,
+            filter: dict | None = None,
     ) -> int:
         """
-        Delete nodes by memory_ids or file_ids.
+        Delete nodes by memory_ids, file_ids, or filter.
 
         Args:
             memory_ids (list[str], optional): List of memory node IDs to delete.
             file_ids (list[str], optional): List of file node IDs to delete.
+            filter (dict, optional): Filter dictionary to query matching nodes for deletion.
 
         Returns:
             int: Number of nodes deleted.
         """
-        # Build WHERE conditions for different ID types
-        where_conditions = []
+        # Collect all node IDs to delete
+        ids_to_delete = set()
 
-        # Build condition for memory_ids (query n.id)
+        # Add memory_ids if provided
         if memory_ids and len(memory_ids) > 0:
-            memory_id_conditions = []
-            for node_id in memory_ids:
-                # Escape single quotes in node IDs
-                escaped_id = str(node_id).replace("'", "\\'")
-                memory_id_conditions.append(f"'{escaped_id}'")
-            where_conditions.append(f"n.id IN [{', '.join(memory_id_conditions)}]")
+            ids_to_delete.update(memory_ids)
 
-        # Build condition for file_ids (query n.file_id)
+        # Add file_ids if provided (treating them as node IDs)
         if file_ids and len(file_ids) > 0:
-            file_id_conditions = []
-            for node_id in file_ids:
-                # Escape single quotes in node IDs
-                escaped_id = str(node_id).replace("'", "\\'")
-                file_id_conditions.append(f"'{escaped_id}'")
-            where_conditions.append(f"n.file_id IN [{', '.join(file_id_conditions)}]")
+            ids_to_delete.update(file_ids)
+
+        # Query nodes by filter if provided
+        if filter:
+            # Parse filter to validate and transform field names (e.g., add "info." prefix if needed)
+            parsed_filter = self.parse_filter(filter)
+            if parsed_filter:
+                # Use get_by_metadata with empty filters list and parsed filter
+                filter_ids = self.get_by_metadata(
+                    filters=[],
+                    user_name=None,
+                    filter=parsed_filter,
+                    knowledgebase_ids=None,
+                    user_name_flag=False,
+                )
+                # print(f"[delete_node_by_prams] filter_ids: {filter_ids}")
+                ids_to_delete.update(filter_ids)
+            else:
+                logger.warning("[delete_node_by_prams] Filter parsed to None, skipping filter query")
 
         # If no IDs to delete, return 0
-        if not where_conditions:
+        if not ids_to_delete:
             logger.warning("[delete_node_by_prams] No nodes to delete")
             return 0
 
-        # Build WHERE clause - use OR if both conditions exist
-        ids_where = " OR ".join(where_conditions) if len(where_conditions) > 1 else where_conditions[0]
+        # Convert to list for easier handling
+        ids_list = list(ids_to_delete)
+        logger.info(f"[delete_node_by_prams] Deleting {len(ids_list)} nodes: {ids_list}")
+
+        # Build WHERE condition for collected IDs (query n.id)
+        id_conditions = []
+        for node_id in ids_list:
+            # Escape single quotes in node IDs
+            escaped_id = str(node_id).replace("'", "\\'")
+            id_conditions.append(f"'{escaped_id}'")
+
+        # Build WHERE clause for IDs
+        ids_where = f"n.id IN [{', '.join(id_conditions)}]"
 
         # Use Cypher DELETE query
         # First count matching nodes to get accurate count
@@ -3901,9 +3937,9 @@ class PolarDBGraphDB(BaseGraphDB):
             """
 
         # Calculate total count for logging
-        total_count = (len(memory_ids) if memory_ids else 0) + (len(file_ids) if file_ids else 0)
-        logger.info(f"[delete_node_by_prams] Deleting nodes - memory_ids: {memory_ids}, file_ids: {file_ids}")
-        print(f"[delete_node_by_prams] Deleting {total_count} nodes - memory_ids: {memory_ids}, file_ids: {file_ids}")
+        total_count = len(ids_list)
+        logger.info(f"[delete_node_by_prams] Deleting nodes - memory_ids: {memory_ids}, file_ids: {file_ids}, filter: {filter}")
+        print(f"[delete_node_by_prams] Deleting {total_count} nodes - memory_ids: {memory_ids}, file_ids: {file_ids}, filter: {filter}")
         logger.info(f"[delete_node_by_prams] delete_query: {delete_query}")
         print(f"[delete_node_by_prams] delete_query: {delete_query}")
 
