@@ -1482,6 +1482,12 @@ class Neo4jGraphDB(BaseGraphDB):
                         if condition_str:
                             filter_conditions.append(f"({condition_str})")
                             filter_params.update(params)
+            else:
+                # Handle simple dict without "and" or "or" (e.g., {"id": "xxx"})
+                condition_str, params = build_filter_condition(filter, param_counter)
+                if condition_str:
+                    filter_conditions.append(condition_str)
+                    filter_params.update(params)
 
         return filter_conditions, filter_params
 
