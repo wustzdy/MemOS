@@ -812,6 +812,7 @@ class Neo4jGraphDB(BaseGraphDB):
         user_name: str | None = None,
         filter: dict | None = None,
         knowledgebase_ids: list[str] | None = None,
+        user_name_flag: bool = True,
     ) -> list[str]:
         """
         TODO:
@@ -876,12 +877,16 @@ class Neo4jGraphDB(BaseGraphDB):
                 raise ValueError(f"Unsupported operator: {op}")
 
         # Build user_name filter with knowledgebase_ids support (OR relationship) using common method
-        user_name_conditions, user_name_params = self._build_user_name_and_kb_ids_conditions_cypher(
-            user_name=user_name,
-            knowledgebase_ids=knowledgebase_ids,
-            default_user_name=self.config.user_name,
-            node_alias="n",
-        )
+        user_name_conditions = []
+        user_name_params = {}
+        if user_name_flag:
+            user_name_conditions, user_name_params = self._build_user_name_and_kb_ids_conditions_cypher(
+                user_name=user_name,
+                knowledgebase_ids=knowledgebase_ids,
+                default_user_name=self.config.user_name,
+                node_alias="n",
+            )
+        print(f"[get_by_metadata] user_name_conditions: {user_name_conditions},user_name_params: {user_name_params}")
 
         # Add user_name WHERE clause
         if user_name_conditions:
@@ -1519,41 +1524,56 @@ class Neo4jGraphDB(BaseGraphDB):
             filter: dict | None = None,
     ) -> int:
         """
-        Delete nodes by memory_ids or file_ids.
+        Delete nodes by memory_ids, file_ids, or filter.
 
         Args:
             memory_ids (list[str], optional): List of memory node IDs to delete.
             file_ids (list[str], optional): List of file node IDs to delete.
+            filter (dict, optional): Filter dictionary to query matching nodes for deletion.
 
         Returns:
             int: Number of nodes deleted.
         """
-        # Build WHERE conditions for different ID types
-        where_conditions = []
-        params = {}
+        # Collect all node IDs to delete
+        ids_to_delete = set()
 
-        # Build condition for memory_ids (query n.id)
+        # Add memory_ids if provided
         if memory_ids and len(memory_ids) > 0:
-            where_conditions.append("n.id IN $memory_ids")
-            params["memory_ids"] = memory_ids
+            ids_to_delete.update(memory_ids)
 
-        # Build condition for file_ids (query n.file_id)
+        # Add file_ids if provided (treating them as node IDs)
         if file_ids and len(file_ids) > 0:
-            where_conditions.append("n.file_id IN $file_ids")
-            params["file_ids"] = file_ids
+            ids_to_delete.update(file_ids)
+
+        # Query nodes by filter if provided
+        if filter:
+            # Use get_by_metadata with empty filters list and filter
+            filter_ids = self.get_by_metadata(
+                filters=[],
+                user_name=None,
+                filter=filter,
+                knowledgebase_ids=None,
+                user_name_flag=False,
+            )
+            ids_to_delete.update(filter_ids)
 
         # If no IDs to delete, return 0
-        if not where_conditions:
+        if not ids_to_delete:
             logger.warning("[delete_node_by_prams] No nodes to delete")
             return 0
 
-        # Build WHERE clause - use OR if both conditions exist
-        ids_where = " OR ".join(where_conditions) if len(where_conditions) > 1 else where_conditions[0]
+        # Convert to list for easier handling
+        ids_list = list(ids_to_delete)
+        logger.info(f"[delete_node_by_prams] Deleting {len(ids_list)} nodes: {ids_list}")
+
+        # Build WHERE condition for collected IDs (query n.id)
+        ids_where = "n.id IN $ids_to_delete"
+        params = {"ids_to_delete": ids_list}
 
         # Calculate total count for logging
-        total_count = (len(memory_ids) if memory_ids else 0) + (len(file_ids) if file_ids else 0)
-        logger.info(f"[delete_node_by_prams] Deleting nodes - memory_ids: {memory_ids}, file_ids: {file_ids}")
-        print(f"[delete_node_by_prams] Deleting {total_count} nodes - memory_ids: {memory_ids}, file_ids: {file_ids}")
+        total_count = len(ids_list)
+        logger.info(f"[delete_node_by_prams] Deleting nodes - memory_ids: {memory_ids}, file_ids: {file_ids}, filter: {filter}")
+        print(f"[delete_node_by_prams] Deleting {total_count} nodes - memory_ids: {memory_ids}, file_ids: {file_ids}, filter: {filter}")
 
         # First count matching nodes to get accurate count
         count_query = f"MATCH (n:Memory) WHERE {ids_where} RETURN count(n) AS node_count"
