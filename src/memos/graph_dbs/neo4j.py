@@ -880,13 +880,17 @@ class Neo4jGraphDB(BaseGraphDB):
         user_name_conditions = []
         user_name_params = {}
         if user_name_flag:
-            user_name_conditions, user_name_params = self._build_user_name_and_kb_ids_conditions_cypher(
-                user_name=user_name,
-                knowledgebase_ids=knowledgebase_ids,
-                default_user_name=self.config.user_name,
-                node_alias="n",
+            user_name_conditions, user_name_params = (
+                self._build_user_name_and_kb_ids_conditions_cypher(
+                    user_name=user_name,
+                    knowledgebase_ids=knowledgebase_ids,
+                    default_user_name=self.config.user_name,
+                    node_alias="n",
+                )
             )
-        print(f"[get_by_metadata] user_name_conditions: {user_name_conditions},user_name_params: {user_name_params}")
+        print(
+            f"[get_by_metadata] user_name_conditions: {user_name_conditions},user_name_params: {user_name_params}"
+        )
 
         # Add user_name WHERE clause
         if user_name_conditions:
@@ -1518,10 +1522,10 @@ class Neo4jGraphDB(BaseGraphDB):
         return {"id": node.pop("id"), "memory": node.pop("memory", ""), "metadata": node}
 
     def delete_node_by_prams(
-            self,
-            memory_ids: list[str] | None = None,
-            file_ids: list[str] | None = None,
-            filter: dict | None = None,
+        self,
+        memory_ids: list[str] | None = None,
+        file_ids: list[str] | None = None,
+        filter: dict | None = None,
     ) -> int:
         """
         Delete nodes by memory_ids, file_ids, or filter.
@@ -1572,8 +1576,12 @@ class Neo4jGraphDB(BaseGraphDB):
 
         # Calculate total count for logging
         total_count = len(ids_list)
-        logger.info(f"[delete_node_by_prams] Deleting nodes - memory_ids: {memory_ids}, file_ids: {file_ids}, filter: {filter}")
-        print(f"[delete_node_by_prams] Deleting {total_count} nodes - memory_ids: {memory_ids}, file_ids: {file_ids}, filter: {filter}")
+        logger.info(
+            f"[delete_node_by_prams] Deleting nodes - memory_ids: {memory_ids}, file_ids: {file_ids}, filter: {filter}"
+        )
+        print(
+            f"[delete_node_by_prams] Deleting {total_count} nodes - memory_ids: {memory_ids}, file_ids: {file_ids}, filter: {filter}"
+        )
 
         # First count matching nodes to get accurate count
         count_query = f"MATCH (n:Memory) WHERE {ids_where} RETURN count(n) AS node_count"
@@ -1606,4 +1614,3 @@ class Neo4jGraphDB(BaseGraphDB):
 
         logger.info(f"[delete_node_by_prams] Successfully deleted {deleted_count} nodes")
         return deleted_count
-

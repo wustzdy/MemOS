@@ -3851,10 +3851,10 @@ class PolarDBGraphDB(BaseGraphDB):
 
     @timed
     def delete_node_by_prams(
-            self,
-            memory_ids: list[str] | None = None,
-            file_ids: list[str] | None = None,
-            filter: dict | None = None,
+        self,
+        memory_ids: list[str] | None = None,
+        file_ids: list[str] | None = None,
+        filter: dict | None = None,
     ) -> int:
         """
         Delete nodes by memory_ids, file_ids, or filter.
@@ -3891,10 +3891,11 @@ class PolarDBGraphDB(BaseGraphDB):
                     knowledgebase_ids=None,
                     user_name_flag=False,
                 )
-                # print(f"[delete_node_by_prams] filter_ids: {filter_ids}")
                 ids_to_delete.update(filter_ids)
             else:
-                logger.warning("[delete_node_by_prams] Filter parsed to None, skipping filter query")
+                logger.warning(
+                    "[delete_node_by_prams] Filter parsed to None, skipping filter query"
+                )
 
         # If no IDs to delete, return 0
         if not ids_to_delete:
@@ -3938,8 +3939,12 @@ class PolarDBGraphDB(BaseGraphDB):
 
         # Calculate total count for logging
         total_count = len(ids_list)
-        logger.info(f"[delete_node_by_prams] Deleting nodes - memory_ids: {memory_ids}, file_ids: {file_ids}, filter: {filter}")
-        print(f"[delete_node_by_prams] Deleting {total_count} nodes - memory_ids: {memory_ids}, file_ids: {file_ids}, filter: {filter}")
+        logger.info(
+            f"[delete_node_by_prams] Deleting nodes - memory_ids: {memory_ids}, file_ids: {file_ids}, filter: {filter}"
+        )
+        print(
+            f"[delete_node_by_prams] Deleting {total_count} nodes - memory_ids: {memory_ids}, file_ids: {file_ids}, filter: {filter}"
+        )
         logger.info(f"[delete_node_by_prams] delete_query: {delete_query}")
         print(f"[delete_node_by_prams] delete_query: {delete_query}")
 
