@@ -3505,6 +3505,11 @@ class PolarDBGraphDB(BaseGraphDB):
                                 and_conditions.append(f"({condition_str})")
                     if and_conditions:
                         filter_where_clause = " AND " + " AND ".join(and_conditions)
+                else:
+                    # Handle simple dict without "and" or "or" (e.g., {"id": "xxx"})
+                    condition_str = build_cypher_filter_condition(filter)
+                    if condition_str:
+                        filter_where_clause = " AND " + condition_str
 
         return filter_where_clause
 
@@ -3752,6 +3757,11 @@ class PolarDBGraphDB(BaseGraphDB):
                             condition_str = build_filter_condition(condition)
                             if condition_str:
                                 filter_conditions.append(f"({condition_str})")
+                else:
+                    # Handle simple dict without "and" or "or" (e.g., {"id": "xxx"})
+                    condition_str = build_filter_condition(filter)
+                    if condition_str:
+                        filter_conditions.append(condition_str)
 
         return filter_conditions
 
