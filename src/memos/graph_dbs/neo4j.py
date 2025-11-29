@@ -1511,3 +1511,78 @@ class Neo4jGraphDB(BaseGraphDB):
                     break
                 node["sources"][idx] = json.loads(node["sources"][idx])
         return {"id": node.pop("id"), "memory": node.pop("memory", ""), "metadata": node}
+
+    def delete_node_by_prams(
+            self,
+            memory_ids: list[str] | None = None,
+            file_ids: list[str] | None = None,
+    ) -> int:
+        """
+        Delete nodes by memory_ids or file_ids.
+
+        Args:
+            memory_ids (list[str], optional): List of memory node IDs to delete.
+            file_ids (list[str], optional): List of file node IDs to delete.
+
+        Returns:
+            int: Number of nodes deleted.
+        """
+        # Build WHERE conditions for different ID types
+        where_conditions = []
+        params = {}
+
+        # Build condition for memory_ids (query n.id)
+        if memory_ids and len(memory_ids) > 0:
+            where_conditions.append("n.id IN $memory_ids")
+            params["memory_ids"] = memory_ids
+
+        # Build condition for file_ids (query n.file_id)
+        if file_ids and len(file_ids) > 0:
+            where_conditions.append("n.file_id IN $file_ids")
+            params["file_ids"] = file_ids
+
+        # If no IDs to delete, return 0
+        if not where_conditions:
+            logger.warning("[delete_node_by_prams] No nodes to delete")
+            return 0
+
+        # Build WHERE clause - use OR if both conditions exist
+        ids_where = " OR ".join(where_conditions) if len(where_conditions) > 1 else where_conditions[0]
+
+        # Calculate total count for logging
+        total_count = (len(memory_ids) if memory_ids else 0) + (len(file_ids) if file_ids else 0)
+        logger.info(f"[delete_node_by_prams] Deleting nodes - memory_ids: {memory_ids}, file_ids: {file_ids}")
+        print(f"[delete_node_by_prams] Deleting {total_count} nodes - memory_ids: {memory_ids}, file_ids: {file_ids}")
+
+        # First count matching nodes to get accurate count
+        count_query = f"MATCH (n:Memory) WHERE {ids_where} RETURN count(n) AS node_count"
+        logger.info(f"[delete_node_by_prams] count_query: {count_query}")
+        print(f"[delete_node_by_prams] count_query: {count_query}")
+
+        # Then delete nodes
+        delete_query = f"MATCH (n:Memory) WHERE {ids_where} DETACH DELETE n"
+        logger.info(f"[delete_node_by_prams] delete_query: {delete_query}")
+        print(f"[delete_node_by_prams] delete_query: {delete_query}")
+
+        deleted_count = 0
+        try:
+            with self.driver.session(database=self.db_name) as session:
+                # Count nodes before deletion
+                count_result = session.run(count_query, **params)
+                count_record = count_result.single()
+                expected_count = total_count
+                if count_record:
+                    expected_count = count_record["node_count"] or total_count
+
+                # Delete nodes
+                session.run(delete_query, **params)
+                # Use the count from before deletion as the actual deleted count
+                deleted_count = expected_count
+
+        except Exception as e:
+            logger.error(f"[delete_node_by_prams] Failed to delete nodes: {e}", exc_info=True)
+            raise
+
+        logger.info(f"[delete_node_by_prams] Successfully deleted {deleted_count} nodes")
+        return deleted_count
+
