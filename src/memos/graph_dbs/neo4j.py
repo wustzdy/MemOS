@@ -1425,7 +1425,7 @@ class Neo4jGraphDB(BaseGraphDB):
                             # Use datetime() function for date comparisons
                             if key in ("created_at", "updated_at") or key.endswith("_at"):
                                 condition_parts.append(
-                                    f"{node_alias}.{key} {cypher_op} datetime(${param_name})"
+                                    f"datetime({node_alias}.{key}) {cypher_op} datetime(${param_name})"
                                 )
                             else:
                                 condition_parts.append(
@@ -1516,6 +1516,7 @@ class Neo4jGraphDB(BaseGraphDB):
             self,
             memory_ids: list[str] | None = None,
             file_ids: list[str] | None = None,
+            filter: dict | None = None,
     ) -> int:
         """
         Delete nodes by memory_ids or file_ids.
