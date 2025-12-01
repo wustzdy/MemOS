@@ -13,7 +13,6 @@ from memos.graph_dbs.base import BaseGraphDB
 from memos.log import get_logger
 from memos.utils import timed
 
-
 logger = get_logger(__name__)
 
 
@@ -361,11 +360,11 @@ class PolarDBGraphDB(BaseGraphDB):
             self._return_connection(conn)
 
     def create_index(
-        self,
-        label: str = "Memory",
-        vector_property: str = "embedding",
-        dimensions: int = 1024,
-        index_name: str = "memory_vector_index",
+            self,
+            label: str = "Memory",
+            vector_property: str = "embedding",
+            dimensions: int = 1024,
+            index_name: str = "memory_vector_index",
     ) -> None:
         """
         Create indexes for embedding and other fields.
@@ -449,7 +448,7 @@ class PolarDBGraphDB(BaseGraphDB):
 
     @timed
     def remove_oldest_memory(
-        self, memory_type: str, keep_latest: int, user_name: str | None = None
+            self, memory_type: str, keep_latest: int, user_name: str | None = None
     ) -> None:
         """
         Remove all WorkingMemory nodes except the latest `keep_latest` entries.
@@ -687,7 +686,7 @@ class PolarDBGraphDB(BaseGraphDB):
 
     @timed
     def add_edge(
-        self, source_id: str, target_id: str, type: str, user_name: str | None = None
+            self, source_id: str, target_id: str, type: str, user_name: str | None = None
     ) -> None:
         if not source_id or not target_id:
             logger.warning(f"Edge '{source_id}' and '{target_id}' are both None")
@@ -753,7 +752,7 @@ class PolarDBGraphDB(BaseGraphDB):
 
     @timed
     def edge_exists_old(
-        self, source_id: str, target_id: str, type: str = "ANY", direction: str = "OUTGOING"
+            self, source_id: str, target_id: str, type: str = "ANY", direction: str = "OUTGOING"
     ) -> bool:
         """
         Check if an edge exists between two nodes.
@@ -815,12 +814,12 @@ class PolarDBGraphDB(BaseGraphDB):
 
     @timed
     def edge_exists(
-        self,
-        source_id: str,
-        target_id: str,
-        type: str = "ANY",
-        direction: str = "OUTGOING",
-        user_name: str | None = None,
+            self,
+            source_id: str,
+            target_id: str,
+            type: str = "ANY",
+            direction: str = "OUTGOING",
+            user_name: str | None = None,
     ) -> bool:
         """
         Check if an edge exists between two nodes.
@@ -870,7 +869,7 @@ class PolarDBGraphDB(BaseGraphDB):
 
     @timed
     def get_node(
-        self, id: str, include_embedding: bool = False, user_name: str | None = None
+            self, id: str, include_embedding: bool = False, user_name: str | None = None
     ) -> dict[str, Any] | None:
         """
         Retrieve a Memory node by its unique ID.
@@ -950,7 +949,7 @@ class PolarDBGraphDB(BaseGraphDB):
 
     @timed
     def get_nodes(
-        self, ids: list[str], user_name: str | None = None, **kwargs
+            self, ids: list[str], user_name: str | None = None, **kwargs
     ) -> list[dict[str, Any]]:
         """
         Retrieve the metadata and memory of a list of nodes.
@@ -1032,7 +1031,7 @@ class PolarDBGraphDB(BaseGraphDB):
 
     @timed
     def get_edges_old(
-        self, id: str, type: str = "ANY", direction: str = "ANY"
+            self, id: str, type: str = "ANY", direction: str = "ANY"
     ) -> list[dict[str, str]]:
         """
         Get edges connected to a node, with optional type and direction filter.
@@ -1118,18 +1117,18 @@ class PolarDBGraphDB(BaseGraphDB):
             return edges
 
     def get_neighbors(
-        self, id: str, type: str, direction: Literal["in", "out", "both"] = "out"
+            self, id: str, type: str, direction: Literal["in", "out", "both"] = "out"
     ) -> list[str]:
         """Get connected node IDs in a specific direction and relationship type."""
         raise NotImplementedError
 
     @timed
     def get_neighbors_by_tag_old(
-        self,
-        tags: list[str],
-        exclude_ids: list[str],
-        top_k: int = 5,
-        min_overlap: int = 1,
+            self,
+            tags: list[str],
+            exclude_ids: list[str],
+            top_k: int = 5,
+            min_overlap: int = 1,
     ) -> list[dict[str, Any]]:
         """
         Find top-K neighbor nodes with maximum tag overlap.
@@ -1226,7 +1225,7 @@ class PolarDBGraphDB(BaseGraphDB):
 
     @timed
     def get_children_with_embeddings(
-        self, id: str, user_name: str | None = None
+            self, id: str, user_name: str | None = None
     ) -> list[dict[str, Any]]:
         """Get children nodes with their embeddings."""
         user_name = user_name if user_name else self._get_config_value("user_name")
@@ -1312,11 +1311,11 @@ class PolarDBGraphDB(BaseGraphDB):
 
     @timed
     def get_subgraph(
-        self,
-        center_id: str,
-        depth: int = 2,
-        center_status: str = "activated",
-        user_name: str | None = None,
+            self,
+            center_id: str,
+            depth: int = 2,
+            center_status: str = "activated",
+            user_name: str | None = None,
     ) -> dict[str, Any]:
         """
         Retrieve a local subgraph centered at a given node.
@@ -1453,17 +1452,17 @@ class PolarDBGraphDB(BaseGraphDB):
 
     @timed
     def search_by_embedding(
-        self,
-        vector: list[float],
-        top_k: int = 5,
-        scope: str | None = None,
-        status: str | None = None,
-        threshold: float | None = None,
-        search_filter: dict | None = None,
-        user_name: str | None = None,
-        filter: dict | None = None,
-        knowledgebase_ids: list[str] | None = None,
-        **kwargs,
+            self,
+            vector: list[float],
+            top_k: int = 5,
+            scope: str | None = None,
+            status: str | None = None,
+            threshold: float | None = None,
+            search_filter: dict | None = None,
+            user_name: str | None = None,
+            filter: dict | None = None,
+            knowledgebase_ids: list[str] | None = None,
+            **kwargs,
     ) -> list[dict]:
         """
         Retrieve node IDs based on vector similarity using PostgreSQL vector operations.
@@ -1614,12 +1613,11 @@ class PolarDBGraphDB(BaseGraphDB):
 
     @timed
     def get_by_metadata(
-        self,
-        filters: list[dict[str, Any]],
-        user_name: str | None = None,
-        filter: dict | None = None,
-        knowledgebase_ids: list | None = None,
-        user_name_flag: bool = True,
+            self,
+            filters: list[dict[str, Any]],
+            user_name: str | None = None,
+            filter: dict | None = None,
+            knowledgebase_ids: list | None = None
     ) -> list[str]:
         """
         Retrieve node IDs that match given metadata filters.
@@ -1694,14 +1692,13 @@ class PolarDBGraphDB(BaseGraphDB):
                 raise ValueError(f"Unsupported operator: {op}")
 
         # Build user_name filter with knowledgebase_ids support (OR relationship) using common method
-        user_name_conditions = []
-        if user_name_flag:
-            user_name_conditions = self._build_user_name_and_kb_ids_conditions_cypher(
-                user_name=user_name,
-                knowledgebase_ids=knowledgebase_ids,
-                default_user_name=self._get_config_value("user_name"),
-            )
-        print(f"[get_by_metadata] user_name_conditions: {user_name_conditions}")
+        # Build user_name filter with knowledgebase_ids support (OR relationship) using common method
+        user_name_conditions = self._build_user_name_and_kb_ids_conditions_cypher(
+            user_name=user_name,
+            knowledgebase_ids=knowledgebase_ids,
+            default_user_name=self._get_config_value("user_name"),
+        )
+        print(f"[111get_by_metadata] user_name_conditions: {user_name_conditions}")
 
         # Add user_name WHERE clause
         if user_name_conditions:
@@ -1713,26 +1710,16 @@ class PolarDBGraphDB(BaseGraphDB):
         # Build filter conditions using common method
         filter_where_clause = self._build_filter_conditions_cypher(filter)
 
-        # Build WHERE clause: if where_conditions is empty, filter_where_clause should not have " AND " prefix
-        if where_conditions:
-            where_str = " AND ".join(where_conditions) + filter_where_clause
-        else:
-            # If no other conditions, remove " AND " prefix from filter_where_clause if present
-            if filter_where_clause.startswith(" AND "):
-                where_str = filter_where_clause[5:]  # Remove " AND " prefix
-            else:
-                where_str = filter_where_clause
+        where_str = " AND ".join(where_conditions) + filter_where_clause
 
         # Use cypher query
-        # Only include WHERE clause if where_str is not empty
-        where_clause = f"WHERE {where_str}" if where_str else ""
         cypher_query = f"""
-                    SELECT * FROM cypher('{self.db_name}_graph', $$
-                    MATCH (n:Memory)
-                    {where_clause}
-                    RETURN n.id AS id
-                    $$) AS (id agtype)
-                """
+               SELECT * FROM cypher('{self.db_name}_graph', $$
+               MATCH (n:Memory)
+               WHERE {where_str}
+               RETURN n.id AS id
+               $$) AS (id agtype)
+           """
 
         ids = []
         conn = self._get_connection()
@@ -1752,11 +1739,11 @@ class PolarDBGraphDB(BaseGraphDB):
 
     @timed
     def get_grouped_counts1(
-        self,
-        group_fields: list[str],
-        where_clause: str = "",
-        params: dict[str, Any] | None = None,
-        user_name: str | None = None,
+            self,
+            group_fields: list[str],
+            where_clause: str = "",
+            params: dict[str, Any] | None = None,
+            user_name: str | None = None,
     ) -> list[dict[str, Any]]:
         """
         Count nodes grouped by any fields.
@@ -1828,11 +1815,11 @@ class PolarDBGraphDB(BaseGraphDB):
 
     @timed
     def get_grouped_counts(
-        self,
-        group_fields: list[str],
-        where_clause: str = "",
-        params: dict[str, Any] | None = None,
-        user_name: str | None = None,
+            self,
+            group_fields: list[str],
+            where_clause: str = "",
+            params: dict[str, Any] | None = None,
+            user_name: str | None = None,
     ) -> list[dict[str, Any]]:
         """
         Count nodes grouped by any fields.
@@ -1971,7 +1958,7 @@ class PolarDBGraphDB(BaseGraphDB):
 
     @timed
     def export_graph(
-        self, include_embedding: bool = False, user_name: str | None = None
+            self, include_embedding: bool = False, user_name: str | None = None
     ) -> dict[str, Any]:
         """
         Export all graph nodes and edges in a structured form.
@@ -2070,9 +2057,9 @@ class PolarDBGraphDB(BaseGraphDB):
                         else str(source_agtype)
                     )
                     if (
-                        isinstance(source_raw, str)
-                        and source_raw.startswith('"')
-                        and source_raw.endswith('"')
+                            isinstance(source_raw, str)
+                            and source_raw.startswith('"')
+                            and source_raw.endswith('"')
                     ):
                         source = source_raw[1:-1]
                     else:
@@ -2085,9 +2072,9 @@ class PolarDBGraphDB(BaseGraphDB):
                         else str(target_agtype)
                     )
                     if (
-                        isinstance(target_raw, str)
-                        and target_raw.startswith('"')
-                        and target_raw.endswith('"')
+                            isinstance(target_raw, str)
+                            and target_raw.startswith('"')
+                            and target_raw.endswith('"')
                     ):
                         target = target_raw[1:-1]
                     else:
@@ -2098,9 +2085,9 @@ class PolarDBGraphDB(BaseGraphDB):
                         edge_agtype.value if hasattr(edge_agtype, "value") else str(edge_agtype)
                     )
                     if (
-                        isinstance(type_raw, str)
-                        and type_raw.startswith('"')
-                        and type_raw.endswith('"')
+                            isinstance(type_raw, str)
+                            and type_raw.startswith('"')
+                            and type_raw.endswith('"')
                     ):
                         edge_type = type_raw[1:-1]
                     else:
@@ -2143,12 +2130,12 @@ class PolarDBGraphDB(BaseGraphDB):
 
     @timed
     def get_all_memory_items(
-        self,
-        scope: str,
-        include_embedding: bool = False,
-        user_name: str | None = None,
-        filter: dict | None = None,
-        knowledgebase_ids: list | None = None,
+            self,
+            scope: str,
+            include_embedding: bool = False,
+            user_name: str | None = None,
+            filter: dict | None = None,
+            knowledgebase_ids: list | None = None,
     ) -> list[dict]:
         """
         Retrieve all memory items of a specific memory_type.
@@ -2297,7 +2284,7 @@ class PolarDBGraphDB(BaseGraphDB):
             return nodes
 
     def get_all_memory_items_old(
-        self, scope: str, include_embedding: bool = False, user_name: str | None = None
+            self, scope: str, include_embedding: bool = False, user_name: str | None = None
     ) -> list[dict]:
         """
         Retrieve all memory items of a specific memory_type.
@@ -2404,7 +2391,7 @@ class PolarDBGraphDB(BaseGraphDB):
 
     @timed
     def get_structure_optimization_candidates(
-        self, scope: str, include_embedding: bool = False, user_name: str | None = None
+            self, scope: str, include_embedding: bool = False, user_name: str | None = None
     ) -> list[dict]:
         """
         Find nodes that are likely candidates for structure optimization:
@@ -2550,7 +2537,7 @@ class PolarDBGraphDB(BaseGraphDB):
                                 value = row[i]
                                 # Handle special fields
                                 if field_name in ["tags", "sources", "usage"] and isinstance(
-                                    value, str
+                                        value, str
                                 ):
                                     try:
                                         # Try parsing JSON string
@@ -2616,10 +2603,10 @@ class PolarDBGraphDB(BaseGraphDB):
             return value
             """
             if (
-                isinstance(value, str)
-                and len(value) >= 2
-                and value[0] == value[-1]
-                and value[0] in ("'", '"')
+                    isinstance(value, str)
+                    and len(value) >= 2
+                    and value[0] == value[-1]
+                    and value[0] in ("'", '"')
             ):
                 return value[1:-1]
             return value
@@ -2644,7 +2631,7 @@ class PolarDBGraphDB(BaseGraphDB):
 
     @timed
     def add_node(
-        self, id: str, memory: str, metadata: dict[str, Any], user_name: str | None = None
+            self, id: str, memory: str, metadata: dict[str, Any], user_name: str | None = None
     ) -> None:
         """Add a memory node to the graph."""
         logger.info(f"[add_node] id: {id}, memory: {memory}, metadata: {metadata}")
@@ -2788,13 +2775,13 @@ class PolarDBGraphDB(BaseGraphDB):
 
     @timed
     def get_neighbors_by_tag(
-        self,
-        tags: list[str],
-        exclude_ids: list[str],
-        top_k: int = 5,
-        min_overlap: int = 1,
-        include_embedding: bool = False,
-        user_name: str | None = None,
+            self,
+            tags: list[str],
+            exclude_ids: list[str],
+            top_k: int = 5,
+            min_overlap: int = 1,
+            include_embedding: bool = False,
+            user_name: str | None = None,
     ) -> list[dict[str, Any]]:
         """
         Find top-K neighbor nodes with maximum tag overlap.
@@ -2916,13 +2903,13 @@ class PolarDBGraphDB(BaseGraphDB):
             self._return_connection(conn)
 
     def get_neighbors_by_tag_ccl(
-        self,
-        tags: list[str],
-        exclude_ids: list[str],
-        top_k: int = 5,
-        min_overlap: int = 1,
-        include_embedding: bool = False,
-        user_name: str | None = None,
+            self,
+            tags: list[str],
+            exclude_ids: list[str],
+            top_k: int = 5,
+            min_overlap: int = 1,
+            include_embedding: bool = False,
+            user_name: str | None = None,
     ) -> list[dict[str, Any]]:
         """
         Find top-K neighbor nodes with maximum tag overlap.
@@ -3113,7 +3100,7 @@ class PolarDBGraphDB(BaseGraphDB):
 
     @timed
     def get_edges(
-        self, id: str, type: str = "ANY", direction: str = "ANY", user_name: str | None = None
+            self, id: str, type: str = "ANY", direction: str = "ANY", user_name: str | None = None
     ) -> list[dict[str, str]]:
         """
         Get edges connected to a node, with optional type and direction filter.
@@ -3170,9 +3157,9 @@ class PolarDBGraphDB(BaseGraphDB):
                     # Extract and clean from_id
                     from_id_raw = row[0].value if hasattr(row[0], "value") else row[0]
                     if (
-                        isinstance(from_id_raw, str)
-                        and from_id_raw.startswith('"')
-                        and from_id_raw.endswith('"')
+                            isinstance(from_id_raw, str)
+                            and from_id_raw.startswith('"')
+                            and from_id_raw.endswith('"')
                     ):
                         from_id = from_id_raw[1:-1]
                     else:
@@ -3181,9 +3168,9 @@ class PolarDBGraphDB(BaseGraphDB):
                     # Extract and clean to_id
                     to_id_raw = row[1].value if hasattr(row[1], "value") else row[1]
                     if (
-                        isinstance(to_id_raw, str)
-                        and to_id_raw.startswith('"')
-                        and to_id_raw.endswith('"')
+                            isinstance(to_id_raw, str)
+                            and to_id_raw.startswith('"')
+                            and to_id_raw.endswith('"')
                     ):
                         to_id = to_id_raw[1:-1]
                     else:
@@ -3192,9 +3179,9 @@ class PolarDBGraphDB(BaseGraphDB):
                     # Extract and clean edge_type
                     edge_type_raw = row[2].value if hasattr(row[2], "value") else row[2]
                     if (
-                        isinstance(edge_type_raw, str)
-                        and edge_type_raw.startswith('"')
-                        and edge_type_raw.endswith('"')
+                            isinstance(edge_type_raw, str)
+                            and edge_type_raw.startswith('"')
+                            and edge_type_raw.endswith('"')
                     ):
                         edge_type = edge_type_raw[1:-1]
                     else:
@@ -3249,10 +3236,10 @@ class PolarDBGraphDB(BaseGraphDB):
             return f'"{value}"'
 
     def _build_user_name_and_kb_ids_conditions_cypher(
-        self,
-        user_name: str | None,
-        knowledgebase_ids: list | None,
-        default_user_name: str | None = None,
+            self,
+            user_name: str | None,
+            knowledgebase_ids: list | None,
+            default_user_name: str | None = None,
     ) -> list[str]:
         """
         Build user_name and knowledgebase_ids conditions for Cypher queries.
@@ -3283,10 +3270,10 @@ class PolarDBGraphDB(BaseGraphDB):
         return user_name_conditions
 
     def _build_user_name_and_kb_ids_conditions_sql(
-        self,
-        user_name: str | None,
-        knowledgebase_ids: list | None,
-        default_user_name: str | None = None,
+            self,
+            user_name: str | None,
+            knowledgebase_ids: list | None,
+            default_user_name: str | None = None,
     ) -> list[str]:
         """
         Build user_name and knowledgebase_ids conditions for SQL queries.
@@ -3318,8 +3305,8 @@ class PolarDBGraphDB(BaseGraphDB):
         return user_name_conditions
 
     def _build_filter_conditions_cypher(
-        self,
-        filter: dict | None,
+            self,
+            filter: dict | None,
     ) -> str:
         """
         Build filter conditions for Cypher queries.
@@ -3529,8 +3516,8 @@ class PolarDBGraphDB(BaseGraphDB):
         return filter_where_clause
 
     def _build_filter_conditions_sql(
-        self,
-        filter: dict | None,
+            self,
+            filter: dict | None,
     ) -> list[str]:
         """
         Build filter conditions for SQL queries.
@@ -3781,8 +3768,8 @@ class PolarDBGraphDB(BaseGraphDB):
         return filter_conditions
 
     def parse_filter(
-        self,
-        filter_dict: dict | None = None,
+            self,
+            filter_dict: dict | None = None,
     ):
         if filter_dict is None:
             return None
@@ -3825,7 +3812,7 @@ class PolarDBGraphDB(BaseGraphDB):
                                 processed_item = {}
                                 for item_key, item_value in item.items():
                                     if item_key not in full_fields and not item_key.startswith(
-                                        "info."
+                                            "info."
                                     ):
                                         new_item_key = f"info.{item_key}"
                                     else:
@@ -3851,15 +3838,17 @@ class PolarDBGraphDB(BaseGraphDB):
 
     @timed
     def delete_node_by_prams(
-        self,
-        memory_ids: list[str] | None = None,
-        file_ids: list[str] | None = None,
-        filter: dict | None = None,
+            self,
+            writable_cube_ids: list[str],
+            memory_ids: list[str] | None = None,
+            file_ids: list[str] | None = None,
+            filter: dict | None = None,
     ) -> int:
         """
         Delete nodes by memory_ids, file_ids, or filter.
 
         Args:
+            writable_cube_ids (list[str]): List of cube IDs (user_name) to filter nodes. Required parameter.
             memory_ids (list[str], optional): List of memory node IDs to delete.
             file_ids (list[str], optional): List of file node IDs to delete.
             filter (dict, optional): Filter dictionary to query matching nodes for deletion.
@@ -3867,11 +3856,23 @@ class PolarDBGraphDB(BaseGraphDB):
         Returns:
             int: Number of nodes deleted.
         """
-        print(f"[delete_node_by_prams] memory_ids: {memory_ids}, file_ids: {file_ids}, filter: {filter}")
-        
+        print(
+            f"[delete_node_by_prams] memory_ids: {memory_ids}, file_ids: {file_ids}, filter: {filter}, writable_cube_ids: {writable_cube_ids}")
+
+        # Validate writable_cube_ids
+        if not writable_cube_ids or len(writable_cube_ids) == 0:
+            raise ValueError("writable_cube_ids is required and cannot be empty")
+
+        # Build user_name condition from writable_cube_ids (OR relationship - match any cube_id)
+        user_name_conditions = []
+        for cube_id in writable_cube_ids:
+            # Escape single quotes in cube IDs
+            escaped_cube_id = str(cube_id).replace("'", "\\'")
+            user_name_conditions.append(f"n.user_name = '{escaped_cube_id}'")
+
         # Build WHERE conditions separately for memory_ids and file_ids
         where_conditions = []
-        
+
         # Handle memory_ids: query n.id
         if memory_ids and len(memory_ids) > 0:
             memory_id_conditions = []
@@ -3881,7 +3882,7 @@ class PolarDBGraphDB(BaseGraphDB):
                 memory_id_conditions.append(f"'{escaped_id}'")
             if memory_id_conditions:
                 where_conditions.append(f"n.id IN [{', '.join(memory_id_conditions)}]")
-        
+
         # Handle file_ids: query n.file_ids field
         # All file_ids must be present in the array field (AND relationship)
         if file_ids and len(file_ids) > 0:
@@ -3894,7 +3895,7 @@ class PolarDBGraphDB(BaseGraphDB):
             if file_id_and_conditions:
                 # Use AND to require all file_ids to be present
                 where_conditions.append(f"({' AND '.join(file_id_and_conditions)})")
-        
+
         # Query nodes by filter if provided
         filter_ids = set()
         if filter:
@@ -3906,14 +3907,13 @@ class PolarDBGraphDB(BaseGraphDB):
                     filters=[],
                     user_name=None,
                     filter=parsed_filter,
-                    knowledgebase_ids=None,
-                    user_name_flag=False,
+                    knowledgebase_ids=writable_cube_ids,
                 ))
             else:
                 logger.warning(
                     "[delete_node_by_prams] Filter parsed to None, skipping filter query"
                 )
-        
+
         # If filter returned IDs, add condition for them
         if filter_ids:
             filter_id_conditions = []
@@ -3924,13 +3924,18 @@ class PolarDBGraphDB(BaseGraphDB):
             if filter_id_conditions:
                 where_conditions.append(f"n.id IN [{', '.join(filter_id_conditions)}]")
 
-        # If no conditions, return 0
+        # If no conditions (except user_name), return 0
         if not where_conditions:
-            logger.warning("[delete_node_by_prams] No nodes to delete")
+            logger.warning("[delete_node_by_prams] No nodes to delete (no memory_ids, file_ids, or filter provided)")
             return 0
 
-        # Build WHERE clause - combine all conditions with OR (any condition can match)
-        ids_where = " OR ".join([f"({cond})" for cond in where_conditions])
+        # Build WHERE clause
+        # First, combine memory_ids, file_ids, and filter conditions with OR (any condition can match)
+        data_conditions = " OR ".join([f"({cond})" for cond in where_conditions])
+
+        # Then, combine with user_name condition using AND (must match user_name AND one of the data conditions)
+        user_name_where = " OR ".join(user_name_conditions)
+        ids_where = f"({user_name_where}) AND ({data_conditions})"
 
         # Use Cypher DELETE query
         # First count matching nodes to get accurate count
