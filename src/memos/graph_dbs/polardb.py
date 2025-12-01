@@ -3806,8 +3806,6 @@ class PolarDBGraphDB(BaseGraphDB):
             "memory_type",
             "node_type",
             "info",
-            "app_id",
-            "agent_id",
         }
 
         def process_condition(condition):
