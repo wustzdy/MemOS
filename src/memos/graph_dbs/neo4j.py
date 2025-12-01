@@ -1523,6 +1523,7 @@ class Neo4jGraphDB(BaseGraphDB):
 
     def delete_node_by_prams(
         self,
+        writable_cube_ids: list[str],
         memory_ids: list[str] | None = None,
         file_ids: list[str] | None = None,
         filter: dict | None = None,
@@ -1531,6 +1532,7 @@ class Neo4jGraphDB(BaseGraphDB):
         Delete nodes by memory_ids, file_ids, or filter.
 
         Args:
+            writable_cube_ids (list[str]): List of cube IDs (user_name) to filter nodes. Required parameter.
             memory_ids (list[str], optional): List of memory node IDs to delete.
             file_ids (list[str], optional): List of file node IDs to delete.
             filter (dict, optional): Filter dictionary to query matching nodes for deletion.
@@ -1538,9 +1540,23 @@ class Neo4jGraphDB(BaseGraphDB):
         Returns:
             int: Number of nodes deleted.
         """
+        print(
+            f"[delete_node_by_prams] memory_ids: {memory_ids}, file_ids: {file_ids}, filter: {filter}, writable_cube_ids: {writable_cube_ids}")
+        
+        # Validate writable_cube_ids
+        if not writable_cube_ids or len(writable_cube_ids) == 0:
+            raise ValueError("writable_cube_ids is required and cannot be empty")
+        
         # Build WHERE conditions separately for memory_ids and file_ids
         where_clauses = []
         params = {}
+        
+        # Build user_name condition from writable_cube_ids (OR relationship - match any cube_id)
+        user_name_conditions = []
+        for idx, cube_id in enumerate(writable_cube_ids):
+            param_name = f"cube_id_{idx}"
+            user_name_conditions.append(f"n.user_name = ${param_name}")
+            params[param_name] = cube_id
 
         # Handle memory_ids: query n.id
         if memory_ids and len(memory_ids) > 0:
@@ -1568,8 +1584,7 @@ class Neo4jGraphDB(BaseGraphDB):
                 filters=[],
                 user_name=None,
                 filter=filter,
-                knowledgebase_ids=None,
-                user_name_flag=False,
+                knowledgebase_ids=writable_cube_ids,
             )
 
         # If filter returned IDs, add condition for them
@@ -1577,13 +1592,18 @@ class Neo4jGraphDB(BaseGraphDB):
             where_clauses.append("n.id IN $filter_ids")
             params["filter_ids"] = filter_ids
 
-        # If no conditions, return 0
+        # If no conditions (except user_name), return 0
         if not where_clauses:
-            logger.warning("[delete_node_by_prams] No nodes to delete")
+            logger.warning("[delete_node_by_prams] No nodes to delete (no memory_ids, file_ids, or filter provided)")
             return 0
 
-        # Build WHERE clause - combine all conditions with OR (any condition can match)
-        ids_where = " OR ".join([f"({clause})" for clause in where_clauses])
+        # Build WHERE clause
+        # First, combine memory_ids, file_ids, and filter conditions with OR (any condition can match)
+        data_conditions = " OR ".join([f"({clause})" for clause in where_clauses])
+        
+        # Then, combine with user_name condition using AND (must match user_name AND one of the data conditions)
+        user_name_where = " OR ".join(user_name_conditions)
+        ids_where = f"({user_name_where}) AND ({data_conditions})"
 
         logger.info(
             f"[delete_node_by_prams] Deleting nodes - memory_ids: {memory_ids}, file_ids: {file_ids}, filter: {filter}"
@@ -1601,6 +1621,7 @@ class Neo4jGraphDB(BaseGraphDB):
         delete_query = f"MATCH (n:Memory) WHERE {ids_where} DETACH DELETE n"
         logger.info(f"[delete_node_by_prams] delete_query: {delete_query}")
         print(f"[delete_node_by_prams] delete_query: {delete_query}")
+        print(f"[delete_node_by_prams] params: {params}")
 
         deleted_count = 0
         try:
