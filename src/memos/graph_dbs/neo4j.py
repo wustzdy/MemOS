@@ -1538,18 +1538,30 @@ class Neo4jGraphDB(BaseGraphDB):
         Returns:
             int: Number of nodes deleted.
         """
-        # Collect all node IDs to delete
-        ids_to_delete = set()
+        # Build WHERE conditions separately for memory_ids and file_ids
+        where_clauses = []
+        params = {}
 
-        # Add memory_ids if provided
+        # Handle memory_ids: query n.id
         if memory_ids and len(memory_ids) > 0:
-            ids_to_delete.update(memory_ids)
+            where_clauses.append("n.id IN $memory_ids")
+            params["memory_ids"] = memory_ids
 
-        # Add file_ids if provided (treating them as node IDs)
+        # Handle file_ids: query n.file_ids field
+        # All file_ids must be present in the array field (AND relationship)
         if file_ids and len(file_ids) > 0:
-            ids_to_delete.update(file_ids)
+            file_id_and_conditions = []
+            for idx, file_id in enumerate(file_ids):
+                param_name = f"file_id_{idx}"
+                params[param_name] = file_id
+                # Check if this file_id is in the file_ids array field
+                file_id_and_conditions.append(f"${param_name} IN n.file_ids")
+            if file_id_and_conditions:
+                # Use AND to require all file_ids to be present
+                where_clauses.append(f"({' AND '.join(file_id_and_conditions)})")
 
         # Query nodes by filter if provided
+        filter_ids = []
         if filter:
             # Use get_by_metadata with empty filters list and filter
             filter_ids = self.get_by_metadata(
@@ -1559,28 +1571,25 @@ class Neo4jGraphDB(BaseGraphDB):
                 knowledgebase_ids=None,
                 user_name_flag=False,
             )
-            ids_to_delete.update(filter_ids)
 
-        # If no IDs to delete, return 0
-        if not ids_to_delete:
+        # If filter returned IDs, add condition for them
+        if filter_ids:
+            where_clauses.append("n.id IN $filter_ids")
+            params["filter_ids"] = filter_ids
+
+        # If no conditions, return 0
+        if not where_clauses:
             logger.warning("[delete_node_by_prams] No nodes to delete")
             return 0
 
-        # Convert to list for easier handling
-        ids_list = list(ids_to_delete)
-        logger.info(f"[delete_node_by_prams] Deleting {len(ids_list)} nodes: {ids_list}")
+        # Build WHERE clause - combine all conditions with OR (any condition can match)
+        ids_where = " OR ".join([f"({clause})" for clause in where_clauses])
 
-        # Build WHERE condition for collected IDs (query n.id)
-        ids_where = "n.id IN $ids_to_delete"
-        params = {"ids_to_delete": ids_list}
-
-        # Calculate total count for logging
-        total_count = len(ids_list)
         logger.info(
             f"[delete_node_by_prams] Deleting nodes - memory_ids: {memory_ids}, file_ids: {file_ids}, filter: {filter}"
         )
         print(
-            f"[delete_node_by_prams] Deleting {total_count} nodes - memory_ids: {memory_ids}, file_ids: {file_ids}, filter: {filter}"
+            f"[delete_node_by_prams] Deleting nodes - memory_ids: {memory_ids}, file_ids: {file_ids}, filter: {filter}"
         )
 
         # First count matching nodes to get accurate count
@@ -1599,9 +1608,9 @@ class Neo4jGraphDB(BaseGraphDB):
                 # Count nodes before deletion
                 count_result = session.run(count_query, **params)
                 count_record = count_result.single()
-                expected_count = total_count
+                expected_count = 0
                 if count_record:
-                    expected_count = count_record["node_count"] or total_count
+                    expected_count = count_record["node_count"] or 0
 
                 # Delete nodes
                 session.run(delete_query, **params)
