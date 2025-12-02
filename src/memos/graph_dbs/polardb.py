@@ -4015,6 +4015,9 @@ class PolarDBGraphDB(BaseGraphDB):
         Returns:
             int: Number of nodes deleted.
         """
+        logger.info(
+            f"[delete_node_by_prams] memory_ids: {memory_ids}, file_ids: {file_ids}, filter: {filter}, writable_cube_ids: {writable_cube_ids}"
+        )
         print(
             f"[delete_node_by_prams] memory_ids: {memory_ids}, file_ids: {file_ids}, filter: {filter}, writable_cube_ids: {writable_cube_ids}"
         )
