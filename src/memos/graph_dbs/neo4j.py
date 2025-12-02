@@ -1441,18 +1441,15 @@ class Neo4jGraphDB(BaseGraphDB):
                                     f"{node_alias}.{key} {cypher_op} ${param_name}"
                                 )
                         elif op == "contains":
-                            # Handle contains operator (for string fields)
-                            # Supports string format: {"field": {"contains": "value"}}
-                            if not isinstance(op_value, str):
-                                raise ValueError(
-                                    f"contains operator only supports string format. "
-                                    f"Use {{'{key}': {{'contains': '{op_value}'}}}} instead of {{'{key}': {{'contains': {op_value}}}}}"
-                                )
-                            # String contains: use CONTAINS for substring matching
+                            # Handle contains operator
+                            # For arrays: use IN to check if array contains value (value IN array_field)
+                            # For strings: also use IN syntax to check if string value is in array field
+                            # Note: In Neo4j, for array fields, we use "value IN field" syntax
                             param_name = f"filter_{key}_{op}_{param_counter[0]}"
                             param_counter[0] += 1
                             params[param_name] = op_value
-                            condition_parts.append(f"{node_alias}.{key} CONTAINS ${param_name}")
+                            # Use IN syntax: value IN array_field (works for both string and array values)
+                            condition_parts.append(f"${param_name} IN {node_alias}.{key}")
                         elif op == "in":
                             # Handle in operator (for checking if field value is in a list)
                             # Supports array format: {"field": {"in": ["value1", "value2"]}}
