@@ -151,7 +151,7 @@ class PolarDBGraphDB(BaseGraphDB):
         # Create connection pool
         self.connection_pool = psycopg2.pool.ThreadedConnectionPool(
             minconn=5,
-            maxconn=2000,
+            maxconn=100,
             host=host,
             port=port,
             user=user,
@@ -3507,7 +3507,6 @@ class PolarDBGraphDB(BaseGraphDB):
         """
         user_name_conditions = []
         effective_user_name = user_name if user_name else default_user_name
-        print(f"[delete_node_by_prams] effective_user_name: {effective_user_name}")
 
         if effective_user_name:
             escaped_user_name = effective_user_name.replace("'", "''")
