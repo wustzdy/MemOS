@@ -2,6 +2,7 @@ import json
 import random
 import textwrap
 
+from contextlib import suppress
 from datetime import datetime
 from typing import Any, Literal
 
@@ -211,15 +212,19 @@ class PolarDBGraphDB(BaseGraphDB):
 
                 # Check if connection is closed
                 if conn.closed != 0:
-                    # Connection is closed, close it explicitly and try again
+                    # Connection is closed, return it to pool with close flag and try again
                     try:
-                        conn.close()
+                        self.connection_pool.putconn(conn, close=True)
                     except Exception as e:
-                        logger.warning(f"Failed to close connection: {e}")
+                        logger.warning(f"Failed to return closed connection to pool: {e}")
+                        with suppress(Exception):
+                            conn.close()
+
+                    conn = None
                     if attempt < max_retries - 1:
                         continue
                     else:
-                        raise RuntimeError("Pool returned a closed connection")
+                        raise RuntimeError("Pool returned a closed connection after all retries")
 
                 # Set autocommit for PolarDB compatibility
                 conn.autocommit = True
@@ -231,20 +236,18 @@ class PolarDBGraphDB(BaseGraphDB):
                     cursor.fetchone()
                     cursor.close()
                 except Exception as health_check_error:
-                    # Connection is not usable, close it and try again
+                    # Connection is not usable, return it to pool with close flag and try again
                     logger.warning(
-                        f"Connection health check failed: {health_check_error}, closing connection and retrying..."
+                        f"Connection health check failed: {health_check_error}, returning connection to pool and retrying..."
                     )
                     try:
-                        conn.close()
-                    except Exception as close_error:
-                        logger.warning(f"Failed to close unhealthy connection: {close_error}")
-
-                    # Return connection to pool if it's still valid
-                    try:
                         self.connection_pool.putconn(conn, close=True)
-                    except Exception as close_error:
-                        logger.warning(f"Failed to connection_pool.putconn: {close_error}")
+                    except Exception as putconn_error:
+                        logger.warning(
+                            f"Failed to return unhealthy connection to pool: {putconn_error}"
+                        )
+                        with suppress(Exception):
+                            conn.close()
 
                     conn = None
                     if attempt < max_retries - 1:
@@ -257,14 +260,20 @@ class PolarDBGraphDB(BaseGraphDB):
                 # Connection is healthy, return it
                 return conn
             except Exception as e:
-                # If we have a connection that failed, try to return it to pool
+                # Only try to return connection if we actually got one
+                # If getconn() failed (e.g., pool exhausted), conn will be None
                 if conn is not None:
                     try:
-                        self.connection_pool.putconn(conn, close=True)
+                        # If it's a PoolError or similar, close the connection instead of returning
+                        if "pool" in str(e).lower() or "exhausted" in str(e).lower():
+                            with suppress(Exception):
+                                conn.close()
+                        else:
+                            self.connection_pool.putconn(conn, close=True)
                     except Exception as putconn_error:
-                        logger.warning(
-                            f"Failed to connection_pool.putconn to pool: {putconn_error}"
-                        )
+                        logger.warning(f"Failed to handle connection after error: {putconn_error}")
+                        with suppress(Exception):
+                            conn.close()
 
                 if attempt >= max_retries - 1:
                     raise RuntimeError(f"Failed to get a valid connection from pool: {e}") from e
@@ -272,26 +281,38 @@ class PolarDBGraphDB(BaseGraphDB):
 
     def _return_connection(self, connection):
         """Return a connection to the pool."""
-        if not self._pool_closed and connection:
-            try:
-                # Check if connection is closed
-                if hasattr(connection, "closed") and connection.closed != 0:
-                    # Connection is closed, just close it and don't return to pool
-                    try:
-                        connection.close()
-                    except Exception as e:
-                        logger.warning(f"Failed to close connection: {e}")
-                    return
-
-                # Connection is valid, return to pool
-                self.connection_pool.putconn(connection)
-            except Exception as e:
-                # If putconn fails, close the connection
-                logger.warning(f"Failed to return connection to pool: {e}")
+        if self._pool_closed:
+            # Pool is closed, just close the connection if it exists
+            if connection:
                 try:
                     connection.close()
                 except Exception as e:
-                    logger.warning(f"Failed to close connection: {e}")
+                    logger.warning(f"Failed to close connection after pool closed: {e}")
+            return
+
+        if not connection:
+            # No connection to return
+            return
+
+        try:
+            # Check if connection is closed
+            if hasattr(connection, "closed") and connection.closed != 0:
+                # Connection is closed, just close it explicitly and don't return to pool
+                try:
+                    connection.close()
+                except Exception as e:
+                    logger.warning(f"Failed to close closed connection: {e}")
+                return
+
+            # Connection is valid, return to pool
+            self.connection_pool.putconn(connection)
+        except Exception as e:
+            # If putconn fails, try to close the connection
+            logger.warning(f"Failed to return connection to pool: {e}")
+            try:
+                connection.close()
+            except Exception as close_error:
+                logger.warning(f"Failed to close connection after putconn error: {close_error}")
 
     def _return_connection_old(self, connection):
         """Return a connection to the pool."""
@@ -3116,8 +3137,10 @@ class PolarDBGraphDB(BaseGraphDB):
         elif len(embedding_vector) == 768:
             embedding_column = "embedding_768"
 
-        conn = self._get_connection()
+        conn = None
+        insert_query = None
         try:
+            conn = self._get_connection()
             with conn.cursor() as cursor:
                 # Delete existing record first (if any)
                 delete_query = f"""
@@ -3161,8 +3184,12 @@ class PolarDBGraphDB(BaseGraphDB):
                     logger.info(
                         f"[add_node] [embedding_vector-false] insert_query: {insert_query}, properties: {json.dumps(properties)}"
                     )
+        except Exception as e:
+            logger.error(f"[add_node] Failed to add node: {e}", exc_info=True)
+            raise
         finally:
-            logger.info(f"In add node polardb: id-{id} memory-{memory} query-{insert_query}")
+            if insert_query:
+                logger.info(f"In add node polardb: id-{id} memory-{memory} query-{insert_query}")
             self._return_connection(conn)
 
     def _build_node_from_agtype(self, node_agtype, embedding=None):
