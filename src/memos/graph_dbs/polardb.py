@@ -333,8 +333,9 @@ class PolarDBGraphDB(BaseGraphDB):
     def _create_graph(self):
         """Create PostgreSQL schema and table for graph storage."""
         # Get a connection from the pool
-        conn = self._get_connection()
+        conn = None
         try:
+            conn = self._get_connection()
             with conn.cursor() as cursor:
                 # Create schema if it doesn't exist
                 cursor.execute(f'CREATE SCHEMA IF NOT EXISTS "{self.db_name}_graph";')
@@ -398,8 +399,9 @@ class PolarDBGraphDB(BaseGraphDB):
         Note: This creates PostgreSQL indexes on the underlying tables.
         """
         # Get a connection from the pool
-        conn = self._get_connection()
+        conn = None
         try:
+            conn = self._get_connection()
             with conn.cursor() as cursor:
                 # Create indexes on the underlying PostgreSQL tables
                 # Apache AGE stores data in regular PostgreSQL tables
@@ -435,8 +437,9 @@ class PolarDBGraphDB(BaseGraphDB):
         params = [self.format_param_value(memory_type), self.format_param_value(user_name)]
 
         # Get a connection from the pool
-        conn = self._get_connection()
+        conn = None
         try:
+            conn = self._get_connection()
             with conn.cursor() as cursor:
                 cursor.execute(query, params)
                 result = cursor.fetchone()
@@ -461,8 +464,9 @@ class PolarDBGraphDB(BaseGraphDB):
         params = [self.format_param_value(scope), self.format_param_value(user_name)]
 
         # Get a connection from the pool
-        conn = self._get_connection()
+        conn = None
         try:
+            conn = self._get_connection()
             with conn.cursor() as cursor:
                 cursor.execute(query, params)
                 result = cursor.fetchone()
@@ -501,8 +505,9 @@ class PolarDBGraphDB(BaseGraphDB):
             self.format_param_value(user_name),
             keep_latest,
         ]
-        conn = self._get_connection()
+        conn = None
         try:
+            conn = self._get_connection()
             with conn.cursor() as cursor:
                 # Execute query to get IDs to delete
                 cursor.execute(select_query, select_params)
@@ -595,8 +600,9 @@ class PolarDBGraphDB(BaseGraphDB):
             params.append(self.format_param_value(user_name))
 
         # Get a connection from the pool
-        conn = self._get_connection()
+        conn = None
         try:
+            conn = self._get_connection()
             with conn.cursor() as cursor:
                 cursor.execute(query, params)
         except Exception as e:
@@ -625,8 +631,9 @@ class PolarDBGraphDB(BaseGraphDB):
             params.append(self.format_param_value(user_name))
 
         # Get a connection from the pool
-        conn = self._get_connection()
+        conn = None
         try:
+            conn = self._get_connection()
             with conn.cursor() as cursor:
                 cursor.execute(query, params)
         except Exception as e:
@@ -639,8 +646,9 @@ class PolarDBGraphDB(BaseGraphDB):
     def create_extension(self):
         extensions = [("polar_age", "Graph engine"), ("vector", "Vector engine")]
         # Get a connection from the pool
-        conn = self._get_connection()
+        conn = None
         try:
+            conn = self._get_connection()
             with conn.cursor() as cursor:
                 # Ensure in the correct database context
                 cursor.execute("SELECT current_database();")
@@ -670,8 +678,9 @@ class PolarDBGraphDB(BaseGraphDB):
     @timed
     def create_graph(self):
         # Get a connection from the pool
-        conn = self._get_connection()
+        conn = None
         try:
+            conn = self._get_connection()
             with conn.cursor() as cursor:
                 cursor.execute(f"""
                     SELECT COUNT(*) FROM ag_catalog.ag_graph
@@ -697,9 +706,10 @@ class PolarDBGraphDB(BaseGraphDB):
         valid_rel_types = {"AGGREGATE_TO", "FOLLOWS", "INFERS", "MERGED_TO", "RELATE_TO", "PARENT"}
 
         for label_name in valid_rel_types:
-            conn = self._get_connection()
+            conn = None
             logger.info(f"Creating elabel: {label_name}")
             try:
+                conn = self._get_connection()
                 with conn.cursor() as cursor:
                     cursor.execute(f"select create_elabel('{self.db_name}_graph', '{label_name}');")
                     logger.info(f"Successfully created elabel: {label_name}")
@@ -746,8 +756,9 @@ class PolarDBGraphDB(BaseGraphDB):
             );
         """
 
-        conn = self._get_connection()
+        conn = None
         try:
+            conn = self._get_connection()
             with conn.cursor() as cursor:
                 cursor.execute(query, (source_id, target_id, type, json.dumps(properties)))
                 logger.info(f"Edge created: {source_id} -[{type}]-> {target_id}")
@@ -770,8 +781,9 @@ class PolarDBGraphDB(BaseGraphDB):
             DELETE FROM "{self.db_name}_graph"."Edges"
             WHERE source_id = %s AND target_id = %s AND edge_type = %s
         """
-        conn = self._get_connection()
+        conn = None
         try:
+            conn = self._get_connection()
             with conn.cursor() as cursor:
                 cursor.execute(query, (source_id, target_id, type))
                 logger.info(f"Edge deleted: {source_id} -[{type}]-> {target_id}")
@@ -831,8 +843,9 @@ class PolarDBGraphDB(BaseGraphDB):
             WHERE {where_clause}
             LIMIT 1
         """
-        conn = self._get_connection()
+        conn = None
         try:
+            conn = self._get_connection()
             with conn.cursor() as cursor:
                 cursor.execute(query, params)
                 result = cursor.fetchone()
@@ -886,8 +899,9 @@ class PolarDBGraphDB(BaseGraphDB):
         query += "\nRETURN r"
         query += "\n$$) AS (r agtype)"
 
-        conn = self._get_connection()
+        conn = None
         try:
+            conn = self._get_connection()
             with conn.cursor() as cursor:
                 cursor.execute(query)
                 result = cursor.fetchone()
@@ -925,8 +939,9 @@ class PolarDBGraphDB(BaseGraphDB):
             query += "\nAND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
             params.append(self.format_param_value(user_name))
 
-        conn = self._get_connection()
+        conn = None
         try:
+            conn = self._get_connection()
             with conn.cursor() as cursor:
                 cursor.execute(query, params)
                 result = cursor.fetchone()
@@ -1015,8 +1030,9 @@ class PolarDBGraphDB(BaseGraphDB):
         query += " AND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
         params.append(self.format_param_value(user_name))
 
-        conn = self._get_connection()
+        conn = None
         try:
+            conn = self._get_connection()
             with conn.cursor() as cursor:
                 cursor.execute(query, params)
                 results = cursor.fetchall()
@@ -1273,8 +1289,9 @@ class PolarDBGraphDB(BaseGraphDB):
             WHERE t.cid::graphid = m.id;
         """
 
-        conn = self._get_connection()
+        conn = None
         try:
+            conn = self._get_connection()
             with conn.cursor() as cursor:
                 cursor.execute(query)
                 results = cursor.fetchall()
@@ -1413,9 +1430,10 @@ class PolarDBGraphDB(BaseGraphDB):
                         RETURN collect(DISTINCT center), collect(DISTINCT neighbor), collect(DISTINCT r1)
                     $$ ) as (centers agtype, neighbors agtype, rels agtype);
                 """
-        conn = self._get_connection()
+        conn = None
         logger.info(f"[get_subgraph] Query: {query}")
         try:
+            conn = self._get_connection()
             with conn.cursor() as cursor:
                 cursor.execute(query)
                 results = cursor.fetchall()
@@ -1621,8 +1639,9 @@ class PolarDBGraphDB(BaseGraphDB):
         logger.info(
             f"[seach_by_keywords_LIKE start:]  user_name: {user_name}, query: {query}, params: {params}"
         )
-        conn = self._get_connection()
+        conn = None
         try:
+            conn = self._get_connection()
             with conn.cursor() as cursor:
                 cursor.execute(query, params)
                 results = cursor.fetchall()
@@ -1717,8 +1736,9 @@ class PolarDBGraphDB(BaseGraphDB):
         logger.info(
             f"[seach_by_keywords_TFIDF start:] user_name: {user_name}, query: {query}, params: {params}"
         )
-        conn = self._get_connection()
+        conn = None
         try:
+            conn = self._get_connection()
             with conn.cursor() as cursor:
                 cursor.execute(query, params)
                 results = cursor.fetchall()
@@ -1838,8 +1858,9 @@ class PolarDBGraphDB(BaseGraphDB):
 
         params = [tsquery_string, tsquery_string]
         logger.info(f"[search_by_fulltext] query: {query}, params: {params}")
-        conn = self._get_connection()
+        conn = None
         try:
+            conn = self._get_connection()
             with conn.cursor() as cursor:
                 cursor.execute(query, params)
                 results = cursor.fetchall()
@@ -1978,8 +1999,9 @@ class PolarDBGraphDB(BaseGraphDB):
 
         logger.info(f"[search_by_embedding] query: {query}, params: {params}")
 
-        conn = self._get_connection()
+        conn = None
         try:
+            conn = self._get_connection()
             with conn.cursor() as cursor:
                 try:
                     # If params is empty, execute query directly without parameters
@@ -2130,9 +2152,10 @@ class PolarDBGraphDB(BaseGraphDB):
            """
 
         ids = []
-        conn = self._get_connection()
+        conn = None
         logger.info(f"[get_by_metadata] cypher_query: {cypher_query}")
         try:
+            conn = self._get_connection()
             with conn.cursor() as cursor:
                 cursor.execute(cypher_query)
                 results = cursor.fetchall()
@@ -2292,8 +2315,9 @@ class PolarDBGraphDB(BaseGraphDB):
             {where_clause}
             GROUP BY {", ".join(group_by_fields)}
         """
-        conn = self._get_connection()
+        conn = None
         try:
+            conn = self._get_connection()
             with conn.cursor() as cursor:
                 # Handle parameterized query
                 if params and isinstance(params, list):
@@ -2352,8 +2376,9 @@ class PolarDBGraphDB(BaseGraphDB):
                 DETACH DELETE n
                 $$) AS (result agtype)
             """
-            conn = self._get_connection()
+            conn = None
             try:
+                conn = self._get_connection()
                 with conn.cursor() as cursor:
                     cursor.execute(query)
                     logger.info("Cleared all nodes from database.")
@@ -2380,8 +2405,9 @@ class PolarDBGraphDB(BaseGraphDB):
             }
         """
         user_name = user_name if user_name else self._get_config_value("user_name")
-        conn = self._get_connection()
+        conn = None
         try:
+            conn = self._get_connection()
             # Export nodes
             if include_embedding:
                 node_query = f"""
@@ -2438,8 +2464,9 @@ class PolarDBGraphDB(BaseGraphDB):
         finally:
             self._return_connection(conn)
 
-        conn = self._get_connection()
+        conn = None
         try:
+            conn = self._get_connection()
             # Export edges using cypher query
             edge_query = f"""
                 SELECT * FROM cypher('{self.db_name}_graph', $$
@@ -2528,8 +2555,9 @@ class PolarDBGraphDB(BaseGraphDB):
                 RETURN count(n)
             $$) AS (count agtype)
         """
-        conn = self._get_connection()
+        conn = None
         try:
+            conn = self._get_connection()
             result = self.execute_query(query, conn)
             return int(result.one_or_none()["count"].value)
         finally:
@@ -2614,9 +2642,10 @@ class PolarDBGraphDB(BaseGraphDB):
                    """
             nodes = []
             node_ids = set()
-            conn = self._get_connection()
+            conn = None
             logger.info(f"[get_all_memory_items] cypher_query: {cypher_query}")
             try:
+                conn = self._get_connection()
                 with conn.cursor() as cursor:
                     cursor.execute(cypher_query)
                     results = cursor.fetchall()
@@ -2665,9 +2694,10 @@ class PolarDBGraphDB(BaseGraphDB):
                """
 
             nodes = []
-            conn = self._get_connection()
+            conn = None
             logger.info(f"[get_all_memory_items] cypher_query: {cypher_query}")
             try:
+                conn = self._get_connection()
                 with conn.cursor() as cursor:
                     cursor.execute(cypher_query)
                     results = cursor.fetchall()
@@ -2889,8 +2919,9 @@ class PolarDBGraphDB(BaseGraphDB):
 
         candidates = []
         node_ids = set()
-        conn = self._get_connection()
+        conn = None
         try:
+            conn = self._get_connection()
             with conn.cursor() as cursor:
                 cursor.execute(cypher_query)
                 results = cursor.fetchall()
@@ -3297,8 +3328,9 @@ class PolarDBGraphDB(BaseGraphDB):
 
         logger.debug(f"[get_neighbors_by_tag] query: {query}, params: {params}")
 
-        conn = self._get_connection()
+        conn = None
         try:
+            conn = self._get_connection()
             with conn.cursor() as cursor:
                 cursor.execute(query, params)
                 results = cursor.fetchall()
@@ -3595,8 +3627,9 @@ class PolarDBGraphDB(BaseGraphDB):
             RETURN a.id AS from_id, b.id AS to_id, type(r) AS edge_type
             $$) AS (from_id agtype, to_id agtype, edge_type agtype)
         """
-        conn = self._get_connection()
+        conn = None
         try:
+            conn = self._get_connection()
             with conn.cursor() as cursor:
                 cursor.execute(query)
                 results = cursor.fetchall()
@@ -4494,9 +4527,10 @@ class PolarDBGraphDB(BaseGraphDB):
         logger.info(f"[delete_node_by_prams] delete_query: {delete_query}")
         print(f"[delete_node_by_prams] delete_query: {delete_query}")
 
-        conn = self._get_connection()
+        conn = None
         deleted_count = 0
         try:
+            conn = self._get_connection()
             with conn.cursor() as cursor:
                 # Count nodes before deletion
                 cursor.execute(count_query)
