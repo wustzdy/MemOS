@@ -153,7 +153,7 @@ class PolarDBGraphDB(BaseGraphDB):
         # Create connection pool
         self.connection_pool = psycopg2.pool.ThreadedConnectionPool(
             minconn=5,
-            maxconn=5,
+            maxconn=100,
             host=host,
             port=port,
             user=user,
