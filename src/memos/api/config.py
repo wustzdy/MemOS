@@ -589,6 +589,7 @@ class APIConfig:
             "port": int(os.getenv("POLAR_DB_PORT", "5432")),
             "user": os.getenv("POLAR_DB_USER", "root"),
             "password": os.getenv("POLAR_DB_PASSWORD", "123456"),
+            "maxconn": int(os.getenv("POLARDB_POOL_MAX_CONN", "100")),
             "db_name": db_name,
             "user_name": user_name,
             "use_multi_db": use_multi_db,
