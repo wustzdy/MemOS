@@ -153,6 +153,7 @@ class PolarDBGraphDB(BaseGraphDB):
             host=host, port=port, user=user, password=password, dbname=self.db_name,minconn=10, maxconn=2000
         )
         """
+        logger.info(f" db_name: {self.db_name} current maxconn is:'{maxconn}'")
 
         # Create connection pool
         self.connection_pool = psycopg2.pool.ThreadedConnectionPool(
@@ -220,8 +221,6 @@ class PolarDBGraphDB(BaseGraphDB):
         Raises:
             RuntimeError: If connection pool is closed or exhausted after retries
         """
-        pool_max_conn = self.connection_pool.maxconn
-        logger.info(f" current maxconn is:'{pool_max_conn}'")
         if self._pool_closed:
             raise RuntimeError("Connection pool has been closed")
 
