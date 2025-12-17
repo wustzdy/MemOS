@@ -3422,7 +3422,7 @@ class PolarDBGraphDB(BaseGraphDB):
         self,
         nodes: list[dict[str, Any]],
         user_name: str | None = None,
-        write_sql_to_file: bool = True,
+        write_sql_to_file: bool = False,
     ) -> None:
         """
         Batch add multiple memory nodes to the graph.
