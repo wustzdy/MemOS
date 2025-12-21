@@ -4917,3 +4917,47 @@ class PolarDBGraphDB(BaseGraphDB):
 
         logger.info(f"[delete_node_by_prams] Successfully deleted {deleted_count} nodes")
         return deleted_count
+
+    @timed
+    def get_user_names_by_memory_ids(self, memory_ids: list[str]) -> list[str]:
+        """Get user names by memory ids."""
+        if not memory_ids:
+            return []
+
+        # Build OR conditions for each memory_id
+        id_conditions = []
+        for mid in memory_ids:
+            id_conditions.append(
+                f"ag_catalog.agtype_access_operator(properties, '\"id\"'::agtype) = '\"{mid}\"'::agtype"
+            )
+
+        where_clause = f"({' OR '.join(id_conditions)})"
+
+        query = f"""
+            SELECT DISTINCT ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype)::text
+            FROM "{self.db_name}_graph"."Memory"
+            WHERE {where_clause}
+        """
+        logger.info(f"[get_user_names_by_memory_ids] query: {query}")
+        conn = None
+        user_names = []
+        try:
+            conn = self._get_connection()
+            with conn.cursor() as cursor:
+                cursor.execute(query)
+                results = cursor.fetchall()
+                # Extract user_name values and clean them
+                for row in results:
+                    user_name = row[0]
+                    # Remove quotes if present
+                    if isinstance(user_name, str):
+                        user_name = user_name.strip('"').strip("'")
+                    user_names.append(user_name)
+                return user_names
+        except Exception as e:
+            logger.error(
+                f"[get_user_names_by_memory_ids] Failed to get user names: {e}", exc_info=True
+            )
+            raise
+        finally:
+            self._return_connection(conn)
