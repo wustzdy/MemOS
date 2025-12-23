@@ -2533,7 +2533,7 @@ class PolarDBGraphDB(BaseGraphDB):
                     FROM "{self.db_name}_graph"."Memory"
                     WHERE ag_catalog.agtype_access_operator(properties, '"user_name"'::agtype) = '\"{user_name}\"'::agtype
                 """
-
+            logger.info(f"[export_graph nodes] Query: {node_query}")
             with conn.cursor() as cursor:
                 cursor.execute(node_query)
                 node_results = cursor.fetchall()
@@ -2587,7 +2587,7 @@ class PolarDBGraphDB(BaseGraphDB):
                 RETURN a.id AS source, b.id AS target, type(r) as edge
                 $$) AS (source agtype, target agtype, edge agtype)
             """
-
+            logger.info(f"[export_graph edges] Query: {edge_query}")
             with conn.cursor() as cursor:
                 cursor.execute(edge_query)
                 edge_results = cursor.fetchall()
