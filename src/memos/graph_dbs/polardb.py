@@ -4923,10 +4923,19 @@ class PolarDBGraphDB(BaseGraphDB):
         return deleted_count
 
     @timed
-    def get_user_names_by_memory_ids(self, memory_ids: list[str]) -> list[str]:
-        """Get user names by memory ids."""
+    def get_user_names_by_memory_ids(self, memory_ids: list[str]) -> dict[str, list[str]]:
+        """Get user names by memory ids.
+
+        Args:
+            memory_ids: List of memory node IDs to query.
+
+        Returns:
+            dict[str, list[str]]: Dictionary with one key:
+                - 'no_exist_memory_ids': List of memory_ids that do not exist (if any are missing)
+                - 'exist_user_names': List of distinct user names (if all memory_ids exist)
+        """
         if not memory_ids:
-            return []
+            return {"exist_user_names": []}
 
         # Build OR conditions for each memory_id
         id_conditions = []
@@ -4937,27 +4946,62 @@ class PolarDBGraphDB(BaseGraphDB):
 
         where_clause = f"({' OR '.join(id_conditions)})"
 
-        query = f"""
-            SELECT DISTINCT ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype)::text
+        # Query to check which memory_ids exist
+        check_query = f"""
+            SELECT ag_catalog.agtype_access_operator(properties, '\"id\"'::agtype)::text
             FROM "{self.db_name}_graph"."Memory"
             WHERE {where_clause}
         """
-        logger.info(f"[get_user_names_by_memory_ids] query: {query}")
+
+        logger.info(f"[get_user_names_by_memory_ids] check_query: {check_query}")
         conn = None
-        user_names = []
         try:
             conn = self._get_connection()
             with conn.cursor() as cursor:
-                cursor.execute(query)
+                # Check which memory_ids exist
+                cursor.execute(check_query)
+                check_results = cursor.fetchall()
+                existing_ids = set()
+                for row in check_results:
+                    node_id = row[0]
+                    # Remove quotes if present
+                    if isinstance(node_id, str):
+                        node_id = node_id.strip('"').strip("'")
+                    existing_ids.add(node_id)
+
+                # Check if any memory_ids are missing
+                no_exist_list = [mid for mid in memory_ids if mid not in existing_ids]
+
+                # If any memory_ids are missing, return no_exist_memory_ids
+                if no_exist_list:
+                    logger.info(
+                        f"[get_user_names_by_memory_ids] Found {len(no_exist_list)} non-existing memory_ids: {no_exist_list}"
+                    )
+                    return {"no_exist_memory_ids": no_exist_list}
+
+                # All memory_ids exist, query user_names
+                user_names_query = f"""
+                    SELECT DISTINCT ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype)::text
+                    FROM "{self.db_name}_graph"."Memory"
+                    WHERE {where_clause}
+                """
+                logger.info(f"[get_user_names_by_memory_ids] user_names_query: {user_names_query}")
+
+                cursor.execute(user_names_query)
                 results = cursor.fetchall()
-                # Extract user_name values and clean them
+                user_names = []
                 for row in results:
                     user_name = row[0]
                     # Remove quotes if present
                     if isinstance(user_name, str):
                         user_name = user_name.strip('"').strip("'")
                     user_names.append(user_name)
-                return user_names
+
+                logger.info(
+                    f"[get_user_names_by_memory_ids] All memory_ids exist, found {len(user_names)} distinct user_names"
+                )
+
+                return {"exist_user_names": user_names}
         except Exception as e:
             logger.error(
                 f"[get_user_names_by_memory_ids] Failed to get user names: {e}", exc_info=True
