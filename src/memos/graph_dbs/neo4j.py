@@ -1132,9 +1132,20 @@ class Neo4jGraphDB(BaseGraphDB):
             logger.error(f"[ERROR] Failed to clear database '{self.db_name}': {e}")
             raise
 
-    def export_graph(self, **kwargs) -> dict[str, Any]:
+    def export_graph(
+        self,
+        page: int | None = None,
+        page_size: int | None = None,
+        **kwargs,
+    ) -> dict[str, Any]:
         """
         Export all graph nodes and edges in a structured form.
+
+        Args:
+            page (int, optional): Page number (starts from 1). If None, exports all data without pagination.
+            page_size (int, optional): Number of items per page. If None, exports all data without pagination.
+            **kwargs: Additional keyword arguments, including:
+                - user_name (str, optional): User name for filtering in non-multi-db mode
 
         Returns:
             {
@@ -1143,6 +1154,18 @@ class Neo4jGraphDB(BaseGraphDB):
             }
         """
         user_name = kwargs.get("user_name") if kwargs.get("user_name") else self.config.user_name
+
+        # Determine if pagination is needed
+        use_pagination = page is not None and page_size is not None
+
+        # Validate pagination parameters if pagination is enabled
+        if use_pagination:
+            if page < 1:
+                page = 1
+            if page_size < 1:
+                page_size = 10
+            skip = (page - 1) * page_size
+
         with self.driver.session(database=self.db_name) as session:
             # Export nodes
             node_query = "MATCH (n:Memory)"
@@ -1154,13 +1177,23 @@ class Neo4jGraphDB(BaseGraphDB):
                 edge_query += " WHERE a.user_name = $user_name AND b.user_name = $user_name"
                 params["user_name"] = user_name
 
-            node_result = session.run(f"{node_query} RETURN n", params)
+            # Add ORDER BY and pagination for nodes
+            node_query += " RETURN n ORDER BY n.id"
+            if use_pagination:
+                node_query += f" SKIP {skip} LIMIT {page_size}"
+
+            node_result = session.run(node_query, params)
             nodes = [self._parse_node(dict(record["n"])) for record in node_result]
 
             # Export edges
-            edge_result = session.run(
-                f"{edge_query} RETURN a.id AS source, b.id AS target, type(r) AS type", params
+            # Add ORDER BY and pagination for edges
+            edge_query += (
+                " RETURN a.id AS source, b.id AS target, type(r) AS type ORDER BY a.id, b.id"
             )
+            if use_pagination:
+                edge_query += f" SKIP {skip} LIMIT {page_size}"
+
+            edge_result = session.run(edge_query, params)
             edges = [
                 {"source": record["source"], "target": record["target"], "type": record["type"]}
                 for record in edge_result
