@@ -1806,3 +1806,70 @@ class Neo4jGraphDB(BaseGraphDB):
 
         logger.info(f"[delete_node_by_prams] Successfully deleted {deleted_count} nodes")
         return deleted_count
+
+    def get_user_names_by_memory_ids(self, memory_ids: list[str]) -> dict[str, list[str]]:
+        """Get user names by memory ids.
+
+        Args:
+            memory_ids: List of memory node IDs to query.
+
+        Returns:
+            dict[str, list[str]]: Dictionary with one key:
+                - 'no_exist_memory_ids': List of memory_ids that do not exist (if any are missing)
+                - 'exist_user_names': List of distinct user names (if all memory_ids exist)
+        """
+        if not memory_ids:
+            return {"exist_user_names": []}
+
+        logger.info(f"[get_user_names_by_memory_ids] Checking {len(memory_ids)} memory_ids")
+
+        try:
+            with self.driver.session(database=self.db_name) as session:
+                # Query to check which memory_ids exist
+                check_query = """
+                    MATCH (n:Memory)
+                    WHERE n.id IN $memory_ids
+                    RETURN n.id AS id
+                """
+
+                check_result = session.run(check_query, memory_ids=memory_ids)
+                existing_ids = set()
+                for record in check_result:
+                    node_id = record["id"]
+                    existing_ids.add(node_id)
+
+                # Check if any memory_ids are missing
+                no_exist_list = [mid for mid in memory_ids if mid not in existing_ids]
+
+                # If any memory_ids are missing, return no_exist_memory_ids
+                if no_exist_list:
+                    logger.info(
+                        f"[get_user_names_by_memory_ids] Found {len(no_exist_list)} non-existing memory_ids: {no_exist_list}"
+                    )
+                    return {"no_exist_memory_ids": no_exist_list}
+
+                # All memory_ids exist, query user_names
+                user_names_query = """
+                    MATCH (n:Memory)
+                    WHERE n.id IN $memory_ids
+                    RETURN DISTINCT n.user_name AS user_name
+                """
+                logger.info(f"[get_user_names_by_memory_ids] user_names_query: {user_names_query}")
+
+                user_names_result = session.run(user_names_query, memory_ids=memory_ids)
+                user_names = []
+                for record in user_names_result:
+                    user_name = record["user_name"]
+                    if user_name:
+                        user_names.append(user_name)
+
+                logger.info(
+                    f"[get_user_names_by_memory_ids] All memory_ids exist, found {len(user_names)} distinct user_names"
+                )
+
+                return {"exist_user_names": user_names}
+        except Exception as e:
+            logger.error(
+                f"[get_user_names_by_memory_ids] Failed to get user names: {e}", exc_info=True
+            )
+            raise
