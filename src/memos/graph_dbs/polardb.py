@@ -2508,6 +2508,7 @@ class PolarDBGraphDB(BaseGraphDB):
         user_id: str | None = None,
         page: int | None = None,
         page_size: int | None = None,
+        **kwargs,
     ) -> dict[str, Any]:
         """
         Export all graph nodes and edges in a structured form.
