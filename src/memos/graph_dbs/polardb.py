@@ -4883,7 +4883,6 @@ class PolarDBGraphDB(BaseGraphDB):
         memory_ids: list[str] | None = None,
         file_ids: list[str] | None = None,
         filter: dict | None = None,
-        batch_size: int = 100,
     ) -> int:
         """
         Delete nodes by memory_ids, file_ids, or filter.
@@ -4952,133 +4951,74 @@ class PolarDBGraphDB(BaseGraphDB):
         try:
             conn = self._get_connection()
             with conn.cursor() as cursor:
-                # Process memory_ids and filter_ids in batches
+                # Process memory_ids and filter_ids (all at once, no batching)
                 if all_memory_ids:
                     memory_ids_list = list(all_memory_ids)
-                    total_batches = (len(memory_ids_list) + batch_size - 1) // batch_size
                     logger.info(
-                        f"[delete_node_by_prams] memoryids Processing {len(memory_ids_list)} memory_ids in {total_batches} batches (batch_size={batch_size})"
+                        f"[delete_node_by_prams] Processing {len(memory_ids_list)} memory_ids"
                     )
 
-                    for batch_idx in range(total_batches):
-                        batch_start = batch_idx * batch_size
-                        batch_end = min(batch_start + batch_size, len(memory_ids_list))
-                        batch_ids = memory_ids_list[batch_start:batch_end]
-
-                        # Build conditions for this batch
-                        batch_conditions = []
-                        for node_id in batch_ids:
-                            batch_conditions.append(
-                                f"ag_catalog.agtype_access_operator(properties, '\"id\"'::agtype) = '\"{node_id}\"'::agtype"
-                            )
-                        batch_where = f"({' OR '.join(batch_conditions)})"
-
-                        # Add user_name filter if provided
-                        if user_name_conditions:
-                            user_name_where = " OR ".join(user_name_conditions)
-                            where_clause = f"({user_name_where}) AND ({batch_where})"
-                        else:
-                            where_clause = batch_where
-
-                        # Count before deletion
-                        count_query = f"""
-                            SELECT COUNT(*)
-                            FROM "{self.db_name}_graph"."Memory"
-                            WHERE {where_clause}
-                        """
-                        logger.info(
-                            f"[delete_node_by_prams] memoryids batch {batch_idx + 1}/{total_batches}: count_query: {count_query}"
+                    # Build conditions for all memory_ids
+                    id_conditions = []
+                    for node_id in memory_ids_list:
+                        id_conditions.append(
+                            f"ag_catalog.agtype_access_operator(properties, '\"id\"'::agtype) = '\"{node_id}\"'::agtype"
                         )
+                    id_where = f"({' OR '.join(id_conditions)})"
 
-                        cursor.execute(count_query)
-                        count_result = cursor.fetchone()
-                        expected_count = count_result[0] if count_result else 0
+                    # Add user_name filter if provided
+                    if user_name_conditions:
+                        user_name_where = " OR ".join(user_name_conditions)
+                        where_clause = f"({user_name_where}) AND ({id_where})"
+                    else:
+                        where_clause = id_where
 
-                        if expected_count == 0:
-                            logger.info(
-                                f"[delete_node_by_prams] memoryids Batch {batch_idx + 1}/{total_batches}: No nodes found, skipping"
-                            )
-                            continue
+                    # Delete directly without counting
+                    delete_query = f"""
+                        DELETE FROM "{self.db_name}_graph"."Memory"
+                        WHERE {where_clause}
+                    """
+                    logger.info(f"[delete_node_by_prams] memory_ids delete_query: {delete_query}")
 
-                        # Delete batch
-                        delete_query = f"""
-                            DELETE FROM "{self.db_name}_graph"."Memory"
-                            WHERE {where_clause}
-                        """
-                        logger.info(
-                            f"[delete_node_by_prams] memoryids batch {batch_idx + 1}/{total_batches}: delete_query: {delete_query}"
-                        )
+                    cursor.execute(delete_query)
+                    deleted_count = cursor.rowcount
+                    total_deleted_count += deleted_count
 
-                        logger.info(
-                            f"[delete_node_by_prams] memoryids Batch {batch_idx + 1}/{total_batches}: Executing delete query for {len(batch_ids)} nodes"
-                        )
-                        cursor.execute(delete_query)
-                        batch_deleted = cursor.rowcount
-                        total_deleted_count += batch_deleted
+                    logger.info(
+                        f"[delete_node_by_prams] Deleted {deleted_count} nodes by memory_ids"
+                    )
 
-                        logger.info(
-                            f"[delete_node_by_prams] memoryids Batch {batch_idx + 1}/{total_batches}: Deleted {batch_deleted} nodes (batch size: {len(batch_ids)})"
-                        )
-
-                # Process file_ids in batches
+                # Process file_ids (all at once, no batching)
                 if file_ids:
-                    total_file_batches = (len(file_ids) + batch_size - 1) // batch_size
-                    logger.info(
-                        f"[delete_node_by_prams] Processing {len(file_ids)} file_ids in {total_file_batches} batches (batch_size={batch_size})"
-                    )
+                    logger.info(f"[delete_node_by_prams] Processing {len(file_ids)} file_ids")
 
-                    for batch_idx in range(total_file_batches):
-                        batch_start = batch_idx * batch_size
-                        batch_end = min(batch_start + batch_size, len(file_ids))
-                        batch_file_ids = file_ids[batch_start:batch_end]
-
-                        # Build conditions for this batch
-                        batch_conditions = []
-                        for file_id in batch_file_ids:
-                            batch_conditions.append(
-                                f"agtype_in_operator(agtype_access_operator(VARIADIC ARRAY[properties, '\"file_ids\"'::agtype]), '\"{file_id}\"'::agtype)"
-                            )
-                        batch_where = f"({' OR '.join(batch_conditions)})"
-
-                        # Add user_name filter if provided
-                        if user_name_conditions:
-                            user_name_where = " OR ".join(user_name_conditions)
-                            where_clause = f"({user_name_where}) AND ({batch_where})"
-                        else:
-                            where_clause = batch_where
-
-                        # Count before deletion
-                        count_query = f"""
-                            SELECT COUNT(*)
-                            FROM "{self.db_name}_graph"."Memory"
-                            WHERE {where_clause}
-                        """
-
-                        logger.info(
-                            f"[delete_node_by_prams] File batch {batch_idx + 1}/{total_file_batches}: count_query: {count_query}"
+                    # Build conditions for all file_ids
+                    file_id_conditions = []
+                    for file_id in file_ids:
+                        file_id_conditions.append(
+                            f"agtype_in_operator(agtype_access_operator(VARIADIC ARRAY[properties, '\"file_ids\"'::agtype]), '\"{file_id}\"'::agtype)"
                         )
-                        cursor.execute(count_query)
-                        count_result = cursor.fetchone()
-                        expected_count = count_result[0] if count_result else 0
+                    file_id_where = f"({' OR '.join(file_id_conditions)})"
 
-                        if expected_count == 0:
-                            logger.info(
-                                f"[delete_node_by_prams] File batch {batch_idx + 1}/{total_file_batches}: No nodes found, skipping"
-                            )
-                            continue
+                    # Add user_name filter if provided
+                    if user_name_conditions:
+                        user_name_where = " OR ".join(user_name_conditions)
+                        where_clause = f"({user_name_where}) AND ({file_id_where})"
+                    else:
+                        where_clause = file_id_where
 
-                        # Delete batch
-                        delete_query = f"""
-                            DELETE FROM "{self.db_name}_graph"."Memory"
-                            WHERE {where_clause}
-                        """
-                        cursor.execute(delete_query)
-                        batch_deleted = cursor.rowcount
-                        total_deleted_count += batch_deleted
+                    # Delete directly without counting
+                    delete_query = f"""
+                        DELETE FROM "{self.db_name}_graph"."Memory"
+                        WHERE {where_clause}
+                    """
+                    logger.info(f"[delete_node_by_prams] file_ids delete_query: {delete_query}")
 
-                        logger.info(
-                            f"[delete_node_by_prams] File batch {batch_idx + 1}/{total_file_batches}: delete_query: {delete_query}"
-                        )
+                    cursor.execute(delete_query)
+                    deleted_count = cursor.rowcount
+                    total_deleted_count += deleted_count
+
+                    logger.info(f"[delete_node_by_prams] Deleted {deleted_count} nodes by file_ids")
 
                 elapsed_time = time.time() - batch_start_time
                 logger.info(
