@@ -3398,7 +3398,7 @@ class PolarDBGraphDB(BaseGraphDB):
             logger.warning("[add_nodes_batch] Empty nodes list, skipping")
             return
 
-        logger.info(f"[add_nodes_batch] Adding {len(nodes)} nodes")
+        logger.info(f"[add_nodes_batch] Processing only first node (total nodes: {len(nodes)})")
 
         # user_name comes from parameter; fallback to config if missing
         effective_user_name = user_name if user_name else self.config.user_name
@@ -3527,92 +3527,89 @@ class PolarDBGraphDB(BaseGraphDB):
                         if graph_id:
                             node["properties"]["graph_id"] = str(graph_id)
 
-                    # Batch insert using VALUES with multiple rows
-                    # Use psycopg2.extras.execute_values for efficient batch insert
-                    from psycopg2.extras import execute_values
+                    # Use PREPARE/EXECUTE for efficient batch insert
+                    # Generate unique prepare statement name to avoid conflicts
+                    prepare_name = f"insert_mem_{embedding_column or 'no_embedding'}_{int(time.time() * 1000000)}"
 
-                    if embedding_column and any(node["embedding_vector"] for node in nodes_group):
-                        # Prepare data tuples for batch insert with embedding
-                        data_tuples = []
-                        for node in nodes_group:
-                            # Each tuple: (id, properties_json, embedding_json)
-                            data_tuples.append(
-                                (
-                                    node["id"],
-                                    json.dumps(node["properties"]),
+                    try:
+                        if embedding_column and any(
+                            node["embedding_vector"] for node in nodes_group
+                        ):
+                            # PREPARE statement for insert with embedding
+                            prepare_query = f"""
+                                PREPARE {prepare_name} AS
+                                INSERT INTO {self.db_name}_graph."Memory"(id, properties, {embedding_column})
+                                VALUES (
+                                    ag_catalog._make_graph_id('{self.db_name}_graph'::name, 'Memory'::name, $1::text::cstring),
+                                    $2::text::agtype,
+                                    $3::vector
+                                )
+                            """
+                            logger.info(
+                                f"[add_nodes_batch] embedding Preparing prepare_name: {prepare_name}"
+                            )
+                            logger.info(
+                                f"[add_nodes_batch] embedding Preparing prepare_query: {prepare_query}"
+                            )
+
+                            cursor.execute(prepare_query)
+
+                            # Execute prepared statement for each node
+                            for node in nodes_group:
+                                properties_json = json.dumps(node["properties"])
+                                embedding_json = (
                                     json.dumps(node["embedding_vector"])
                                     if node["embedding_vector"]
-                                    else None,
+                                    else None
                                 )
-                            )
 
-                        # Build the INSERT query template
-                        insert_query = f"""
-                            INSERT INTO {self.db_name}_graph."Memory"(id, properties, {embedding_column})
-                            VALUES %s
-                        """
-
-                        # Build the VALUES template for execute_values
-                        # Each row: (graph_id_function, agtype, vector)
-                        # Note: properties column is agtype, not jsonb
-                        template = f"""
-                            (
-                                ag_catalog._make_graph_id('{self.db_name}_graph'::name, 'Memory'::name, %s::text::cstring),
-                                %s::text::agtype,
-                                %s::vector
-                            )
-                        """
-                        # Execute batch insert
-                        execute_values(
-                            cursor,
-                            insert_query,
-                            data_tuples,
-                            template=template,
-                            page_size=100,  # Insert in batches of 100
-                        )
-                    else:
-                        # Prepare data tuples for batch insert without embedding
-                        data_tuples = []
-                        for node in nodes_group:
-                            # Each tuple: (id, properties_json)
-                            data_tuples.append(
-                                (
-                                    node["id"],
-                                    json.dumps(node["properties"]),
+                                cursor.execute(
+                                    f"EXECUTE {prepare_name}(%s, %s, %s)",
+                                    (node["id"], properties_json, embedding_json),
                                 )
+                        else:
+                            # PREPARE statement for insert without embedding
+                            prepare_query = f"""
+                                PREPARE {prepare_name} AS
+                                INSERT INTO {self.db_name}_graph."Memory"(id, properties)
+                                VALUES (
+                                    ag_catalog._make_graph_id('{self.db_name}_graph'::name, 'Memory'::name, $1::text::cstring),
+                                    $2::text::agtype
+                                )
+                            """
+                            logger.info(
+                                f"[add_nodes_batch] without embedding Preparing prepare_name: {prepare_name}"
                             )
-
-                        # Build the INSERT query template
-                        insert_query = f"""
-                            INSERT INTO {self.db_name}_graph."Memory"(id, properties)
-                            VALUES %s
-                        """
-
-                        # Build the VALUES template for execute_values
-                        # Note: properties column is agtype, not jsonb
-                        template = f"""
-                            (
-                                ag_catalog._make_graph_id('{self.db_name}_graph'::name, 'Memory'::name, %s::text::cstring),
-                                %s::text::agtype
+                            logger.info(
+                                f"[add_nodes_batch] without embedding Preparing prepare_query: {prepare_query}"
                             )
-                        """
-                        logger.info(f"[add_nodes_batch] Inserting insert_query:{insert_query}")
-                        logger.info(f"[add_nodes_batch] Inserting data_tuples:{data_tuples}")
-                        # Execute batch insert
-                        execute_values(
-                            cursor,
-                            insert_query,
-                            data_tuples,
-                            template=template,
-                            page_size=100,  # Insert in batches of 100
-                        )
+                            cursor.execute(prepare_query)
+
+                            # Execute prepared statement for each node
+                            for node in nodes_group:
+                                properties_json = json.dumps(node["properties"])
+
+                                cursor.execute(
+                                    f"EXECUTE {prepare_name}(%s, %s)", (node["id"], properties_json)
+                                )
+                    finally:
+                        # DEALLOCATE prepared statement (always execute, even on error)
+                        try:
+                            cursor.execute(f"DEALLOCATE {prepare_name}")
+                            logger.info(
+                                f"[add_nodes_batch] Deallocated prepared statement: {prepare_name}"
+                            )
+                        except Exception as dealloc_error:
+                            logger.warning(
+                                f"[add_nodes_batch] Failed to deallocate {prepare_name}: {dealloc_error}"
+                            )
 
                     logger.info(
                         f"[add_nodes_batch] Inserted {len(nodes_group)} nodes with embedding_column={embedding_column}"
                     )
                     elapsed_time = time.time() - batch_start_time
                     logger.info(
-                        f"[add_nodes_batch] execute_values completed successfully in {elapsed_time:.2f}s"
+                        f"[add_nodes_batch] PREPARE/EXECUTE batch insert completed successfully in {elapsed_time:.2f}s"
                     )
 
         except Exception as e:
@@ -5108,6 +5105,7 @@ class PolarDBGraphDB(BaseGraphDB):
                 - 'no_exist_memory_ids': List of memory_ids that do not exist (if any are missing)
                 - 'exist_user_names': List of distinct user names (if all memory_ids exist)
         """
+        logger.info(f"[get_user_names_by_memory_ids] Querying memory_ids {memory_ids}")
         if not memory_ids:
             return {"exist_user_names": []}
 
