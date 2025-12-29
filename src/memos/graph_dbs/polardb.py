@@ -2505,6 +2505,7 @@ class PolarDBGraphDB(BaseGraphDB):
         self,
         include_embedding: bool = False,
         user_name: str | None = None,
+        user_id: str | None = None,
         page: int | None = None,
         page_size: int | None = None,
     ) -> dict[str, Any]:
@@ -2513,6 +2514,7 @@ class PolarDBGraphDB(BaseGraphDB):
         Args:
         include_embedding (bool): Whether to include the large embedding field.
         user_name (str, optional): User name for filtering in non-multi-db mode
+        user_id (str, optional): User ID for filtering
         page (int, optional): Page number (starts from 1). If None, exports all data without pagination.
         page_size (int, optional): Number of items per page. If None, exports all data without pagination.
 
@@ -2523,9 +2525,9 @@ class PolarDBGraphDB(BaseGraphDB):
             }
         """
         logger.info(
-            f"[export_graph] include_embedding: {include_embedding}, user_name: {user_name}, page: {page}, page_size: {page_size}"
+            f"[export_graph] include_embedding: {include_embedding}, user_name: {user_name}, user_id: {user_id}, page: {page}, page_size: {page_size}"
         )
-        user_name = user_name if user_name else self._get_config_value("user_name")
+        user_id = user_id if user_id else self._get_config_value("user_id")
 
         # Determine if pagination is needed
         use_pagination = page is not None and page_size is not None
@@ -2549,11 +2551,26 @@ class PolarDBGraphDB(BaseGraphDB):
             if use_pagination:
                 pagination_clause = f"LIMIT {page_size} OFFSET {offset}"
 
+            # Build WHERE conditions
+            where_conditions = []
+            if user_name:
+                where_conditions.append(
+                    f"ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = '\"{user_name}\"'::agtype"
+                )
+            if user_id:
+                where_conditions.append(
+                    f"ag_catalog.agtype_access_operator(properties, '\"user_id\"'::agtype) = '\"{user_id}\"'::agtype"
+                )
+
+            where_clause = ""
+            if where_conditions:
+                where_clause = f"WHERE {' AND '.join(where_conditions)}"
+
             if include_embedding:
                 node_query = f"""
                     SELECT id, properties, embedding
                     FROM "{self.db_name}_graph"."Memory"
-                    WHERE ag_catalog.agtype_access_operator(properties, '"user_name"'::agtype) = '\"{user_name}\"'::agtype
+                    {where_clause}
                     ORDER BY id
                     {pagination_clause}
                 """
@@ -2561,7 +2578,7 @@ class PolarDBGraphDB(BaseGraphDB):
                 node_query = f"""
                     SELECT id, properties
                     FROM "{self.db_name}_graph"."Memory"
-                    WHERE ag_catalog.agtype_access_operator(properties, '"user_name"'::agtype) = '\"{user_name}\"'::agtype
+                    {where_clause}
                     ORDER BY id
                     {pagination_clause}
                 """
@@ -2618,11 +2635,24 @@ class PolarDBGraphDB(BaseGraphDB):
             if use_pagination:
                 edge_pagination_clause = f"LIMIT {page_size} OFFSET {offset}"
 
+            # Build Cypher WHERE conditions for edges
+            cypher_where_conditions = []
+            if user_name:
+                cypher_where_conditions.append(f"a.user_name = '{user_name}'")
+                cypher_where_conditions.append(f"b.user_name = '{user_name}'")
+            if user_id:
+                cypher_where_conditions.append(f"a.user_id = '{user_id}'")
+                cypher_where_conditions.append(f"b.user_id = '{user_id}'")
+
+            cypher_where_clause = ""
+            if cypher_where_conditions:
+                cypher_where_clause = f"WHERE {' AND '.join(cypher_where_conditions)}"
+
             edge_query = f"""
                 SELECT source, target, edge FROM (
                     SELECT * FROM cypher('{self.db_name}_graph', $$
                     MATCH (a:Memory)-[r]->(b:Memory)
-                    WHERE a.user_name = '{user_name}' AND b.user_name = '{user_name}'
+                    {cypher_where_clause}
                     RETURN a.id AS source, b.id AS target, type(r) as edge
                     ORDER BY a.id, b.id
                     $$) AS (source agtype, target agtype, edge agtype)
