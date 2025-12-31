@@ -2508,6 +2508,7 @@ class PolarDBGraphDB(BaseGraphDB):
         user_id: str | None = None,
         page: int | None = None,
         page_size: int | None = None,
+        filter: dict | None = None,
         **kwargs,
     ) -> dict[str, Any]:
         """
@@ -2518,6 +2519,13 @@ class PolarDBGraphDB(BaseGraphDB):
         user_id (str, optional): User ID for filtering
         page (int, optional): Page number (starts from 1). If None, exports all data without pagination.
         page_size (int, optional): Number of items per page. If None, exports all data without pagination.
+        filter (dict, optional): Filter dictionary for metadata filtering. Supports "and", "or" logic and operators:
+            - "=": equality
+            - "in": value in list
+            - "contains": array contains value
+            - "gt", "lt", "gte", "lte": comparison operators
+            - "like": fuzzy matching
+            Example: {"and": [{"created_at": {"gte": "2025-01-01"}}, {"tags": {"contains": "AI"}}]}
 
         Returns:
             {
@@ -2528,7 +2536,7 @@ class PolarDBGraphDB(BaseGraphDB):
             }
         """
         logger.info(
-            f"[export_graph] include_embedding: {include_embedding}, user_name: {user_name}, user_id: {user_id}, page: {page}, page_size: {page_size}"
+            f"[export_graph] include_embedding: {include_embedding}, user_name: {user_name}, user_id: {user_id}, page: {page}, page_size: {page_size}, filter: {filter}"
         )
         user_id = user_id if user_id else self._get_config_value("user_id")
 
@@ -2562,6 +2570,12 @@ class PolarDBGraphDB(BaseGraphDB):
                 where_conditions.append(
                     f"ag_catalog.agtype_access_operator(properties, '\"user_id\"'::agtype) = '\"{user_id}\"'::agtype"
                 )
+
+            # Build filter conditions using common method
+            filter_conditions = self._build_filter_conditions_sql(filter)
+            logger.info(f"[export_graph] filter_conditions: {filter_conditions}")
+            if filter_conditions:
+                where_conditions.extend(filter_conditions)
 
             where_clause = ""
             if where_conditions:
@@ -2651,6 +2665,22 @@ class PolarDBGraphDB(BaseGraphDB):
             if user_id:
                 cypher_where_conditions.append(f"a.user_id = '{user_id}'")
                 cypher_where_conditions.append(f"b.user_id = '{user_id}'")
+
+            # Build filter conditions for edges (apply to both source and target nodes)
+            filter_where_clause = self._build_filter_conditions_cypher(filter)
+            logger.info(f"[export_graph edges] filter_where_clause: {filter_where_clause}")
+            if filter_where_clause:
+                # _build_filter_conditions_cypher returns a string that starts with " AND " if filter exists
+                # Remove the leading " AND " and replace n. with a. for source node and b. for target node
+                filter_clause = filter_where_clause.strip()
+                if filter_clause.startswith("AND "):
+                    filter_clause = filter_clause[4:].strip()
+                # Replace n. with a. for source node and create a copy for target node
+                source_filter = filter_clause.replace("n.", "a.")
+                target_filter = filter_clause.replace("n.", "b.")
+                # Combine source and target filters with AND
+                combined_filter = f"({source_filter}) AND ({target_filter})"
+                cypher_where_conditions.append(combined_filter)
 
             cypher_where_clause = ""
             if cypher_where_conditions:
