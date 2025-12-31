@@ -4740,78 +4740,116 @@ class PolarDBGraphDB(BaseGraphDB):
                             elif op == "in":
                                 # Handle in operator (for checking if field value is in a list)
                                 # Supports array format: {"field": {"in": ["value1", "value2"]}}
+                                # For array fields (like file_ids, tags, sources), uses @> operator (contains)
+                                # For scalar fields, uses = operator (equality)
                                 if not isinstance(op_value, list):
                                     raise ValueError(
                                         f"in operator only supports array format. "
                                         f"Use {{'{key}': {{'in': ['{op_value}']}}}} instead of {{'{key}': {{'in': '{op_value}'}}}}"
                                     )
+                                # Check if key is an array field
+                                is_array_field = key in ("file_ids", "tags", "sources")
+
                                 # Check if key starts with "info." prefix
                                 if key.startswith("info."):
                                     info_field = key[5:]  # Remove "info." prefix
-                                    # Build OR conditions for nested properties
+                                    # Check if info field is an array field
+                                    is_info_array = info_field in ("tags", "sources", "file_ids")
+
                                     if len(op_value) == 0:
                                         # Empty list means no match
                                         condition_parts.append("false")
                                     elif len(op_value) == 1:
-                                        # Single value, use equality
+                                        # Single value
                                         item = op_value[0]
-                                        if isinstance(item, str):
-                                            escaped_value = escape_sql_string(item)
+                                        if is_info_array:
+                                            # For array fields, use @> operator (contains)
+                                            escaped_value = escape_sql_string(str(item))
                                             condition_parts.append(
-                                                f"ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '\"info\"'::ag_catalog.agtype, '\"{info_field}\"'::ag_catalog.agtype]) = '\"{escaped_value}\"'::agtype"
+                                                f"ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '\"info\"'::ag_catalog.agtype, '\"{info_field}\"'::ag_catalog.agtype]) @> '[\"{escaped_value}\"]'::agtype"
                                             )
                                         else:
-                                            condition_parts.append(
-                                                f"ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '\"info\"'::ag_catalog.agtype, '\"{info_field}\"'::ag_catalog.agtype]) = {item}::agtype"
-                                            )
+                                            # For scalar fields, use equality
+                                            if isinstance(item, str):
+                                                escaped_value = escape_sql_string(item)
+                                                condition_parts.append(
+                                                    f"ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '\"info\"'::ag_catalog.agtype, '\"{info_field}\"'::ag_catalog.agtype]) = '\"{escaped_value}\"'::agtype"
+                                                )
+                                            else:
+                                                condition_parts.append(
+                                                    f"ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '\"info\"'::ag_catalog.agtype, '\"{info_field}\"'::ag_catalog.agtype]) = {item}::agtype"
+                                                )
                                     else:
                                         # Multiple values, use OR conditions
                                         or_conditions = []
                                         for item in op_value:
-                                            if isinstance(item, str):
-                                                escaped_value = escape_sql_string(item)
+                                            if is_info_array:
+                                                # For array fields, use @> operator (contains) to check if array contains the value
+                                                escaped_value = escape_sql_string(str(item))
                                                 or_conditions.append(
-                                                    f"ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '\"info\"'::ag_catalog.agtype, '\"{info_field}\"'::ag_catalog.agtype]) = '\"{escaped_value}\"'::agtype"
+                                                    f"ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '\"info\"'::ag_catalog.agtype, '\"{info_field}\"'::ag_catalog.agtype]) @> '[\"{escaped_value}\"]'::agtype"
                                                 )
                                             else:
-                                                or_conditions.append(
-                                                    f"ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '\"info\"'::ag_catalog.agtype, '\"{info_field}\"'::ag_catalog.agtype]) = {item}::agtype"
-                                                )
+                                                # For scalar fields, use equality
+                                                if isinstance(item, str):
+                                                    escaped_value = escape_sql_string(item)
+                                                    or_conditions.append(
+                                                        f"ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '\"info\"'::ag_catalog.agtype, '\"{info_field}\"'::ag_catalog.agtype]) = '\"{escaped_value}\"'::agtype"
+                                                    )
+                                                else:
+                                                    or_conditions.append(
+                                                        f"ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '\"info\"'::ag_catalog.agtype, '\"{info_field}\"'::ag_catalog.agtype]) = {item}::agtype"
+                                                    )
                                         if or_conditions:
                                             condition_parts.append(
                                                 f"({' OR '.join(or_conditions)})"
                                             )
                                 else:
                                     # Direct property access
-                                    # Build OR conditions
                                     if len(op_value) == 0:
                                         # Empty list means no match
                                         condition_parts.append("false")
                                     elif len(op_value) == 1:
-                                        # Single value, use equality
+                                        # Single value
                                         item = op_value[0]
-                                        if isinstance(item, str):
-                                            escaped_value = escape_sql_string(item)
+                                        if is_array_field:
+                                            # For array fields, use @> operator (contains)
+                                            escaped_value = escape_sql_string(str(item))
                                             condition_parts.append(
-                                                f"ag_catalog.agtype_access_operator(properties, '\"{key}\"'::agtype) = '\"{escaped_value}\"'::agtype"
+                                                f"ag_catalog.agtype_access_operator(properties, '\"{key}\"'::agtype) @> '[\"{escaped_value}\"]'::agtype"
                                             )
                                         else:
-                                            condition_parts.append(
-                                                f"ag_catalog.agtype_access_operator(properties, '\"{key}\"'::agtype) = {item}::agtype"
-                                            )
+                                            # For scalar fields, use equality
+                                            if isinstance(item, str):
+                                                escaped_value = escape_sql_string(item)
+                                                condition_parts.append(
+                                                    f"ag_catalog.agtype_access_operator(properties, '\"{key}\"'::agtype) = '\"{escaped_value}\"'::agtype"
+                                                )
+                                            else:
+                                                condition_parts.append(
+                                                    f"ag_catalog.agtype_access_operator(properties, '\"{key}\"'::agtype) = {item}::agtype"
+                                                )
                                     else:
                                         # Multiple values, use OR conditions
                                         or_conditions = []
                                         for item in op_value:
-                                            if isinstance(item, str):
-                                                escaped_value = escape_sql_string(item)
+                                            if is_array_field:
+                                                # For array fields, use @> operator (contains) to check if array contains the value
+                                                escaped_value = escape_sql_string(str(item))
                                                 or_conditions.append(
-                                                    f"ag_catalog.agtype_access_operator(properties, '\"{key}\"'::agtype) = '\"{escaped_value}\"'::agtype"
+                                                    f"ag_catalog.agtype_access_operator(properties, '\"{key}\"'::agtype) @> '[\"{escaped_value}\"]'::agtype"
                                                 )
                                             else:
-                                                or_conditions.append(
-                                                    f"ag_catalog.agtype_access_operator(properties, '\"{key}\"'::agtype) = {item}::agtype"
-                                                )
+                                                # For scalar fields, use equality
+                                                if isinstance(item, str):
+                                                    escaped_value = escape_sql_string(item)
+                                                    or_conditions.append(
+                                                        f"ag_catalog.agtype_access_operator(properties, '\"{key}\"'::agtype) = '\"{escaped_value}\"'::agtype"
+                                                    )
+                                                else:
+                                                    or_conditions.append(
+                                                        f"ag_catalog.agtype_access_operator(properties, '\"{key}\"'::agtype) = {item}::agtype"
+                                                    )
                                         if or_conditions:
                                             condition_parts.append(
                                                 f"({' OR '.join(or_conditions)})"
