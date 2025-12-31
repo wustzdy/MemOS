@@ -4446,70 +4446,133 @@ class PolarDBGraphDB(BaseGraphDB):
                             elif op == "in":
                                 # Handle in operator (for checking if field value is in a list)
                                 # Supports array format: {"field": {"in": ["value1", "value2"]}}
-                                # Generates: n.field IN ['value1', 'value2'] or (n.field = 'value1' OR n.field = 'value2')
+                                # For array fields (like file_ids, tags, sources), uses CONTAINS logic
+                                # For scalar fields, uses equality or IN clause
                                 if not isinstance(op_value, list):
                                     raise ValueError(
                                         f"in operator only supports array format. "
                                         f"Use {{'{key}': {{'in': ['{op_value}']}}}} instead of {{'{key}': {{'in': '{op_value}'}}}}"
                                     )
+                                # Check if key is an array field
+                                is_array_field = key in ("file_ids", "tags", "sources")
+
                                 # Check if key starts with "info." prefix
                                 if key.startswith("info."):
                                     info_field = key[5:]  # Remove "info." prefix
-                                    # Build OR conditions for nested properties (Apache AGE compatibility)
+                                    # Check if info field is an array field
+                                    is_info_array = info_field in ("tags", "sources", "file_ids")
+
                                     if len(op_value) == 0:
                                         # Empty list means no match
                                         condition_parts.append("false")
                                     elif len(op_value) == 1:
-                                        # Single value, use equality
+                                        # Single value
                                         item = op_value[0]
-                                        if isinstance(item, str):
-                                            escaped_value = escape_cypher_string(item)
-                                            condition_parts.append(
-                                                f"n.info.{info_field} = '{escaped_value}'"
-                                            )
-                                        else:
-                                            condition_parts.append(f"n.info.{info_field} = {item}")
-                                    else:
-                                        # Multiple values, use OR conditions instead of IN (Apache AGE compatibility)
-                                        or_conditions = []
-                                        for item in op_value:
+                                        if is_info_array:
+                                            # For array fields, use CONTAINS (value IN array_field)
                                             if isinstance(item, str):
                                                 escaped_value = escape_cypher_string(item)
-                                                or_conditions.append(
+                                                condition_parts.append(
+                                                    f"'{escaped_value}' IN n.info.{info_field}"
+                                                )
+                                            else:
+                                                condition_parts.append(
+                                                    f"{item} IN n.info.{info_field}"
+                                                )
+                                        else:
+                                            # For scalar fields, use equality
+                                            if isinstance(item, str):
+                                                escaped_value = escape_cypher_string(item)
+                                                condition_parts.append(
                                                     f"n.info.{info_field} = '{escaped_value}'"
                                                 )
                                             else:
-                                                or_conditions.append(
+                                                condition_parts.append(
                                                     f"n.info.{info_field} = {item}"
                                                 )
+                                    else:
+                                        # Multiple values, use OR conditions
+                                        or_conditions = []
+                                        for item in op_value:
+                                            if is_info_array:
+                                                # For array fields, use CONTAINS (value IN array_field)
+                                                if isinstance(item, str):
+                                                    escaped_value = escape_cypher_string(item)
+                                                    or_conditions.append(
+                                                        f"'{escaped_value}' IN n.info.{info_field}"
+                                                    )
+                                                else:
+                                                    or_conditions.append(
+                                                        f"{item} IN n.info.{info_field}"
+                                                    )
+                                            else:
+                                                # For scalar fields, use equality
+                                                if isinstance(item, str):
+                                                    escaped_value = escape_cypher_string(item)
+                                                    or_conditions.append(
+                                                        f"n.info.{info_field} = '{escaped_value}'"
+                                                    )
+                                                else:
+                                                    or_conditions.append(
+                                                        f"n.info.{info_field} = {item}"
+                                                    )
                                         if or_conditions:
                                             condition_parts.append(
                                                 f"({' OR '.join(or_conditions)})"
                                             )
                                 else:
                                     # Direct property access
-                                    # Build array for IN clause or OR conditions
                                     if len(op_value) == 0:
                                         # Empty list means no match
                                         condition_parts.append("false")
                                     elif len(op_value) == 1:
-                                        # Single value, use equality
+                                        # Single value
                                         item = op_value[0]
-                                        if isinstance(item, str):
-                                            escaped_value = escape_cypher_string(item)
-                                            condition_parts.append(f"n.{key} = '{escaped_value}'")
+                                        if is_array_field:
+                                            # For array fields, use CONTAINS (value IN array_field)
+                                            if isinstance(item, str):
+                                                escaped_value = escape_cypher_string(item)
+                                                condition_parts.append(
+                                                    f"'{escaped_value}' IN n.{key}"
+                                                )
+                                            else:
+                                                condition_parts.append(f"{item} IN n.{key}")
                                         else:
-                                            condition_parts.append(f"n.{key} = {item}")
+                                            # For scalar fields, use equality
+                                            if isinstance(item, str):
+                                                escaped_value = escape_cypher_string(item)
+                                                condition_parts.append(
+                                                    f"n.{key} = '{escaped_value}'"
+                                                )
+                                            else:
+                                                condition_parts.append(f"n.{key} = {item}")
                                     else:
-                                        # Multiple values, use IN clause
-                                        escaped_items = [
-                                            f"'{escape_cypher_string(str(item))}'"
-                                            if isinstance(item, str)
-                                            else str(item)
-                                            for item in op_value
-                                        ]
-                                        array_str = "[" + ", ".join(escaped_items) + "]"
-                                        condition_parts.append(f"n.{key} IN {array_str}")
+                                        # Multiple values
+                                        if is_array_field:
+                                            # For array fields, use OR conditions with CONTAINS
+                                            or_conditions = []
+                                            for item in op_value:
+                                                if isinstance(item, str):
+                                                    escaped_value = escape_cypher_string(item)
+                                                    or_conditions.append(
+                                                        f"'{escaped_value}' IN n.{key}"
+                                                    )
+                                                else:
+                                                    or_conditions.append(f"{item} IN n.{key}")
+                                            if or_conditions:
+                                                condition_parts.append(
+                                                    f"({' OR '.join(or_conditions)})"
+                                                )
+                                        else:
+                                            # For scalar fields, use IN clause
+                                            escaped_items = [
+                                                f"'{escape_cypher_string(str(item))}'"
+                                                if isinstance(item, str)
+                                                else str(item)
+                                                for item in op_value
+                                            ]
+                                            array_str = "[" + ", ".join(escaped_items) + "]"
+                                            condition_parts.append(f"n.{key} IN {array_str}")
                             elif op == "like":
                                 # Handle like operator (for fuzzy matching, similar to SQL LIKE '%value%')
                                 # Check if key starts with "info." prefix
