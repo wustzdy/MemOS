@@ -285,9 +285,9 @@ class Neo4jGraphDB(BaseGraphDB):
                 updated_at = metadata.pop("updated_at")
 
                 # Serialization for sources
-                if metadata.get("sources"):
-                    for idx in range(len(metadata["sources"])):
-                        metadata["sources"][idx] = json.dumps(metadata["sources"][idx])
+                # if metadata.get("sources"):
+                #     for idx in range(len(metadata["sources"])):
+                #         metadata["sources"][idx] = json.dumps(metadata["sources"][idx])
 
                 prepared_nodes.append(
                     {
