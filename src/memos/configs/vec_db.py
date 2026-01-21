@@ -52,6 +52,8 @@ class MilvusVecDBConfig(BaseVecDBConfig):
     )
     user_name: str = Field(default="", description="User name for Milvus connection")
     password: str = Field(default="", description="Password for Milvus connection")
+    type: str = Field(default="", description="Connection type: 'aws' for token-based connection, empty for username/password")
+    token: str = Field(default="", description="Token for token-based authentication (used when type='aws')")
 
 
 class VectorDBConfigFactory(BaseConfig):
