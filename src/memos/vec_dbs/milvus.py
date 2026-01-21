@@ -23,20 +23,15 @@ class MilvusVecDB(BaseVecDB):
         from pymilvus import MilvusClient
 
         self.config = config
-        print("99999999999")
-        print("23type:", self.config.type)
-        print("23token:", self.config.token)
-        print("23config dict:", config.model_dump() if hasattr(config, 'model_dump') else config)
-
         # Create Milvus client based on connection type
-        if self.config.type == "aws" and self.config.token:
-            print("----aws---")
+        if self.config.token:
+            logger.info(f"----aws-is collected------")
             # Use token authentication for AWS
             self.client = MilvusClient(
                 uri=self.config.uri, token=self.config.token
             )
         else:
-            print("----aliyun---")
+            logger.info(f"----aliyun-is collected-------")
             # Use username/password authentication (default)
             self.client = MilvusClient(
                 uri=self.config.uri, user=self.config.user_name, password=self.config.password

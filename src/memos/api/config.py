@@ -590,7 +590,6 @@ class APIConfig:
         # Check if AWS token configuration is provided
         aws_uri = os.getenv("MILVUS_AWS_URI")
         aws_token = os.getenv("MILVUS_AWS_TOKEN")
-        connection_type = os.getenv("MILVUS_TYPE")
 
         config = {
             "collection_name": [
@@ -602,10 +601,9 @@ class APIConfig:
         }
 
         # Use AWS token connection if type is "aws" and both URI and token are provided
-        if connection_type == "aws" and aws_uri and aws_token:
+        if aws_uri and aws_token:
             config["uri"] = aws_uri
             config["token"] = aws_token
-            config["type"] = "aws"
             config["user_name"] = ""  # Not used for token auth
             config["password"] = ""  # Not used for token auth
         else:
@@ -613,7 +611,6 @@ class APIConfig:
             config["uri"] = os.getenv("MILVUS_URI", "http://localhost:19530")
             config["user_name"] = os.getenv("MILVUS_USER_NAME", "root")
             config["password"] = os.getenv("MILVUS_PASSWORD", "12345678")
-            config["type"] = ""
             config["token"] = ""  # Not used for username/password auth
 
         return config
