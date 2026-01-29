@@ -4310,7 +4310,7 @@ class PolarDBGraphDB(BaseGraphDB):
         user_name_conditions = []
         effective_user_name = user_name if user_name else default_user_name
 
-        if effective_user_name:
+        if user_name:
             user_name_conditions.append(
                 f"ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = '\"{effective_user_name}\"'::agtype"
             )
