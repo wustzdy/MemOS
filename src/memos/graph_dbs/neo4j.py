@@ -503,7 +503,7 @@ class Neo4jGraphDB(BaseGraphDB):
 
     # Graph Query & Reasoning
     def get_node(
-            self, id: str, include_embedding: bool = False, **kwargs
+            self, id: str, include_embedding: bool = True, **kwargs
     ) -> dict[str, Any] | None:
         """
         Retrieve the metadata and memory of a node.
@@ -521,7 +521,7 @@ class Neo4jGraphDB(BaseGraphDB):
             params["user_name"] = user_name
 
         query = f"MATCH (n:Memory) WHERE n.id = $id {where_user} RETURN n"
-        print("get_node:", query)
+        logger.info(f"[get_node] query: {query}")
 
         with self.driver.session(database=self.db_name) as session:
             record = session.run(query, params).single()
@@ -529,7 +529,7 @@ class Neo4jGraphDB(BaseGraphDB):
                 return None
 
             node_dict = dict(record["n"])
-            if not include_embedding:
+            if include_embedding:
                 for key in ("embedding", "embedding_1024", "embedding_3072", "embedding_768"):
                     node_dict.pop(key, None)
 
@@ -1718,8 +1718,6 @@ class Neo4jGraphDB(BaseGraphDB):
 
     def _parse_node(self, node_data: dict[str, Any]) -> dict[str, Any]:
         node = node_data.copy()
-
-        print("3333node:",node)
 
         # Convert Neo4j datetime to string
         for time_field in ("created_at", "updated_at"):
