@@ -5167,11 +5167,13 @@ class PolarDBGraphDB(BaseGraphDB):
 
     @timed
     def delete_node_by_prams(
-        self,
-        writable_cube_ids: list[str] | None = None,
-        memory_ids: list[str] | None = None,
-        file_ids: list[str] | None = None,
-        filter: dict | None = None,
+            self,
+            writable_cube_ids: list[str] | None = None,
+            memory_ids: list[str] | None = None,
+            file_ids: list[str] | None = None,
+            filter: dict | None = None,
+            user_name: str | None = None,
+            delete_record_id: str | None = None,
     ) -> int:
         """
         Delete nodes by memory_ids, file_ids, or filter.
@@ -5189,7 +5191,7 @@ class PolarDBGraphDB(BaseGraphDB):
         """
         batch_start_time = time.time()
         logger.info(
-            f"[delete_node_by_prams] memory_ids: {memory_ids}, file_ids: {file_ids}, filter: {filter}, writable_cube_ids: {writable_cube_ids}"
+            f"[delete_node_by_prams] memory_ids: {memory_ids}, file_ids: {file_ids}, filter: {filter}, writable_cube_ids: {writable_cube_ids}, user_name: {user_name}, delete_record_id: {delete_record_id}"
         )
 
         # Build user_name condition from writable_cube_ids (OR relationship - match any cube_id)
@@ -5202,6 +5204,12 @@ class PolarDBGraphDB(BaseGraphDB):
                     f"agtype_access_operator(VARIADIC ARRAY[properties, '\"user_name\"'::agtype]) = '\"{cube_id}\"'::agtype"
                 )
 
+        # Add user_name condition if provided (for logical deletion)
+        if user_name:
+            user_name_conditions.append(
+                f"agtype_access_operator(VARIADIC ARRAY[properties, '\"user_name\"'::agtype]) = '\"{user_name}\"'::agtype"
+            )
+
         # Build filter conditions using common method (no query, direct use in WHERE clause)
         filter_conditions = []
         if filter:
@@ -5209,9 +5217,10 @@ class PolarDBGraphDB(BaseGraphDB):
             logger.info(f"[delete_node_by_prams] filter_conditions: {filter_conditions}")
 
         # If no conditions to delete, return 0
-        if not memory_ids and not file_ids and not filter_conditions:
+        # Check user_name_conditions as well, since user_name can be used as a deletion condition
+        if not memory_ids and not file_ids and not filter_conditions and not user_name_conditions:
             logger.warning(
-                "[delete_node_by_prams] No nodes to delete (no memory_ids, file_ids, or filter provided)"
+                "[delete_node_by_prams] No nodes to delete (no memory_ids, file_ids, filter, or user_name provided)"
             )
             return 0
 
@@ -5260,18 +5269,46 @@ class PolarDBGraphDB(BaseGraphDB):
 
                 where_clause = " AND ".join(where_conditions)
 
-                # Delete directly without counting
-                delete_query = f"""
-                    DELETE FROM "{self.db_name}_graph"."Memory"
-                    WHERE {where_clause}
-                """
-                logger.info(f"[delete_node_by_prams] delete_query: {delete_query}")
+                # If user_name is provided, perform logical deletion (UPDATE) instead of physical deletion
+                if user_name and delete_record_id is not None:
+                    # Logical deletion: update status, delete_time, and delete_record_id
+                    current_time = datetime.utcnow().isoformat()
+                    # Build update properties JSON with status, delete_time, and delete_record_id
+                    # Use PostgreSQL JSONB merge operator (||) to update properties
+                    # Convert agtype to jsonb, merge with new values, then convert back to agtype
+                    update_query = f"""
+                            UPDATE "{self.db_name}_graph"."Memory"
+                            SET properties = (
+                                properties::jsonb || %s::jsonb
+                            )::text::agtype
+                            WHERE {where_clause}
+                        """
+                    # Create update JSON with the three fields to update
+                    update_properties = {
+                        "status": "deleted",
+                        "delete_time": current_time,
+                        "delete_record_id": delete_record_id
+                    }
+                    logger.info(f"[delete_node_by_prams] Logical deletion update_query: {update_query}")
+                    logger.info(f"[delete_node_by_prams] update_properties: {update_properties}")
 
-                cursor.execute(delete_query)
-                deleted_count = cursor.rowcount
-                total_deleted_count = deleted_count
+                    cursor.execute(update_query, (json.dumps(update_properties),))
+                    deleted_count = cursor.rowcount
+                    total_deleted_count = deleted_count
+                    logger.info(f"[delete_node_by_prams] Logically deleted (updated) {deleted_count} nodes")
+                else:
+                    # Physical deletion: DELETE FROM
+                    delete_query = f"""
+                            DELETE FROM "{self.db_name}_graph"."Memory"
+                            WHERE {where_clause}
+                        """
+                    logger.info(f"[delete_node_by_prams] Physical deletion delete_query: {delete_query}")
 
-                logger.info(f"[delete_node_by_prams] Deleted {deleted_count} nodes")
+                    cursor.execute(delete_query)
+                    deleted_count = cursor.rowcount
+                    total_deleted_count = deleted_count
+
+                    logger.info(f"[delete_node_by_prams] Physically deleted {deleted_count} nodes")
 
                 elapsed_time = time.time() - batch_start_time
                 logger.info(
