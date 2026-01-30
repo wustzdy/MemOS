@@ -2534,6 +2534,7 @@ class PolarDBGraphDB(BaseGraphDB):
         page: int | None = None,
         page_size: int | None = None,
         filter: dict | None = None,
+        memory_type: list[str] | None = None,
         **kwargs,
     ) -> dict[str, Any]:
         """
@@ -2551,6 +2552,8 @@ class PolarDBGraphDB(BaseGraphDB):
             - "gt", "lt", "gte", "lte": comparison operators
             - "like": fuzzy matching
             Example: {"and": [{"created_at": {"gte": "2025-01-01"}}, {"tags": {"contains": "AI"}}]}
+        memory_type (list[str], optional): List of memory_type values to filter by. If provided, only nodes/edges with
+            memory_type in this list will be exported. Example: ["LongTermMemory", "WorkingMemory"]
 
         Returns:
             {
@@ -2561,7 +2564,7 @@ class PolarDBGraphDB(BaseGraphDB):
             }
         """
         logger.info(
-            f"[export_graph] include_embedding: {include_embedding}, user_name: {user_name}, user_id: {user_id}, page: {page}, page_size: {page_size}, filter: {filter}"
+            f"[export_graph] include_embedding: {include_embedding}, user_name: {user_name}, user_id: {user_id}, page: {page}, page_size: {page_size}, filter: {filter}, memory_type: {memory_type}"
         )
         user_id = user_id if user_id else self._get_config_value("user_id")
 
@@ -2594,6 +2597,19 @@ class PolarDBGraphDB(BaseGraphDB):
             if user_id:
                 where_conditions.append(
                     f"ag_catalog.agtype_access_operator(properties, '\"user_id\"'::agtype) = '\"{user_id}\"'::agtype"
+                )
+
+            # Add memory_type filter condition
+            if memory_type and isinstance(memory_type, list) and len(memory_type) > 0:
+                # Escape memory_type values and build IN clause
+                memory_type_values = []
+                for mt in memory_type:
+                    # Escape single quotes in memory_type value
+                    escaped_memory_type = str(mt).replace("'", "''")
+                    memory_type_values.append(f"'\"{escaped_memory_type}\"'::agtype")
+                memory_type_in_clause = ", ".join(memory_type_values)
+                where_conditions.append(
+                    f"ag_catalog.agtype_access_operator(properties, '\"memory_type\"'::agtype) IN ({memory_type_in_clause})"
                 )
 
             # Build filter conditions using common method
@@ -2690,6 +2706,15 @@ class PolarDBGraphDB(BaseGraphDB):
             if user_id:
                 cypher_where_conditions.append(f"a.user_id = '{user_id}'")
                 cypher_where_conditions.append(f"b.user_id = '{user_id}'")
+
+            # Add memory_type filter condition for edges (apply to both source and target nodes)
+            if memory_type and isinstance(memory_type, list) and len(memory_type) > 0:
+                # Escape single quotes in memory_type values for Cypher
+                escaped_memory_types = [mt.replace("'", "\\'") for mt in memory_type]
+                memory_type_list_str = ", ".join([f"'{mt}'" for mt in escaped_memory_types])
+                # Cypher IN syntax: a.memory_type IN ['LongTermMemory', 'WorkingMemory']
+                cypher_where_conditions.append(f"a.memory_type IN [{memory_type_list_str}]")
+                cypher_where_conditions.append(f"b.memory_type IN [{memory_type_list_str}]")
 
             # Build filter conditions for edges (apply to both source and target nodes)
             filter_where_clause = self._build_filter_conditions_cypher(filter)
