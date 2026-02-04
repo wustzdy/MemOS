@@ -1117,7 +1117,7 @@ class PolarDBGraphDB(BaseGraphDB):
 
     @timed
     def get_nodes(
-        self, ids: list[str], user_name: str | None = None, **kwargs
+            self, ids: list[str], user_name: str | None = None, **kwargs
     ) -> list[dict[str, Any]]:
         """
         Retrieve the metadata and memory of a list of nodes.
@@ -2535,6 +2535,7 @@ class PolarDBGraphDB(BaseGraphDB):
         page_size: int | None = None,
         filter: dict | None = None,
         memory_type: list[str] | None = None,
+        status: list[str] | None = None,
         **kwargs,
     ) -> dict[str, Any]:
         """
@@ -2554,6 +2555,8 @@ class PolarDBGraphDB(BaseGraphDB):
             Example: {"and": [{"created_at": {"gte": "2025-01-01"}}, {"tags": {"contains": "AI"}}]}
         memory_type (list[str], optional): List of memory_type values to filter by. If provided, only nodes/edges with
             memory_type in this list will be exported. Example: ["LongTermMemory", "WorkingMemory"]
+        status (list[str], optional): List of status values to filter by. If provided, only nodes/edges with
+            status in this list will be exported. Example: ["activated", "deleted"]
 
         Returns:
             {
@@ -2564,7 +2567,7 @@ class PolarDBGraphDB(BaseGraphDB):
             }
         """
         logger.info(
-            f"[export_graph] include_embedding: {include_embedding}, user_name: {user_name}, user_id: {user_id}, page: {page}, page_size: {page_size}, filter: {filter}, memory_type: {memory_type}"
+            f"[export_graph] include_embedding: {include_embedding}, user_name: {user_name}, user_id: {user_id}, page: {page}, page_size: {page_size}, filter: {filter}, memory_type: {memory_type}, status: {status}"
         )
         user_id = user_id if user_id else self._get_config_value("user_id")
 
@@ -2610,6 +2613,19 @@ class PolarDBGraphDB(BaseGraphDB):
                 memory_type_in_clause = ", ".join(memory_type_values)
                 where_conditions.append(
                     f"ag_catalog.agtype_access_operator(properties, '\"memory_type\"'::agtype) IN ({memory_type_in_clause})"
+                )
+
+            # Add status filter condition
+            if status and isinstance(status, list) and len(status) > 0:
+                # Escape status values and build IN clause
+                status_values = []
+                for st in status:
+                    # Escape single quotes in status value
+                    escaped_status = str(st).replace("'", "''")
+                    status_values.append(f"'\"{escaped_status}\"'::agtype")
+                status_in_clause = ", ".join(status_values)
+                where_conditions.append(
+                    f"ag_catalog.agtype_access_operator(properties, '\"status\"'::agtype) IN ({status_in_clause})"
                 )
 
             # Build filter conditions using common method
@@ -2715,6 +2731,15 @@ class PolarDBGraphDB(BaseGraphDB):
                 # Cypher IN syntax: a.memory_type IN ['LongTermMemory', 'WorkingMemory']
                 cypher_where_conditions.append(f"a.memory_type IN [{memory_type_list_str}]")
                 cypher_where_conditions.append(f"b.memory_type IN [{memory_type_list_str}]")
+
+            # Add status filter condition for edges (apply to both source and target nodes)
+            if status and isinstance(status, list) and len(status) > 0:
+                # Escape single quotes in status values for Cypher
+                escaped_statuses = [st.replace("'", "\\'") for st in status]
+                status_list_str = ", ".join([f"'{st}'" for st in escaped_statuses])
+                # Cypher IN syntax: a.status IN ['activated', 'deleted']
+                cypher_where_conditions.append(f"a.status IN [{status_list_str}]")
+                cypher_where_conditions.append(f"b.status IN [{status_list_str}]")
 
             # Build filter conditions for edges (apply to both source and target nodes)
             filter_where_clause = self._build_filter_conditions_cypher(filter)
@@ -5469,9 +5494,9 @@ class PolarDBGraphDB(BaseGraphDB):
 
     @timed
     def delete_node_by_mem_cube_id(
-        self,
-        mem_kube_id: dict | None = None,
-        delete_record_id: dict | None = None,
+            self,
+            mem_kube_id: dict | None = None,
+            delete_record_id: dict | None = None,
         deleted_type: bool = False,
     ) -> int:
         # Handle dict type parameters (extract value if dict)
