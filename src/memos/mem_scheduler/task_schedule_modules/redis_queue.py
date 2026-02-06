@@ -444,6 +444,8 @@ class SchedulerRedisQueue(RedisSchedulerModule):
 
             # Convert message to dictionary for Redis storage
             message_data = message.to_dict()
+            for key, value in message_data.items():
+                print(f"{key}: {type(value)} - {repr(value)[:50]}")
 
             # Add to Redis stream with automatic trimming
             message_id = self._redis_conn.xadd(

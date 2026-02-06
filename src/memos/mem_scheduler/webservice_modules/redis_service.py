@@ -152,13 +152,34 @@ class RedisSchedulerModule(BaseSchedulerModule):
                 redis_config = self.config.redis_config
                 logger.info("Attempting to initialize Redis from config")
 
-                self._redis_conn = redis.Redis(
-                    host=redis_config.get("host", "localhost"),
-                    port=redis_config.get("port", 6379),
-                    db=redis_config.get("db", 0),
-                    password=redis_config.get("password", None),
-                    decode_responses=True,
-                )
+                redis_kwargs = {
+                    "host": redis_config.get("host", "localhost"),
+                    "port": redis_config.get("port", 6379),
+                    "db": redis_config.get("db", 0),
+                    "password": redis_config.get("password", None),
+                    "decode_responses": True,
+                }
+
+                if redis_config.get("ssl", False):
+                    redis_kwargs["ssl"] = True
+                    self._add_ssl_config(redis_kwargs, redis_config)
+
+                if "socket_timeout" in redis_config:
+                    redis_kwargs["socket_timeout"] = redis_config["socket_timeout"]
+                if "socket_connect_timeout" in redis_config:
+                    redis_kwargs["socket_connect_timeout"] = redis_config["socket_connect_timeout"]
+
+                is_cluster = redis_config.get("cluster", False) or "clustercfg" in redis_config.get("host", "")
+
+                if is_cluster:
+                    from redis.cluster import RedisCluster
+                    cluster_kwargs = redis_kwargs.copy()
+                    if "db" in cluster_kwargs:
+                        del cluster_kwargs["db"]
+                    cluster_kwargs["skip_full_coverage_check"] = True
+                    self._redis_conn = RedisCluster(**cluster_kwargs)
+                else:
+                    self._redis_conn = redis.Redis(**redis_kwargs)
 
                 # Test connection
                 if self._redis_conn.ping():
@@ -186,6 +207,10 @@ class RedisSchedulerModule(BaseSchedulerModule):
             socket_timeout = os.getenv("MEMSCHEDULER_REDIS_TIMEOUT", None)
             socket_connect_timeout = os.getenv("MEMSCHEDULER_REDIS_CONNECT_TIMEOUT", None)
 
+            redis_ssl = os.getenv("MEMSCHEDULER_REDIS_SSL", "false").lower() == "true"
+            redis_ssl_cert_reqs = os.getenv("MEMSCHEDULER_REDIS_SSL_CERT_REQS", "required")
+            redis_ssl_ca_certs = os.getenv("MEMSCHEDULER_REDIS_SSL_CA_CERTS", None)
+
             logger.info(
                 f"Attempting to initialize Redis from environment variables: {redis_host}:{redis_port}"
             )
@@ -196,8 +221,30 @@ class RedisSchedulerModule(BaseSchedulerModule):
                 "db": redis_db,
                 "password": redis_password,
                 "decode_responses": True,
-                "ssl": os.getenv("MEMSCHEDULER_REDIS_SSL", "false").lower() == "true",
+                "ssl": redis_ssl,
             }
+
+            if redis_kwargs["ssl"]:
+                import ssl
+
+                cert_reqs_map = {
+                    "none": ssl.CERT_NONE,
+                    "optional": ssl.CERT_OPTIONAL,
+                    "required": ssl.CERT_REQUIRED,
+                }
+
+                redis_kwargs["ssl_cert_reqs"] = cert_reqs_map.get(
+                    redis_ssl_cert_reqs.lower(), ssl.CERT_REQUIRED
+                )
+
+                if redis_ssl_ca_certs:
+                    redis_kwargs["ssl_ca_certs"] = redis_ssl_ca_certs
+                else:
+                    try:
+                        import certifi
+                        redis_kwargs["ssl_ca_certs"] = certifi.where()
+                    except ImportError:
+                        logger.warning("certifi is not installed, SSL certificate verification may fail")
 
             # Add timeout parameters if provided
             if socket_timeout is not None:
@@ -207,6 +254,7 @@ class RedisSchedulerModule(BaseSchedulerModule):
                     logger.warning(
                         f"Invalid MEMSCHEDULER_REDIS_TIMEOUT value: {socket_timeout}, ignoring"
                     )
+                    redis_kwargs["socket_timeout"] = 10.0  # 设置默认值
 
             if socket_connect_timeout is not None:
                 try:
@@ -215,6 +263,12 @@ class RedisSchedulerModule(BaseSchedulerModule):
                     logger.warning(
                         f"Invalid MEMSCHEDULER_REDIS_CONNECT_TIMEOUT value: {socket_connect_timeout}, ignoring"
                     )
+                    redis_kwargs["socket_connect_timeout"] = 10.0  # 设置默认值
+
+            if "socket_timeout" not in redis_kwargs:
+                redis_kwargs["socket_timeout"] = 10.0
+            if "socket_connect_timeout" not in redis_kwargs:
+                redis_kwargs["socket_connect_timeout"] = 10.0
 
             # Cluster support logic
             is_cluster = (
@@ -224,31 +278,59 @@ class RedisSchedulerModule(BaseSchedulerModule):
             )
 
             if is_cluster:
-                from redis.cluster import RedisCluster
-                cluster_kwargs = redis_kwargs.copy()
-                if "db" in cluster_kwargs:
-                    del cluster_kwargs["db"]
-                self._redis_conn = RedisCluster(**cluster_kwargs)
+                try:
+                    from redis.cluster import RedisCluster
+                    cluster_kwargs = redis_kwargs.copy()
+                    if "db" in cluster_kwargs:
+                        del cluster_kwargs["db"]
+
+                    cluster_kwargs["skip_full_coverage_check"] = True
+                    if cluster_kwargs.get("ssl", False) and "clustercfg" in redis_host:
+                        if "ssl_cert_reqs" not in cluster_kwargs:
+                            import ssl
+                            cluster_kwargs["ssl_cert_reqs"] = ssl.CERT_NONE
+                            logger.warning("Using ssl_cert_reqs=CERT_NONE for AWS Redis cluster connection")
+
+                    self._redis_conn = RedisCluster(**cluster_kwargs)
+                    logger.info(f"Created Redis Cluster connection to {redis_host}")
+
+                except ImportError as e:
+                    logger.error("Redis cluster module not available. Install with: pip install redis[cluster]")
+                    raise
             else:
                 self._redis_conn = redis.Redis(**redis_kwargs)
 
-            # Test connection
-            if self._redis_conn.ping():
-                logger.info("Redis initialized successfully from environment variables")
-                self.redis_host = redis_host
-                self.redis_port = redis_port
-                self.redis_db = redis_db
-                self.redis_password = redis_password
-                self.socket_timeout = float(socket_timeout) if socket_timeout is not None else None
-                self.socket_connect_timeout = (
-                    float(socket_connect_timeout) if socket_connect_timeout is not None else None
-                )
-                return True
-            else:
-                logger.warning("Redis environment connection test failed")
-                self._redis_conn = None
+            # Test connection with retry
+            max_retries = 3
+            for i in range(max_retries):
+                try:
+                    if self._redis_conn.ping():
+                        logger.info("Redis initialized successfully from environment variables")
+                        self.redis_host = redis_host
+                        self.redis_port = redis_port
+                        self.redis_db = redis_db
+                        self.redis_password = redis_password
+                        self.socket_timeout = float(socket_timeout) if socket_timeout is not None else 10.0
+                        self.socket_connect_timeout = (
+                            float(socket_connect_timeout) if socket_connect_timeout is not None else 10.0
+                        )
+                        return True
+                    else:
+                        logger.warning("Redis environment connection test failed")
+                except Exception as ping_error:
+                    if i < max_retries - 1:
+                        logger.warning(f"Redis ping failed (attempt {i + 1}/{max_retries}): {ping_error}")
+                        time.sleep(1)
+                        continue
+                    else:
+                        logger.warning(f"Redis environment connection test failed after {max_retries} attempts")
+                        self._redis_conn = None
+                        raise ping_error
+            self._redis_conn = None
+
         except Exception as e:
-            logger.warning(f"Failed to initialize Redis from environment variables: {e}")
+            error_msg = f"Failed to initialize Redis from environment variables: {e}"
+            logger.warning(error_msg, exc_info=True)
             self._redis_conn = None
 
         # Strategy 3: Try to start local Redis server as fallback
@@ -266,10 +348,17 @@ class RedisSchedulerModule(BaseSchedulerModule):
             )
 
             # Wait a moment for Redis to start
-            time.sleep(0.5)
+            time.sleep(2)
 
             # Try to connect to local Redis
-            self._redis_conn = redis.Redis(host="localhost", port=6379, db=0, decode_responses=True)
+            self._redis_conn = redis.Redis(
+                host="localhost",
+                port=6379,
+                db=0,
+                decode_responses=True,
+                socket_timeout=5.0,
+                socket_connect_timeout=5.0
+            )
 
             # Test connection
             if self._redis_conn.ping():

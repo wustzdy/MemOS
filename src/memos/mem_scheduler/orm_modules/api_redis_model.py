@@ -440,6 +440,12 @@ class APIRedisDBManager:
         redis_db_str = os.getenv("REDIS_DB") or os.getenv("MEMSCHEDULER_REDIS_DB")
         redis_password = os.getenv("REDIS_PASSWORD") or os.getenv("MEMSCHEDULER_REDIS_PASSWORD")
 
+        redis_ssl = os.getenv("REDIS_SSL") or os.getenv("MEMSCHEDULER_REDIS_SSL")
+        redis_cluster = os.getenv("REDIS_CLUSTER") or os.getenv("MEMSCHEDULER_REDIS_CLUSTER")
+
+        redis_ssl_cert_reqs = os.getenv("REDIS_SSL_CERT_REQS") or os.getenv("MEMSCHEDULER_REDIS_SSL_CERT_REQS")
+        redis_ssl_ca_certs = os.getenv("REDIS_SSL_CA_CERTS") or os.getenv("MEMSCHEDULER_REDIS_SSL_CA_CERTS")
+
         # Check required environment variables
         if not redis_host:
             error_msg = (
@@ -466,10 +472,10 @@ class APIRedisDBManager:
 
         # Optional timeout settings
         socket_timeout = os.getenv(
-            "REDIS_SOCKET_TIMEOUT", os.getenv("MEMSCHEDULER_REDIS_TIMEOUT", None)
+            "REDIS_SOCKET_TIMEOUT", os.getenv("MEMSCHEDULER_REDIS_TIMEOUT", '5.0')
         )
         socket_connect_timeout = os.getenv(
-            "REDIS_SOCKET_CONNECT_TIMEOUT", os.getenv("MEMSCHEDULER_REDIS_CONNECT_TIMEOUT", None)
+            "REDIS_SOCKET_CONNECT_TIMEOUT", os.getenv("MEMSCHEDULER_REDIS_CONNECT_TIMEOUT", '5.0')
         )
 
         try:
@@ -484,24 +490,66 @@ class APIRedisDBManager:
             if redis_password:
                 redis_kwargs["password"] = redis_password
 
-            if socket_timeout:
-                try:
-                    redis_kwargs["socket_timeout"] = float(socket_timeout)
-                except ValueError:
-                    logger.warning(
-                        f"Invalid REDIS_SOCKET_TIMEOUT value: {socket_timeout}, ignoring"
+            if redis_ssl and redis_ssl.lower() in ('true', '1', 'yes', 'y'):
+                redis_kwargs["ssl"] = True
+
+                if redis_ssl_cert_reqs:
+                    import ssl
+                    cert_reqs_map = {
+                        'none': ssl.CERT_NONE,
+                        'optional': ssl.CERT_OPTIONAL,
+                        'required': ssl.CERT_REQUIRED
+                    }
+                    redis_kwargs["ssl_cert_reqs"] = cert_reqs_map.get(
+                        redis_ssl_cert_reqs.lower(), ssl.CERT_REQUIRED
                     )
 
-            if socket_connect_timeout:
-                try:
-                    redis_kwargs["socket_connect_timeout"] = float(socket_connect_timeout)
-                except ValueError:
-                    logger.warning(
-                        f"Invalid REDIS_SOCKET_CONNECT_TIMEOUT value: {socket_connect_timeout}, ignoring"
-                    )
+                if redis_ssl_ca_certs:
+                    redis_kwargs["ssl_ca_certs"] = redis_ssl_ca_certs
+                else:
+                    try:
+                        import certifi
+                        redis_kwargs["ssl_ca_certs"] = certifi.where()
+                    except ImportError:
+                        logger.warning("certifi not installed, SSL certificate verification may fail")
 
-            # Create Redis connection
-            redis_client = redis.Redis(**redis_kwargs)
+            try:
+                redis_kwargs["socket_timeout"] = float(socket_timeout)
+            except ValueError:
+                redis_kwargs["socket_timeout"] = 5.0
+                logger.warning(f"Invalid REDIS_SOCKET_TIMEOUT value: {socket_timeout}, using default 5.0")
+
+            try:
+                redis_kwargs["socket_connect_timeout"] = float(socket_connect_timeout)
+            except ValueError:
+                redis_kwargs["socket_connect_timeout"] = 5.0
+                logger.warning(
+                    f"Invalid REDIS_SOCKET_CONNECT_TIMEOUT value: {socket_connect_timeout}, using default 5.0")
+
+            if redis_cluster and redis_cluster.lower() in ('true', '1', 'yes', 'y'):
+                try:
+                    from redis.cluster import RedisCluster
+
+                    cluster_kwargs = redis_kwargs.copy()
+                    if "db" in cluster_kwargs:
+                        del cluster_kwargs["db"]
+                    cluster_kwargs["skip_full_coverage_check"] = True
+
+                    if cluster_kwargs.get("ssl", False):
+                        if "ssl_cert_reqs" not in cluster_kwargs:
+                            import ssl
+                            cluster_kwargs["ssl_cert_reqs"] = ssl.CERT_NONE
+
+                    redis_client = RedisCluster(**cluster_kwargs)
+                    logger.info(f"Created Redis Cluster connection: {redis_host}:{redis_port}")
+
+                except ImportError as e:
+                    error_msg = "Redis cluster support not available. Install with: pip install redis[cluster]"
+                    logger.error(error_msg)
+                    raise DatabaseError(error_msg) from e
+            else:
+                redis_client = redis.Redis(**redis_kwargs)
+                logger.info(f"Created Redis connection: {redis_host}:{redis_port}/{redis_db}")
 
             # Test connection
             if not redis_client.ping():
@@ -514,5 +562,5 @@ class APIRedisDBManager:
 
         except Exception as e:
             error_msg = f"Failed to create Redis connection from environment variables: {e}"
-            logger.error(error_msg, stack_info=True)
+            logger.error(error_msg, exc_info=True, stack_info=True)
             raise DatabaseError(error_msg) from e
