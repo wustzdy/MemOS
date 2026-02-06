@@ -55,13 +55,13 @@ class RedisSchedulerModule(BaseSchedulerModule):
         self._redis_conn = value
 
     def initialize_redis(
-        self,
-        redis_host: str = "localhost",
-        redis_port: int = 6379,
-        redis_db: int = 0,
-        redis_password: str | None = None,
-        socket_timeout: float | None = None,
-        socket_connect_timeout: float | None = None,
+            self,
+            redis_host: str = "localhost",
+            redis_port: int = 6379,
+            redis_db: int = 0,
+            redis_password: str | None = None,
+            socket_timeout: float | None = None,
+            socket_connect_timeout: float | None = None,
     ):
         import redis
 
@@ -80,6 +80,7 @@ class RedisSchedulerModule(BaseSchedulerModule):
                 "db": self.redis_db,
                 "password": redis_password,
                 "decode_responses": True,
+                "ssl": os.getenv("MEMSCHEDULER_REDIS_SSL", "false").lower() == "true",
             }
 
             # Add timeout parameters if provided
@@ -88,14 +89,34 @@ class RedisSchedulerModule(BaseSchedulerModule):
             if socket_connect_timeout is not None:
                 redis_kwargs["socket_connect_timeout"] = socket_connect_timeout
 
-            self._redis_conn = redis.Redis(**redis_kwargs)
+            # Cluster support logic
+            is_cluster = (
+                    "clustercfg" in redis_host
+                    or os.getenv("MEMSCHEDULER_REDIS_CLUSTER", "false").lower() == "true"
+                    or os.getenv("REDIS_CLUSTER", "false").lower() == "true"
+            )
+
+            if is_cluster:
+                from redis.cluster import RedisCluster
+                cluster_kwargs = redis_kwargs.copy()
+                if "db" in cluster_kwargs:
+                    del cluster_kwargs["db"]
+                self._redis_conn = RedisCluster(**cluster_kwargs)
+            else:
+                self._redis_conn = redis.Redis(**redis_kwargs)
+
             # test conn
             if not self._redis_conn.ping():
                 logger.error("Redis connection failed")
-        except redis.ConnectionError as e:
+        except Exception as e:
             self._redis_conn = None
             logger.error(f"Redis connection error: {e}")
-        self._redis_conn.xtrim("user:queries:stream", self.query_list_capacity)
+
+        if self._redis_conn:
+            try:
+                self._redis_conn.xtrim("user:queries:stream", self.query_list_capacity)
+            except Exception:
+                pass
         return self._redis_conn
 
     @require_python_package(
@@ -175,6 +196,7 @@ class RedisSchedulerModule(BaseSchedulerModule):
                 "db": redis_db,
                 "password": redis_password,
                 "decode_responses": True,
+                "ssl": os.getenv("MEMSCHEDULER_REDIS_SSL", "false").lower() == "true",
             }
 
             # Add timeout parameters if provided
@@ -194,7 +216,21 @@ class RedisSchedulerModule(BaseSchedulerModule):
                         f"Invalid MEMSCHEDULER_REDIS_CONNECT_TIMEOUT value: {socket_connect_timeout}, ignoring"
                     )
 
-            self._redis_conn = redis.Redis(**redis_kwargs)
+            # Cluster support logic
+            is_cluster = (
+                    "clustercfg" in redis_host
+                    or os.getenv("MEMSCHEDULER_REDIS_CLUSTER", "false").lower() == "true"
+                    or os.getenv("REDIS_CLUSTER", "false").lower() == "true"
+            )
+
+            if is_cluster:
+                from redis.cluster import RedisCluster
+                cluster_kwargs = redis_kwargs.copy()
+                if "db" in cluster_kwargs:
+                    del cluster_kwargs["db"]
+                self._redis_conn = RedisCluster(**cluster_kwargs)
+            else:
+                self._redis_conn = redis.Redis(**redis_kwargs)
 
             # Test connection
             if self._redis_conn.ping():

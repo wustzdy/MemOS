@@ -1205,28 +1205,22 @@ class SchedulerRedisQueue(RedisSchedulerModule):
     ) -> list[str]:
         """Return stream keys matching the given prefix via SCAN with optional limits.
 
-        Uses a cursor-based SCAN to collect keys matching the prefix, honoring
-        optional `max_keys` and `time_limit_sec` constraints. Filters results
+        Uses scan_iter for Redis Cluster compatibility. Filters results
         with a precompiled regex when scanning the configured prefix.
         """
         redis_pattern = f"{stream_key_prefix}:*"
         collected = []
-        cursor = 0
         start_ts = time.time() if time_limit_sec else None
-        while True:
+
+        for key in self._redis_conn.scan_iter(match=redis_pattern, count=count_hint):
             if (
-                start_ts is not None
-                and time_limit_sec is not None
-                and (time.time() - start_ts) > time_limit_sec
+                    start_ts is not None
+                    and time_limit_sec is not None
+                    and (time.time() - start_ts) > time_limit_sec
             ):
                 break
-            cursor, keys = self._redis_conn.scan(
-                cursor=cursor, match=redis_pattern, count=count_hint
-            )
-            collected.extend(keys)
+            collected.append(key)
             if max_keys is not None and len(collected) >= max_keys:
-                break
-            if cursor == 0 or cursor == "0":
                 break
 
         if stream_key_prefix == self.stream_key_prefix:
