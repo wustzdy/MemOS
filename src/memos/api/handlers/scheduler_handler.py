@@ -81,37 +81,32 @@ def handle_scheduler_allstatus(
         now = datetime.now(timezone.utc).timestamp()
 
         # Scan task_meta keys, then hscan each hash in batches
-        cursor: int | str = 0
-        while True:
-            cursor, keys = redis_client.scan(cursor=cursor, match="memos:task_meta:*", count=200)
-            for key in keys:
-                h_cursor: int | str = 0
-                while True:
-                    h_cursor, fields = redis_client.hscan(key, cursor=h_cursor, count=500)
-                    for value in fields.values():
-                        try:
-                            payload = json.loads(
-                                value.decode("utf-8") if isinstance(value, bytes) else value
-                            )
-                            # Skip stale entries to reduce noise and load
-                            ts = payload.get("submitted_at") or payload.get("started_at")
-                            if ts:
-                                try:
-                                    ts_dt = datetime.fromisoformat(ts)
-                                    ts_seconds = ts_dt.timestamp()
-                                except Exception:
-                                    ts_seconds = None
-                                if ts_seconds and (now - ts_seconds) > max_age_seconds:
-                                    continue
-                            status = payload.get("status")
-                            if status:
-                                counter[status] += 1
-                        except Exception:
-                            continue
-                    if h_cursor == 0 or h_cursor == "0":
-                        break
-            if cursor == 0 or cursor == "0":
-                break
+        for key in redis_client.scan_iter(match="memos:task_meta:*", count=200):
+            h_cursor: int | str = 0
+            while True:
+                h_cursor, fields = redis_client.hscan(key, cursor=h_cursor, count=500)
+                for value in fields.values():
+                    try:
+                        payload = json.loads(
+                            value.decode("utf-8") if isinstance(value, bytes) else value
+                        )
+                        # Skip stale entries to reduce noise and load
+                        ts = payload.get("submitted_at") or payload.get("started_at")
+                        if ts:
+                            try:
+                                ts_dt = datetime.fromisoformat(ts)
+                                ts_seconds = ts_dt.timestamp()
+                            except Exception:
+                                ts_seconds = None
+                            if ts_seconds and (now - ts_seconds) > max_age_seconds:
+                                continue
+                        status = payload.get("status")
+                        if status:
+                            counter[status] += 1
+                    except Exception:
+                        continue
+                if h_cursor == 0 or h_cursor == "0":
+                    break
 
         if not counter:
             return TaskSummary()  # Empty summary if nothing found

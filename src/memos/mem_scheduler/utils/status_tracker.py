@@ -208,22 +208,16 @@ class TaskStatusTracker:
             return {}
 
         all_users_tasks = {}
-        cursor: int | str = 0
-        while True:
-            cursor, keys = self.redis.scan(cursor=cursor, match="memos:task_meta:*", count=100)
-            for key in keys:
-                # key format: memos:task_meta:{user_id}
-                parts = key.split(":")
-                if len(parts) < 3:
-                    continue
-                user_id = parts[2]
+        for key in self.redis.scan_iter(match="memos:task_meta:*", count=100):
+            # key format: memos:task_meta:{user_id}
+            parts = key.split(":")
+            if len(parts) < 3:
+                continue
+            user_id = parts[2]
 
-                tasks = self.redis.hgetall(key)
-                if tasks:
-                    user_tasks = {tid: json.loads(t_data) for tid, t_data in tasks.items()}
-                    all_users_tasks[user_id] = user_tasks
-
-            if cursor == 0 or cursor == "0":
-                break
+            tasks = self.redis.hgetall(key)
+            if tasks:
+                user_tasks = {tid: json.loads(t_data) for tid, t_data in tasks.items()}
+                all_users_tasks[user_id] = user_tasks
 
         return all_users_tasks

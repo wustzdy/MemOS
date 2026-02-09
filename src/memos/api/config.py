@@ -322,7 +322,7 @@ class APIConfig:
     @staticmethod
     def get_memreader_config() -> dict[str, Any]:
         """Get MemReader configuration."""
-        return {
+        config_dict = {
             "backend": "openai",
             "config": {
                 "model_name_or_path": os.getenv("MEMRADER_MODEL", "gpt-4o-mini"),
@@ -335,9 +335,13 @@ class APIConfig:
                 # validation requirements during tests/import.
                 "api_base": os.getenv("MEMRADER_API_BASE", "https://api.openai.com/v1"),
                 "remove_think_prefix": True,
-                "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
             },
         }
+        # Only add extra_body if not directly connecting to OpenAI
+        if os.getenv("IS_OPENAI_DIRECT", "false").lower() != "true":
+            config_dict["config"]["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
+
+        return config_dict
 
     @staticmethod
     def get_activation_vllm_config() -> dict[str, Any]:
@@ -508,10 +512,11 @@ class APIConfig:
 
         return config
 
+    @staticmethod
     def get_internet_config() -> dict[str, Any]:
-        """Get embedder configuration."""
+        """Get internet search configuration."""
         reader_config = APIConfig.get_reader_config()
-        return {
+        internet_config = {
             "backend": "bocha",
             "config": {
                 "api_key": os.getenv("BOCHA_API_KEY", "bocha"),
@@ -531,7 +536,6 @@ class APIConfig:
                                 "api_key": os.getenv("MEMRADER_API_KEY", "EMPTY"),
                                 "api_base": os.getenv("MEMRADER_API_BASE"),
                                 "remove_think_prefix": True,
-                                "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
                             },
                         },
                         "embedder": APIConfig.get_embedder_config(),
@@ -549,6 +553,12 @@ class APIConfig:
                 },
             },
         }
+        # Only add extra_body if not directly connecting to OpenAI
+        if os.getenv("IS_OPENAI_DIRECT", "false").lower() != "true":
+            internet_config["config"]["reader"]["config"]["llm"]["config"]["extra_body"] = {
+                "chat_template_kwargs": {"enable_thinking": False}
+            }
+        return internet_config
 
     @staticmethod
     def get_nli_config() -> dict[str, Any]:
@@ -637,17 +647,33 @@ class APIConfig:
 
     @staticmethod
     def get_milvus_config():
-        return {
+        # Check if AWS token configuration is provided
+        aws_uri = os.getenv("MILVUS_URI")
+        aws_token = os.getenv("MILVUS_TOKEN")
+
+        config = {
             "collection_name": [
                 "explicit_preference",
                 "implicit_preference",
             ],
             "vector_dimension": int(os.getenv("EMBEDDING_DIMENSION", 1024)),
             "distance_metric": "cosine",
-            "uri": os.getenv("MILVUS_URI", "http://localhost:19530"),
-            "user_name": os.getenv("MILVUS_USER_NAME", "root"),
-            "password": os.getenv("MILVUS_PASSWORD", "12345678"),
         }
+
+        # Use AWS token connection if type is "aws" and both URI and token are provided
+        if aws_uri and aws_token:
+            config["uri"] = aws_uri
+            config["token"] = aws_token
+            config["user_name"] = ""  # Not used for token auth
+            config["password"] = ""  # Not used for token auth
+        else:
+            # Use username/password connection (default)
+            config["uri"] = os.getenv("MILVUS_URI", "http://localhost:19530")
+            config["user_name"] = os.getenv("MILVUS_USER_NAME", "root")
+            config["password"] = os.getenv("MILVUS_PASSWORD", "12345678")
+            config["token"] = ""  # Not used for username/password auth
+
+        return config
 
     @staticmethod
     def get_polardb_config(user_id: str | None = None) -> dict[str, Any]:
@@ -743,7 +769,9 @@ class APIConfig:
     @staticmethod
     def is_scheduler_enabled() -> bool:
         """Check if scheduler is enabled via environment variable."""
-        return os.getenv("MOS_ENABLE_SCHEDULER", "false").lower() == "true"
+        val = os.getenv("MOS_ENABLE_SCHEDULER", "false").lower()
+        logger.error(f"!!! [CONFIG DIAGNOSTIC] MOS_ENABLE_SCHEDULER value is: '{val}' !!!")
+        return val == "true"
 
     @staticmethod
     def is_default_cube_config_enabled() -> bool:

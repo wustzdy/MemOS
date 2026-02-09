@@ -23,11 +23,20 @@ class MilvusVecDB(BaseVecDB):
         from pymilvus import MilvusClient
 
         self.config = config
-
-        # Create Milvus client
-        self.client = MilvusClient(
-            uri=self.config.uri, user=self.config.user_name, password=self.config.password
-        )
+        # Create Milvus client based on connection type
+        if self.config.token:
+            logger.info(f"----aws-is collected------")
+            # Use token authentication for AWS
+            self.client = MilvusClient(
+                uri=self.config.uri, token=self.config.token
+            )
+            print("aws!!!!!!")
+        else:
+            logger.info(f"----aliyun-is collected-------")
+            # Use username/password authentication (default)
+            self.client = MilvusClient(
+                uri=self.config.uri, user=self.config.user_name, password=self.config.password
+            )
         self.schema = self.create_schema()
         self.index_params = self.create_index()
         self.create_collection()
@@ -70,12 +79,40 @@ class MilvusVecDB(BaseVecDB):
         """Create index for the milvus collection."""
         index_params = self.client.prepare_index_params()
         index_params.add_index(
-            field_name="vector", index_type="FLAT", metric_type=self._get_metric_type()
+            field_name="vector",  # Name of the vector field to be indexed
+            index_type="HNSW_SQ",  # Type of the index to create
+            index_name="vector",  # Name of the index to create
+            metric_type=self._get_metric_type(),  # Metric type used to measure similarity
+            params={
+                "M": 64,  # Maximum number of neighbors each node can connect to in the graph
+                "efConstruction": 100,
+                # Number of candidate neighbors considered for connection during index construction
+                "sq_type": "SQ8",  # Scalar quantizer type
+            },  # Index building params
         )
         index_params.add_index(
             field_name="sparse_vector",
             index_type="SPARSE_INVERTED_INDEX",
             metric_type="BM25",
+        )
+
+        index_params.add_index(
+            field_name="payload",  # JSON field name to index
+            index_type="INVERTED",  # Index type. Set to INVERTED
+            index_name="json_user_id_1",  # Index name
+            params={
+                "json_path": "payload[\"user_id\"]",  # Path in JSON field to index
+                "json_cast_type": "varchar"  # Data type that the extracted JSON values will be cast to
+            }
+        )
+        index_params.add_index(
+            field_name="payload",  # JSON field name to index
+            index_type="INVERTED",  # Index type. Set to INVERTED
+            index_name="json_mem_cube_id_1",  # Index name
+            params={
+                "json_path": "payload[\"mem_cube_id\"]",  # Path in JSON field to index
+                "json_cast_type": "varchar"  # Data type that the extracted JSON values will be cast to
+            }
         )
 
         return index_params
