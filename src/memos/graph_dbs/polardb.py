@@ -1116,9 +1116,7 @@ class PolarDBGraphDB(BaseGraphDB):
             self._return_connection(conn)
 
     @timed
-    def get_nodes(
-        self, ids: list[str], user_name: str | None = None, **kwargs
-    ) -> list[dict[str, Any]]:
+    def get_nodes(self, ids: list[str], user_name: str, **kwargs) -> list[dict[str, Any]]:
         """
         Retrieve the metadata and memory of a list of nodes.
         Args:
@@ -2026,12 +2024,12 @@ class PolarDBGraphDB(BaseGraphDB):
     def search_by_embedding(
         self,
         vector: list[float],
+        user_name: str,
         top_k: int = 5,
         scope: str | None = None,
         status: str | None = None,
         threshold: float | None = None,
         search_filter: dict | None = None,
-        user_name: str | None = None,
         filter: dict | None = None,
         knowledgebase_ids: list[str] | None = None,
         **kwargs,
@@ -2039,9 +2037,8 @@ class PolarDBGraphDB(BaseGraphDB):
         """
         Retrieve node IDs based on vector similarity using PostgreSQL vector operations.
         """
-        # Build WHERE clause dynamically like nebular.py
         logger.info(
-            f"[search_by_embedding] filter: {filter}, knowledgebase_ids: {knowledgebase_ids}"
+            f"search_by_embedding user_name:{user_name},filter: {filter}, knowledgebase_ids: {knowledgebase_ids},scope:{scope},status:{status},search_filter:{search_filter},filter:{filter},knowledgebase_ids:{knowledgebase_ids}"
         )
         where_clauses = []
         if scope:
@@ -2057,16 +2054,6 @@ class PolarDBGraphDB(BaseGraphDB):
                 "ag_catalog.agtype_access_operator(properties, '\"status\"'::agtype) = '\"activated\"'::agtype"
             )
         where_clauses.append("embedding is not null")
-        # Add user_name filter like nebular.py
-
-        """
-        # user_name = self._get_config_value("user_name")
-        # if not self.config.use_multi_db and user_name:
-        #     if kwargs.get("cube_name"):
-        #         where_clauses.append(f"ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = '\"{kwargs['cube_name']}\"'::agtype")
-        #     else:
-        #         where_clauses.append(f"ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = '\"{user_name}\"'::agtype")
-        """
         # Build user_name filter with knowledgebase_ids support (OR relationship) using common method
         user_name_conditions = self._build_user_name_and_kb_ids_conditions_sql(
             user_name=user_name,
@@ -2153,11 +2140,6 @@ class PolarDBGraphDB(BaseGraphDB):
                         cursor.execute(query)
                 except Exception as e:
                     logger.error(f"[search_by_embedding] Error executing query: {e}")
-                    logger.error(f"[search_by_embedding] Query length: {len(query)}")
-                    logger.error(
-                        f"[search_by_embedding] Params type: {type(params)}, length: {len(params)}"
-                    )
-                    logger.error(f"[search_by_embedding] Query contains %s: {'%s' in query}")
                     raise
                 results = cursor.fetchall()
                 output = []
@@ -2187,7 +2169,7 @@ class PolarDBGraphDB(BaseGraphDB):
     def get_by_metadata(
         self,
         filters: list[dict[str, Any]],
-        user_name: str | None = None,
+        user_name: str,
         filter: dict | None = None,
         knowledgebase_ids: list | None = None,
         user_name_flag: bool = True,
@@ -2209,7 +2191,9 @@ class PolarDBGraphDB(BaseGraphDB):
         Returns:
             list[str]: Node IDs whose metadata match the filter conditions. (AND logic).
         """
-        logger.info(f"[get_by_metadata] filter: {filter}, knowledgebase_ids: {knowledgebase_ids}")
+        logger.info(
+            f" get_by_metadata user_name:{user_name},filter: {filter}, knowledgebase_ids: {knowledgebase_ids},filters:{filters}"
+        )
 
         user_name = user_name if user_name else self._get_config_value("user_name")
 
@@ -2264,9 +2248,6 @@ class PolarDBGraphDB(BaseGraphDB):
             else:
                 raise ValueError(f"Unsupported operator: {op}")
 
-        # Build user_name filter with knowledgebase_ids support (OR relationship) using common method
-        # Build user_name filter with knowledgebase_ids support (OR relationship) using common method
-        # Build user_name filter with knowledgebase_ids support (OR relationship) using common method
         user_name_conditions = self._build_user_name_and_kb_ids_conditions_cypher(
             user_name=user_name,
             knowledgebase_ids=knowledgebase_ids,
@@ -2536,8 +2517,8 @@ class PolarDBGraphDB(BaseGraphDB):
     @timed
     def export_graph(
         self,
+        user_name: str,
         include_embedding: bool = False,
-        user_name: str | None = None,
         user_id: str | None = None,
         page: int | None = None,
         page_size: int | None = None,
@@ -2908,8 +2889,8 @@ class PolarDBGraphDB(BaseGraphDB):
     def get_all_memory_items(
         self,
         scope: str,
+        user_name: str,
         include_embedding: bool = False,
-        user_name: str | None = None,
         filter: dict | None = None,
         knowledgebase_ids: list | None = None,
         status: str | None = None,
@@ -2930,14 +2911,13 @@ class PolarDBGraphDB(BaseGraphDB):
             list[dict]: Full list of memory items under this scope.
         """
         logger.info(
-            f"[get_all_memory_items] filter: {filter}, knowledgebase_ids: {knowledgebase_ids}, status: {status}"
+            f"[get_all_memory_items] user_name: {user_name},filter: {filter}, knowledgebase_ids: {knowledgebase_ids}, status: {status},scope:{scope}"
         )
 
         user_name = user_name if user_name else self._get_config_value("user_name")
         if scope not in {"WorkingMemory", "LongTermMemory", "UserMemory", "OuterMemory"}:
             raise ValueError(f"Unsupported memory type scope: {scope}")
 
-        # Build user_name filter with knowledgebase_ids support (OR relationship) using common method
         user_name_conditions = self._build_user_name_and_kb_ids_conditions_cypher(
             user_name=user_name,
             knowledgebase_ids=knowledgebase_ids,
