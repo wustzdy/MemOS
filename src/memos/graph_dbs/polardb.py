@@ -204,21 +204,6 @@ class PolarDBGraphDB(BaseGraphDB):
         return conn
 
     def _get_connection(self):
-        """
-        Get a connection from the pool.
-
-        This function:
-        1. Gets a connection from ThreadedConnectionPool
-        2. Checks if connection is closed or unhealthy
-        3. Returns healthy connection or retries (max 3 times)
-        4. Handles connection pool exhaustion gracefully
-
-        Returns:
-            psycopg2 connection object
-
-        Raises:
-            RuntimeError: If connection pool is closed or exhausted after retries
-        """
         logger.info(f" db_name: {self.db_name} pool maxconn is:'{self.connection_pool.maxconn}'")
         if self._pool_closed:
             raise RuntimeError("Connection pool has been closed")
@@ -229,13 +214,9 @@ class PolarDBGraphDB(BaseGraphDB):
         for attempt in range(max_retries):
             conn = None
             try:
-                # Try to get connection from pool
-                # This may raise PoolError if pool is exhausted
                 conn = self.connection_pool.getconn()
 
-                # Check if connection is closed
                 if conn.closed != 0:
-                    # Connection is closed, return it to pool with close flag and try again
                     logger.warning(
                         f"[_get_connection] Got closed connection, attempt {attempt + 1}/{max_retries}"
                     )
@@ -303,11 +284,11 @@ class PolarDBGraphDB(BaseGraphDB):
                     try:
                         # Try to get pool stats if available
                         pool_info = f"Pool config: minconn={self.connection_pool.minconn}, maxconn={self.connection_pool.maxconn}"
-                        logger.error(
+                        logger.warning(
                             f"[_get_connection] Connection pool exhausted (attempt {attempt + 1}/{max_retries}). {pool_info}"
                         )
                     except Exception:
-                        logger.error(
+                        logger.warning(
                             f"[_get_connection] Connection pool exhausted (attempt {attempt + 1}/{max_retries})"
                         )
 
@@ -337,12 +318,8 @@ class PolarDBGraphDB(BaseGraphDB):
                         ) from pool_error
 
             except Exception as e:
-                # Other exceptions (not pool-related)
-                # Only try to return connection if we actually got one
-                # If getconn() failed (e.g., pool exhausted), conn will be None
                 if conn is not None:
                     try:
-                        # Return connection to pool if it's valid
                         self.connection_pool.putconn(conn, close=True)
                     except Exception as putconn_error:
                         logger.warning(
@@ -363,20 +340,7 @@ class PolarDBGraphDB(BaseGraphDB):
         raise RuntimeError("Failed to get connection after all retries")
 
     def _return_connection(self, connection):
-        """
-        Return a connection to the pool.
-
-        This function safely returns a connection to the pool, handling:
-        - Closed connections (close them instead of returning)
-        - Pool closed state (close connection directly)
-        - None connections (no-op)
-        - putconn() failures (close connection as fallback)
-
-        Args:
-            connection: psycopg2 connection object or None
-        """
         if self._pool_closed:
-            # Pool is closed, just close the connection if it exists
             if connection:
                 try:
                     connection.close()
@@ -388,13 +352,10 @@ class PolarDBGraphDB(BaseGraphDB):
             return
 
         if not connection:
-            # No connection to return - this is normal if _get_connection() failed
             return
 
         try:
-            # Check if connection is closed
             if hasattr(connection, "closed") and connection.closed != 0:
-                # Connection is closed, just close it explicitly and don't return to pool
                 logger.debug(
                     "[_return_connection] Connection is closed, closing it instead of returning to pool"
                 )
@@ -404,12 +365,9 @@ class PolarDBGraphDB(BaseGraphDB):
                     logger.warning(f"[_return_connection] Failed to close closed connection: {e}")
                 return
 
-            # Connection is valid, return to pool
             self.connection_pool.putconn(connection)
             logger.debug("[_return_connection] Successfully returned connection to pool")
         except Exception as e:
-            # If putconn fails, try to close the connection
-            # This prevents connection leaks if putconn() fails
             logger.error(
                 f"[_return_connection] Failed to return connection to pool: {e}", exc_info=True
             )
@@ -2132,23 +2090,13 @@ class PolarDBGraphDB(BaseGraphDB):
         try:
             conn = self._get_connection()
             with conn.cursor() as cursor:
-                try:
-                    # If params is empty, execute query directly without parameters
-                    if params:
-                        cursor.execute(query, params)
-                    else:
-                        cursor.execute(query)
-                except Exception as e:
-                    logger.error(f"[search_by_embedding] Error executing query: {e}")
-                    raise
+                if params:
+                    cursor.execute(query, params)
+                else:
+                    cursor.execute(query)
                 results = cursor.fetchall()
                 output = []
                 for row in results:
-                    """
-                    polarId = row[0]  # id
-                    properties = row[1]  # properties
-                    # embedding = row[3]  # embedding
-                    """
                     if len(row) < 5:
                         logger.warning(f"Row has {len(row)} columns, expected 5. Row: {row}")
                         continue
@@ -2162,6 +2110,9 @@ class PolarDBGraphDB(BaseGraphDB):
                     if threshold is None or score_val >= threshold:
                         output.append({"id": id_val, "score": score_val})
                 return output[:top_k]
+        except Exception as e:
+            logger.error(f"[search_by_embedding] Error executing query: {e}")
+            raise
         finally:
             self._return_connection(conn)
 
