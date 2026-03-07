@@ -15,7 +15,7 @@ from memos.dependency import require_python_package
 from memos.graph_dbs.base import BaseGraphDB
 from memos.log import get_logger
 from memos.utils import timed
-
+import psycopg2
 
 logger = get_logger(__name__)
 
@@ -177,6 +177,9 @@ class PolarDBGraphDB(BaseGraphDB):
             keepalives_idle=120,  # Seconds of inactivity before sending keepalive (should be < server idle timeout)
             keepalives_interval=15,  # Seconds between keepalive retries
             keepalives_count=5,  # Number of keepalive retries before considering connection dead
+            # options=f"-c search_path={self.db_name}_graph,ag_catalog,'$user',public"
+            # options=f"-c search_path={self.db_name}_graph,ag_catalog,\"$user\",public"
+            options=f"-c search_path={self.db_name}_graph,ag_catalog,$user,public"
         )
 
         self._semaphore = threading.BoundedSemaphore(maxconn)
@@ -248,14 +251,8 @@ class PolarDBGraphDB(BaseGraphDB):
     @contextmanager
     def _get_connection(self):
         timeout = self._connection_wait_timeout
-        if timeout <= 0:
-            self._semaphore.acquire()
-        else:
-            if not self._semaphore.acquire(timeout=timeout):
-                logger.warning(f"Timeout waiting for connection slot ({timeout}s)")
-                raise RuntimeError(
-                    f"Connection pool busy: acquire a slot within {timeout}s (all connections in use)."
-                )
+        if not self._semaphore.acquire(timeout=max(timeout, 0)):
+            raise RuntimeError("Connection pool busy")
         logger.info(
             "Connection pool usage: %s/%s",
             self.connection_pool.maxconn - self._semaphore._value,
@@ -263,25 +260,31 @@ class PolarDBGraphDB(BaseGraphDB):
         )
         conn = None
         broken = False
-
         try:
             conn = self.connection_pool.getconn()
-            logger.debug(f"Acquired connection {id(conn)} from pool")
             conn.autocommit = True
-            with conn.cursor() as cur:
-                cur.execute(f'SET search_path = {self.db_name}_graph, ag_catalog, "$user", public;')
+            for attempt in range(2):
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute("SELECT 1")
+                    break
+                except psycopg2.Error:
+                    logger.warning("Dead connection detected, recreating (attempt %d)", attempt + 1)
+                    self.connection_pool.putconn(conn, close=True)
+                    conn = self.connection_pool.getconn()
+                    conn.autocommit = True
+            else:
+                raise RuntimeError("Cannot obtain valid DB connection after 2 attempts")
             yield conn
-        except Exception as e:
+        except Exception:
             broken = True
-            logger.exception(f"Connection failed or broken: {e}")
             raise
         finally:
             if conn:
                 try:
                     self.connection_pool.putconn(conn, close=broken)
-                    logger.debug(f"Returned connection {id(conn)} to pool (broken={broken})")
-                except Exception as e:
-                    logger.warning(f"Failed to return connection to pool: {e}")
+                except Exception:
+                    pass
             self._semaphore.release()
 
     def _ensure_database_exists(self):
