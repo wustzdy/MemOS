@@ -4,18 +4,19 @@ import textwrap
 import threading
 import time
 
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from datetime import datetime
 from typing import Any, Literal
 
 import numpy as np
+import psycopg2
 
 from memos.configs.graph_db import PolarDBGraphDBConfig
 from memos.dependency import require_python_package
 from memos.graph_dbs.base import BaseGraphDB
 from memos.log import get_logger
 from memos.utils import timed
-import psycopg2
+
 
 logger = get_logger(__name__)
 
@@ -177,9 +178,7 @@ class PolarDBGraphDB(BaseGraphDB):
             keepalives_idle=120,  # Seconds of inactivity before sending keepalive (should be < server idle timeout)
             keepalives_interval=15,  # Seconds between keepalive retries
             keepalives_count=5,  # Number of keepalive retries before considering connection dead
-            # options=f"-c search_path={self.db_name}_graph,ag_catalog,'$user',public"
-            # options=f"-c search_path={self.db_name}_graph,ag_catalog,\"$user\",public"
-            options=f"-c search_path={self.db_name}_graph,ag_catalog,$user,public"
+            options=f"-c search_path={self.db_name}_graph,ag_catalog,$user,public",
         )
 
         self._semaphore = threading.BoundedSemaphore(maxconn)
@@ -275,6 +274,10 @@ class PolarDBGraphDB(BaseGraphDB):
                     conn.autocommit = True
             else:
                 raise RuntimeError("Cannot obtain valid DB connection after 2 attempts")
+            with conn.cursor() as cur:
+                cur.execute(
+                    f'SET search_path = {self.db_name}_graph, ag_catalog, "$user", public;'
+                )
             yield conn
         except Exception:
             broken = True
