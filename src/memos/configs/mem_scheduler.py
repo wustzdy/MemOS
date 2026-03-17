@@ -156,14 +156,12 @@ class SchedulerConfigFactory(BaseConfig):
     def create_config(self) -> "SchedulerConfigFactory":
         logger = logging.getLogger(__name__)
         config_class = self.backend_to_class[self.backend]
-        logger.info(f"DEBUG: SchedulerConfigFactory.create_config input: {self.config.get('use_redis_queue', 'NOT_FOUND')}")
-        self.config = config_class(**self.config)
-        logger.info(f"DEBUG: SchedulerConfigFactory.create_config output object type: {type(self.config)}")
-        # Check if the created object has use_redis_queue attribute
-        if hasattr(self.config, 'use_redis_queue'):
-             logger.info(f"DEBUG: SchedulerConfigFactory.create_config output use_redis_queue: {self.config.use_redis_queue}")
-        else:
-             logger.info("DEBUG: SchedulerConfigFactory.create_config output object has NO use_redis_queue attribute")
+        # If caller passed the full get_scheduler_config() shape {"backend": ..., "config": {...}},
+        # use the inner "config" so use_redis_queue and other fields are applied.
+        raw = self.config
+        if isinstance(raw, dict) and "config" in raw and "use_redis_queue" not in raw:
+            raw = raw["config"]
+        self.config = config_class(**raw)
         return self
 
 

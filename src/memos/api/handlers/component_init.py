@@ -265,9 +265,12 @@ def init_server() -> dict[str, Any]:
     )
 
     # Initialize Scheduler
+    # get_scheduler_config() returns {"backend": "...", "config": {...}}; pass the inner
+    # "config" dict so use_redis_queue and other scheduler options are applied.
     scheduler_config_dict = APIConfig.get_scheduler_config()
     scheduler_config = SchedulerConfigFactory(
-        backend="optimized_scheduler", config=scheduler_config_dict
+        backend=scheduler_config_dict["backend"],
+        config=scheduler_config_dict["config"],
     )
     mem_scheduler: OptimizedScheduler = SchedulerFactory.from_config(scheduler_config)
     mem_scheduler.initialize_modules(
