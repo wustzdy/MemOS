@@ -123,6 +123,8 @@ def init_server() -> dict[str, Any]:
         existing code that uses the components.
     """
     logger.info("Initializing MemOS server components...")
+    redis_queue_type = os.getenv("MEMSCHEDULER_USE_REDIS_QUEUE", "False").lower()
+    logger.info(f"init_server redis_queue_type:{redis_queue_type}")
 
     # Initialize Redis client first as it is a core dependency for features like scheduler status tracking
     if os.getenv("MEMSCHEDULER_USE_REDIS_QUEUE", "False").lower() == "true":
