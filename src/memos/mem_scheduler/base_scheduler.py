@@ -118,6 +118,11 @@ class BaseScheduler(
 
         # message queue configuration
         self.use_redis_queue = self.config.get("use_redis_queue", DEFAULT_USE_REDIS_QUEUE)
+        logger.info(f"DEBUG: BaseScheduler config type: {type(self.config)}")
+        logger.info(f"DEBUG: BaseScheduler use_redis_queue from config: {self.config.get('use_redis_queue')}")
+        logger.info(f"DEBUG: BaseScheduler DEFAULT_USE_REDIS_QUEUE: {DEFAULT_USE_REDIS_QUEUE}")
+        logger.info(f"DEBUG: BaseScheduler final use_redis_queue: {self.use_redis_queue}")
+        
         self.max_internal_message_queue_size = self.config.get(
             "max_internal_message_queue_size", DEFAULT_MAX_INTERNAL_MESSAGE_QUEUE_SIZE
         )
