@@ -116,11 +116,13 @@ class BaseScheduler(
         )
         self.consume_batch = self.config.get("consume_batch", DEFAULT_CONSUME_BATCH)
 
-        # message queue configuration
-        self.use_redis_queue = self.config.get("use_redis_queue", DEFAULT_USE_REDIS_QUEUE)
+        from memos.mem_scheduler.schemas.general_schemas import get_default_use_redis_queue
+        dynamic_default = get_default_use_redis_queue()
+        
+        self.use_redis_queue = self.config.get("use_redis_queue", dynamic_default)
         logger.info(f"DEBUG: BaseScheduler config type: {type(self.config)}")
         logger.info(f"DEBUG: BaseScheduler use_redis_queue from config: {self.config.get('use_redis_queue')}")
-        logger.info(f"DEBUG: BaseScheduler DEFAULT_USE_REDIS_QUEUE: {DEFAULT_USE_REDIS_QUEUE}")
+        logger.info(f"DEBUG: BaseScheduler dynamic_default (from os.getenv): {dynamic_default}")
         logger.info(f"DEBUG: BaseScheduler final use_redis_queue: {self.use_redis_queue}")
         
         self.max_internal_message_queue_size = self.config.get(
