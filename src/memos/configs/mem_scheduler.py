@@ -154,8 +154,16 @@ class SchedulerConfigFactory(BaseConfig):
 
     @model_validator(mode="after")
     def create_config(self) -> "SchedulerConfigFactory":
+        logger = logging.getLogger(__name__)
         config_class = self.backend_to_class[self.backend]
+        logger.info(f"DEBUG: SchedulerConfigFactory.create_config input: {self.config.get('use_redis_queue', 'NOT_FOUND')}")
         self.config = config_class(**self.config)
+        logger.info(f"DEBUG: SchedulerConfigFactory.create_config output object type: {type(self.config)}")
+        # Check if the created object has use_redis_queue attribute
+        if hasattr(self.config, 'use_redis_queue'):
+             logger.info(f"DEBUG: SchedulerConfigFactory.create_config output use_redis_queue: {self.config.use_redis_queue}")
+        else:
+             logger.info("DEBUG: SchedulerConfigFactory.create_config output object has NO use_redis_queue attribute")
         return self
 
 
