@@ -122,6 +122,14 @@ def init_server() -> dict[str, Any]:
         This approach allows easy addition of new components without breaking
         existing code that uses the components.
     """
+    # 强制在组件初始化最开始再次执行 Nacos 初始化
+    # 解决 uvicorn 多 worker 模式下环境变量可能丢失或未及时注入的问题
+    try:
+        from memos.api.config import NacosConfigManager
+        NacosConfigManager.init()
+    except Exception as e:
+        logger.warning(f"Failed to force init Nacos in init_server: {e}")
+
     logger.info("Initializing MemOS server components...")
     redis_queue_type = os.getenv("MEMSCHEDULER_USE_REDIS_QUEUE", "False").lower()
     logger.info(f"init_server redis_queue_type:{redis_queue_type}")
