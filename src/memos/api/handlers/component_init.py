@@ -125,8 +125,10 @@ def init_server() -> dict[str, Any]:
     # 强制在组件初始化最开始再次执行 Nacos 初始化
     # 解决 uvicorn 多 worker 模式下环境变量可能丢失或未及时注入的问题
     try:
+        logger.info(f"DEBUG: Before Nacos init in worker, MEMSCHEDULER_USE_REDIS_QUEUE = {os.getenv('MEMSCHEDULER_USE_REDIS_QUEUE')}")
         from memos.api.config import NacosConfigManager
         NacosConfigManager.init()
+        logger.info(f"DEBUG: After Nacos init in worker, MEMSCHEDULER_USE_REDIS_QUEUE = {os.getenv('MEMSCHEDULER_USE_REDIS_QUEUE')}")
     except Exception as e:
         logger.warning(f"Failed to force init Nacos in init_server: {e}")
 
