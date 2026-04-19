@@ -219,12 +219,14 @@ class PolarDBGraphDB(BaseGraphDB):
             for attempt in range(2):
                 conn = self.connection_pool.getconn()
                 conn.autocommit = True
+                if self._skip_connection_health_check:
+                    break
                 try:
                     with conn.cursor() as cur:
                         cur.execute("SELECT 1")
                     break
                 except psycopg2.Error:
-                    logger.warning(f"Dead connection detected, recreating (attempt {attempt + 1})")
+                    logger.warning("Dead connection detected, recreating (attempt %d)", attempt + 1)
                     self.connection_pool.putconn(conn, close=True)
                     conn = None
             else:
@@ -232,20 +234,18 @@ class PolarDBGraphDB(BaseGraphDB):
             with conn.cursor() as cur:
                 cur.execute(f"SET search_path = {self._all_shards_search_path};")
             yield conn
-        except (psycopg2.Error, psycopg2.OperationalError) as e:
+        except psycopg2.Error as e:
             broken = True
-            logger.exception(f"Database connection busy : {e}")
+            logger.error("Database connection error: %s", e)
             raise
-        except Exception as e:
-            logger.exception(f"Unexpected error: {e}")
+        except Exception:
             raise
         finally:
             if conn is not None:
                 try:
                     self.connection_pool.putconn(conn, close=broken)
-                    logger.debug(f"Returned connection {id(conn)} to pool (broken={broken})")
                 except Exception as e:
-                    logger.warning(f"Failed to return connection to pool: {e}")
+                    logger.warning("Failed to return connection to pool: %s", e)
             self._semaphore.release()
 
     def get_memory_graph_table_name(self, user_name: str | None) -> str:
