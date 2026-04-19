@@ -154,6 +154,9 @@ class PolarDBGraphDB(BaseGraphDB):
             else getattr(config, "shard_count", 100)
         )
 
+        shard_schemas = ",".join(f"{self.db_name}_graph_{i}" for i in range(self._shard_count))
+        self._all_shards_search_path = f'{shard_schemas},ag_catalog,"$user",public'
+
         self._semaphore = threading.BoundedSemaphore(maxconn)
 
     def _get_config_value(self, key: str, default=None):
@@ -227,9 +230,7 @@ class PolarDBGraphDB(BaseGraphDB):
             else:
                 raise RuntimeError("Cannot obtain valid DB connection after 2 attempts")
             with conn.cursor() as cur:
-                cur.execute(
-                    f'SET search_path = {self.db_name}_graph_0, ag_catalog, "$user", public;'
-                )
+                cur.execute(f"SET search_path = {self._all_shards_search_path};")
             yield conn
         except (psycopg2.Error, psycopg2.OperationalError) as e:
             broken = True
