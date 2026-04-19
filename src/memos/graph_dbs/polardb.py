@@ -88,7 +88,6 @@ def escape_sql_string(value: str) -> str:
 
 
 class PolarDBGraphDB(BaseGraphDB):
-
     @require_python_package(
         import_name="psycopg2",
         install_command="pip install psycopg2-binary",
@@ -150,7 +149,8 @@ class PolarDBGraphDB(BaseGraphDB):
         )
 
         self._shard_count = int(
-            config.get("shard_count", 100) if isinstance(config, dict)
+            config.get("shard_count", 100)
+            if isinstance(config, dict)
             else getattr(config, "shard_count", 100)
         )
 
@@ -227,7 +227,9 @@ class PolarDBGraphDB(BaseGraphDB):
             else:
                 raise RuntimeError("Cannot obtain valid DB connection after 2 attempts")
             with conn.cursor() as cur:
-                cur.execute(f'SET search_path = {self.db_name}_graph_0, ag_catalog, "$user", public;')
+                cur.execute(
+                    f'SET search_path = {self.db_name}_graph_0, ag_catalog, "$user", public;'
+                )
             yield conn
         except (psycopg2.Error, psycopg2.OperationalError) as e:
             broken = True
@@ -571,7 +573,6 @@ class PolarDBGraphDB(BaseGraphDB):
 
     @timed
     def create_edge(self):
-
         valid_rel_types = {"AGGREGATE_TO", "FOLLOWS", "INFERS", "MERGED_TO", "RELATE_TO", "PARENT"}
 
         for label_name in valid_rel_types:
@@ -696,7 +697,6 @@ class PolarDBGraphDB(BaseGraphDB):
         direction: str = "OUTGOING",
         user_name: str | None = None,
     ) -> bool:
-
         user_name = user_name if user_name else self.config.user_name
 
         if direction == "OUTGOING":
@@ -747,7 +747,7 @@ class PolarDBGraphDB(BaseGraphDB):
             params = [id_param, self.format_param_value(user_name)]
         else:
             union_parts = [
-                f"SELECT {select_fields} FROM {tbl}.\"Memory\""
+                f'SELECT {select_fields} FROM {tbl}."Memory"'
                 f" WHERE ag_catalog.agtype_access_operator(properties, '\"id\"'::agtype) = %s::agtype"
                 for tbl in self._get_all_shard_table_names()
             ]
@@ -867,7 +867,6 @@ class PolarDBGraphDB(BaseGraphDB):
     def get_edges_old(
         self, id: str, type: str = "ANY", direction: str = "ANY"
     ) -> list[dict[str, str]]:
-
         try:
             with self.connection.cursor() as cursor:
                 cursor.execute(f"""
@@ -2708,7 +2707,6 @@ class PolarDBGraphDB(BaseGraphDB):
                         deserialized_sources.append({"type": "doc", "content": str(source_item)})
                 node["sources"] = deserialized_sources
 
-
         return {"id": node.pop("id"), "memory": node.pop("memory", ""), "metadata": node}
 
     def __del__(self):
@@ -3331,7 +3329,11 @@ class PolarDBGraphDB(BaseGraphDB):
         edges = []
         for row in rows:
             from_id_raw = row[0].value if hasattr(row[0], "value") else row[0]
-            if isinstance(from_id_raw, str) and from_id_raw.startswith('"') and from_id_raw.endswith('"'):
+            if (
+                isinstance(from_id_raw, str)
+                and from_id_raw.startswith('"')
+                and from_id_raw.endswith('"')
+            ):
                 from_id = from_id_raw[1:-1]
             else:
                 from_id = str(from_id_raw)
@@ -3343,7 +3345,11 @@ class PolarDBGraphDB(BaseGraphDB):
                 to_id = str(to_id_raw)
 
             edge_type_raw = row[2].value if hasattr(row[2], "value") else row[2]
-            if isinstance(edge_type_raw, str) and edge_type_raw.startswith('"') and edge_type_raw.endswith('"'):
+            if (
+                isinstance(edge_type_raw, str)
+                and edge_type_raw.startswith('"')
+                and edge_type_raw.endswith('"')
+            ):
                 edge_type = edge_type_raw[1:-1]
             else:
                 edge_type = str(edge_type_raw)
@@ -3368,7 +3374,9 @@ class PolarDBGraphDB(BaseGraphDB):
         if resolved_user_name:
             schema_raw = self._get_shard_schema_raw(resolved_user_name)
             user_esc = resolved_user_name.replace("'", "''")
-            cypher_body = self._build_cypher_edge_body(id_esc, user_esc, type, type_filter, direction)
+            cypher_body = self._build_cypher_edge_body(
+                id_esc, user_esc, type, type_filter, direction
+            )
             query = (
                 f"SELECT * FROM cypher('{schema_raw}', $$\n"
                 f"{cypher_body}\n"
@@ -3788,6 +3796,7 @@ class PolarDBGraphDB(BaseGraphDB):
         filter_conditions = []
         filter = self.parse_filter(filter)
         if filter:
+
             def escape_sql_string(value: str) -> str:
                 return value.replace("'", "''")
 
