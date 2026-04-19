@@ -146,7 +146,7 @@ class PolarDBGraphDB(BaseGraphDB):
             keepalives_interval=15,
             keepalives_count=5,
             keepalives=1,
-            options=f"-c search_path={self.db_name}_graph,ag_catalog,$user,public",
+            options=f"-c search_path={self.db_name}_graph_0,ag_catalog,$user,public",
         )
 
         self._shard_count = int(
@@ -227,7 +227,7 @@ class PolarDBGraphDB(BaseGraphDB):
             else:
                 raise RuntimeError("Cannot obtain valid DB connection after 2 attempts")
             with conn.cursor() as cur:
-                cur.execute(f'SET search_path = {self.db_name}_graph, ag_catalog, "$user", public;')
+                cur.execute(f'SET search_path = {self.db_name}_graph_0, ag_catalog, "$user", public;')
             yield conn
         except (psycopg2.Error, psycopg2.OperationalError) as e:
             broken = True
@@ -245,8 +245,8 @@ class PolarDBGraphDB(BaseGraphDB):
                     logger.warning(f"Failed to return connection to pool: {e}")
             self._semaphore.release()
 
-    def get_memory_graph_table_name(self, user_name: str | None, shard_count: int | None = None) -> str:
-        shard_count = shard_count if shard_count is not None else self._shard_count
+    def get_memory_graph_table_name(self, user_name: str | None) -> str:
+        shard_count = self._shard_count
         if not user_name:
             return f'"{self.db_name}_graph_0"'
         hash_val = int(hashlib.md5(user_name.encode("utf-8")).hexdigest(), 16)
@@ -255,6 +255,14 @@ class PolarDBGraphDB(BaseGraphDB):
 
     def _get_all_shard_table_names(self) -> list[str]:
         return [f'"{self.db_name}_graph_{i}"' for i in range(self._shard_count)]
+
+    def _get_shard_schema_raw(self, user_name: str | None) -> str:
+        shard_count = self._shard_count
+        if not user_name:
+            return f"{self.db_name}_graph_0"
+        hash_val = int(hashlib.md5(user_name.encode("utf-8")).hexdigest(), 16)
+        shard_id = hash_val % shard_count
+        return f"{self.db_name}_graph_{shard_id}"
 
     def _ensure_database_exists(self):
         try:
@@ -338,9 +346,10 @@ class PolarDBGraphDB(BaseGraphDB):
 
     def get_memory_count(self, memory_type: str, user_name: str | None = None) -> int:
         user_name = user_name if user_name else self._get_config_value("user_name")
+        tbl = self.get_memory_graph_table_name(user_name)
         query = f"""
             SELECT COUNT(*)
-            FROM "{self.db_name}_graph"."Memory"
+            FROM {tbl}."Memory"
             WHERE ag_catalog.agtype_access_operator(properties, '"memory_type"'::agtype) = %s::agtype
         """
         query += "\nAND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
@@ -358,9 +367,10 @@ class PolarDBGraphDB(BaseGraphDB):
     @timed
     def node_not_exist(self, scope: str, user_name: str | None = None) -> int:
         user_name = user_name if user_name else self._get_config_value("user_name")
+        tbl = self.get_memory_graph_table_name(user_name)
         query = f"""
             SELECT id
-            FROM "{self.db_name}_graph"."Memory"
+            FROM {tbl}."Memory"
             WHERE ag_catalog.agtype_access_operator(properties, '"memory_type"'::agtype) = %s::agtype
         """
         query += "\nAND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
@@ -388,9 +398,10 @@ class PolarDBGraphDB(BaseGraphDB):
             user_name,
         )
         user_name = user_name if user_name else self._get_config_value("user_name")
+        tbl = self.get_memory_graph_table_name(user_name)
 
         select_query = f"""
-            SELECT id FROM "{self.db_name}_graph"."Memory"
+            SELECT id FROM {tbl}."Memory"
             WHERE ag_catalog.agtype_access_operator(properties, '"memory_type"'::agtype) = %s::agtype
             AND ag_catalog.agtype_access_operator(properties, '"user_name"'::agtype) = %s::agtype
             ORDER BY ag_catalog.agtype_access_operator(properties, '"updated_at"'::agtype) DESC
@@ -415,7 +426,7 @@ class PolarDBGraphDB(BaseGraphDB):
 
                 placeholders = ",".join(["%s"] * len(ids_to_delete))
                 delete_query = f"""
-                        DELETE FROM "{self.db_name}_graph"."Memory"
+                        DELETE FROM {tbl}."Memory"
                         WHERE id IN ({placeholders})
                     """
                 delete_params = ids_to_delete
@@ -461,9 +472,10 @@ class PolarDBGraphDB(BaseGraphDB):
             if not isinstance(embedding_vector, list):
                 embedding_vector = None
 
+        tbl = self.get_memory_graph_table_name(user_name)
         if embedding_vector is not None:
             query = f"""
-                UPDATE "{self.db_name}_graph"."Memory"
+                UPDATE {tbl}."Memory"
                 SET properties = %s, embedding = %s
                 WHERE ag_catalog.agtype_access_operator(properties, '"id"'::agtype) = %s::agtype
             """
@@ -474,7 +486,7 @@ class PolarDBGraphDB(BaseGraphDB):
             ]
         else:
             query = f"""
-                UPDATE "{self.db_name}_graph"."Memory"
+                UPDATE {tbl}."Memory"
                 SET properties = %s
                 WHERE ag_catalog.agtype_access_operator(properties, '"id"'::agtype) = %s::agtype
             """
@@ -493,8 +505,9 @@ class PolarDBGraphDB(BaseGraphDB):
 
     @timed
     def delete_node(self, id: str, user_name: str | None = None) -> None:
+        tbl = self.get_memory_graph_table_name(user_name)
         query = f"""
-            DELETE FROM "{self.db_name}_graph"."Memory"
+            DELETE FROM {tbl}."Memory"
             WHERE ag_catalog.agtype_access_operator(properties, '"id"'::agtype) = %s::agtype
         """
         params = [self.format_param_value(id)]
@@ -599,17 +612,18 @@ class PolarDBGraphDB(BaseGraphDB):
         properties = {}
         if user_name is not None:
             properties["user_name"] = user_name
+        schema_raw = self._get_shard_schema_raw(user_name)
         query = f"""
-            INSERT INTO {self.db_name}_graph."{type}"(id, start_id, end_id, properties)
+            INSERT INTO {schema_raw}."{type}"(id, start_id, end_id, properties)
             SELECT
-                ag_catalog._next_graph_id('{self.db_name}_graph'::name, '{type}'),
-                ag_catalog._make_graph_id('{self.db_name}_graph'::name, 'Memory'::name, '{source_id}'::text::cstring),
-                ag_catalog._make_graph_id('{self.db_name}_graph'::name, 'Memory'::name, '{target_id}'::text::cstring),
+                ag_catalog._next_graph_id('{schema_raw}'::name, '{type}'),
+                ag_catalog._make_graph_id('{schema_raw}'::name, 'Memory'::name, '{source_id}'::text::cstring),
+                ag_catalog._make_graph_id('{schema_raw}'::name, 'Memory'::name, '{target_id}'::text::cstring),
                 jsonb_build_object('user_name', '{user_name}')::text::agtype
             WHERE NOT EXISTS (
-                SELECT 1 FROM {self.db_name}_graph."{type}"
-                WHERE start_id = ag_catalog._make_graph_id('{self.db_name}_graph'::name, 'Memory'::name, '{source_id}'::text::cstring)
-                  AND end_id   = ag_catalog._make_graph_id('{self.db_name}_graph'::name, 'Memory'::name, '{target_id}'::text::cstring)
+                SELECT 1 FROM {schema_raw}."{type}"
+                WHERE start_id = ag_catalog._make_graph_id('{schema_raw}'::name, 'Memory'::name, '{source_id}'::text::cstring)
+                  AND end_id   = ag_catalog._make_graph_id('{schema_raw}'::name, 'Memory'::name, '{target_id}'::text::cstring)
             );
         """
         logger.info(f"polardb [add_edge] query: {query}, properties: {json.dumps(properties)}")
@@ -695,7 +709,8 @@ class PolarDBGraphDB(BaseGraphDB):
             raise ValueError(
                 f"Invalid direction: {direction}. Must be 'OUTGOING', 'INCOMING', or 'ANY'."
             )
-        query = f"SELECT * FROM cypher('{self.db_name}_graph', $$"
+        schema_raw = self._get_shard_schema_raw(user_name)
+        query = f"SELECT * FROM cypher('{schema_raw}', $$"
         query += f"\nMATCH {pattern}"
         query += f"\nWHERE a.user_name = '{user_name}' AND b.user_name = '{user_name}'"
         query += f"\nAND a.id = '{source_id}' AND b.id = '{target_id}'"
@@ -795,12 +810,13 @@ class PolarDBGraphDB(BaseGraphDB):
         if not ids:
             return []
 
+        tbl = self.get_memory_graph_table_name(user_name)
         placeholders = ",".join(["%s"] * len(ids))
         params = [self.format_param_value(id_val) for id_val in ids]
 
         query = f"""
             SELECT id, properties, embedding
-            FROM "{self.db_name}_graph"."Memory"
+            FROM {tbl}."Memory"
             WHERE ag_catalog.agtype_access_operator(properties, '\"id\"'::agtype) = ANY(ARRAY[{placeholders}]::agtype[])
         """
 
@@ -1005,19 +1021,21 @@ class PolarDBGraphDB(BaseGraphDB):
         self, id: str, user_name: str | None = None
     ) -> list[dict[str, Any]]:
         user_name = user_name if user_name else self._get_config_value("user_name")
+        schema_raw = self._get_shard_schema_raw(user_name)
+        tbl = self.get_memory_graph_table_name(user_name)
         where_user = f"AND p.user_name = '{user_name}' AND c.user_name = '{user_name}'"
 
         query = f"""
             WITH t as (
                 SELECT *
-                FROM cypher('{self.db_name}_graph', $$
+                FROM cypher('{schema_raw}', $$
                 MATCH (p:Memory)-[r:PARENT]->(c:Memory)
                 WHERE p.id = '{id}' {where_user}
                 RETURN id(c) as cid, c.id AS id, c.memory AS memory
                 $$) as (cid agtype, id agtype, memory agtype)
                 )
                 SELECT t.id, m.embedding, t.memory FROM t,
-                "{self.db_name}_graph"."Memory" m
+                {tbl}."Memory" m
             WHERE t.cid::graphid = m.id;
         """
 
@@ -1086,26 +1104,13 @@ class PolarDBGraphDB(BaseGraphDB):
             raise ValueError("depth must be 1-5")
 
         user_name = user_name if user_name else self._get_config_value("user_name")
+        schema_raw = self._get_shard_schema_raw(user_name)
 
         if center_id.startswith('"') and center_id.endswith('"'):
             center_id = center_id[1:-1]
-        """
-            SELECT * FROM cypher('{self.db_name}_graph', $$
-                    MATCH(center: Memory)-[r * 1..{depth}]->(neighbor:Memory)
-                    WHERE
-                    center.id = '{center_id}'
-                    AND center.status = '{center_status}'
-                    AND center.user_name = '{user_name}'
-                    RETURN
-                    collect(DISTINCT
-                    center), collect(DISTINCT
-                    neighbor), collect(DISTINCT
-                    r)
-                $$ ) as (centers agtype, neighbors agtype, rels agtype);
-            """
         if depth == 1:
             query = f"""
-                SELECT * FROM cypher('{self.db_name}_graph', $$
+                SELECT * FROM cypher('{schema_raw}', $$
                         MATCH(center: Memory)-[r]->(neighbor:Memory)
                         WHERE
                         center.id = '{center_id}'
@@ -1116,7 +1121,7 @@ class PolarDBGraphDB(BaseGraphDB):
                 """
         else:
             query = f"""
-                SELECT * FROM cypher('{self.db_name}_graph', $$
+                SELECT * FROM cypher('{schema_raw}', $$
                         MATCH(center: Memory)-[r]->(neighbor:Memory)
                         WHERE
                         center.id = '{center_id}'
@@ -1287,6 +1292,9 @@ class PolarDBGraphDB(BaseGraphDB):
         return_fields: list[str] | None = None,
         **kwargs,
     ) -> list[dict]:
+        user_name = user_name if user_name else self._get_config_value("user_name")
+        tbl = self.get_memory_graph_table_name(user_name)
+
         where_clauses = []
 
         if scope:
@@ -1339,7 +1347,7 @@ class PolarDBGraphDB(BaseGraphDB):
 
         query = f"""
             {select_clause}
-            FROM "{self.db_name}_graph"."Memory"
+            FROM {tbl}."Memory"
             {where_clause}
             """
 
@@ -1381,6 +1389,9 @@ class PolarDBGraphDB(BaseGraphDB):
         return_fields: list[str] | None = None,
         **kwargs,
     ) -> list[dict]:
+        user_name = user_name if user_name else self._get_config_value("user_name")
+        tbl = self.get_memory_graph_table_name(user_name)
+
         where_clauses = []
 
         if scope:
@@ -1435,7 +1446,7 @@ class PolarDBGraphDB(BaseGraphDB):
 
         query = f"""
             {select_clause}
-            FROM "{self.db_name}_graph"."Memory"
+            FROM {tbl}."Memory"
             {where_clause}
         """
 
@@ -1480,6 +1491,9 @@ class PolarDBGraphDB(BaseGraphDB):
         return_fields: list[str] | None = None,
         **kwargs,
     ) -> list[dict]:
+        user_name = user_name if user_name else self._get_config_value("user_name")
+        tbl = self.get_memory_graph_table_name(user_name)
+
         start_time = time.perf_counter()
         logger.info(
             " search_by_fulltext query_words=%s top_k=%s scope=%s status=%s threshold=%s search_filter=%s user_name=%s knowledgebase_ids=%s filter=%s",
@@ -1557,7 +1571,7 @@ class PolarDBGraphDB(BaseGraphDB):
             /*+ Set(max_parallel_workers_per_gather 0) */
             WITH q AS (SELECT to_tsquery('{tsquery_config}', %s) AS fq)
             SELECT {select_cols}
-            FROM "{self.db_name}_graph"."Memory" m
+            FROM {tbl}."Memory" m
             CROSS JOIN q
             {where_clause_cte}
             LIMIT {top_k};
@@ -1614,6 +1628,8 @@ class PolarDBGraphDB(BaseGraphDB):
             knowledgebase_ids,
             return_fields,
         )
+        tbl = self.get_memory_graph_table_name(user_name)
+
         start_time = time.perf_counter()
         where_clauses = []
         if scope:
@@ -1665,7 +1681,7 @@ class PolarDBGraphDB(BaseGraphDB):
                                timeline,
                                ag_catalog.agtype_access_operator(properties, '"id"'::agtype) AS old_id,
                                (embedding <=> %s::vector(1024)) AS scope_distance
-                        FROM "{self.db_name}_graph"."Memory"
+                        FROM {tbl}."Memory"
                         {where_clause}
                         ORDER BY scope_distance ASC
                         LIMIT {top_k}
@@ -1736,6 +1752,7 @@ class PolarDBGraphDB(BaseGraphDB):
         )
 
         user_name = user_name if user_name else self._get_config_value("user_name")
+        schema_raw = self._get_shard_schema_raw(user_name)
 
         where_conditions = []
 
@@ -1794,7 +1811,7 @@ class PolarDBGraphDB(BaseGraphDB):
         where_str = " AND ".join(where_conditions) + filter_where_clause
 
         cypher_query = f"""
-               SELECT * FROM cypher('{self.db_name}_graph', $$
+               SELECT * FROM cypher('{schema_raw}', $$
                MATCH (n:Memory)
                WHERE {where_str}
                RETURN n.id AS id
@@ -1823,6 +1840,7 @@ class PolarDBGraphDB(BaseGraphDB):
         user_name: str | None = None,
     ) -> list[dict[str, Any]]:
         user_name = user_name if user_name else self.config.user_name
+        schema_raw = self._get_shard_schema_raw(user_name)
         if not group_fields:
             raise ValueError("group_fields cannot be empty")
 
@@ -1841,7 +1859,7 @@ class PolarDBGraphDB(BaseGraphDB):
         group_fields_cypher = ", ".join([f"n.{field} AS {field}" for field in group_fields])
         group_fields_cypher_polardb = ", ".join([f"{field} agtype" for field in group_fields])
         query = f"""
-               SELECT * FROM cypher('{self.db_name}_graph', $$
+               SELECT * FROM cypher('{schema_raw}', $$
                    MATCH (n:Memory)
                    {where_clause}
                    RETURN {group_fields_cypher}, COUNT(n) AS count1
@@ -1893,6 +1911,7 @@ class PolarDBGraphDB(BaseGraphDB):
             raise ValueError("group_fields cannot be empty")
 
         user_name = user_name if user_name else self._get_config_value("user_name")
+        tbl = self.get_memory_graph_table_name(user_name)
 
         user_clause = f"ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = '\"{user_name}\"'::agtype"
         if where_clause:
@@ -1929,7 +1948,7 @@ class PolarDBGraphDB(BaseGraphDB):
         query = f"""
             WITH t AS (
                 SELECT {", ".join(cte_select_list)}
-                FROM "{self.db_name}_graph"."Memory"
+                FROM {tbl}."Memory"
                 {where_clause}
                 LIMIT 100
             )
@@ -1979,10 +1998,11 @@ class PolarDBGraphDB(BaseGraphDB):
     @timed
     def clear(self, user_name: str | None = None) -> None:
         user_name = user_name if user_name else self._get_config_value("user_name")
+        schema_raw = self._get_shard_schema_raw(user_name)
 
         try:
             query = f"""
-                SELECT * FROM cypher('{self.db_name}_graph', $$
+                SELECT * FROM cypher('{schema_raw}', $$
                 MATCH (n:Memory)
                 WHERE n.user_name = '{user_name}'
                 DETACH DELETE n
@@ -2013,6 +2033,7 @@ class PolarDBGraphDB(BaseGraphDB):
             f" export_graph include_embedding: {include_embedding}, user_name: {user_name}, user_id: {user_id}, page: {page}, page_size: {page_size}, filter: {filter}, memory_type: {memory_type}, status: {status}"
         )
         user_id = user_id if user_id else self._get_config_value("user_id")
+        tbl = self.get_memory_graph_table_name(user_name)
 
         extracted_object_type: str | None = None
         extracted_mem_cube_id: str | None = None
@@ -2139,13 +2160,13 @@ class PolarDBGraphDB(BaseGraphDB):
         """
         count_query = f"""
             SELECT COUNT(*) AS total_count
-            FROM "{self.db_name}_graph"."Memory"
+            FROM {tbl}."Memory"
             {where_clause}
         """
         if include_embedding:
             data_query = f"""
                 SELECT id, properties, embedding
-                FROM "{self.db_name}_graph"."Memory"
+                FROM {tbl}."Memory"
                 {where_clause}
                 {order_clause}
                 {pagination_clause}
@@ -2153,7 +2174,7 @@ class PolarDBGraphDB(BaseGraphDB):
         else:
             data_query = f"""
                 SELECT id, properties
-                FROM "{self.db_name}_graph"."Memory"
+                FROM {tbl}."Memory"
                 {where_clause}
                 {order_clause}
                 {pagination_clause}
@@ -2213,9 +2234,10 @@ class PolarDBGraphDB(BaseGraphDB):
     @timed
     def count_nodes(self, scope: str, user_name: str | None = None) -> int:
         user_name = user_name if user_name else self.config.user_name
+        schema_raw = self._get_shard_schema_raw(user_name)
 
         query = f"""
-            SELECT * FROM cypher('{self.db_name}_graph', $$
+            SELECT * FROM cypher('{schema_raw}', $$
                 MATCH (n:Memory)
                 WHERE n.memory_type = '{scope}'
                 AND n.user_name = '{user_name}'
@@ -2241,6 +2263,7 @@ class PolarDBGraphDB(BaseGraphDB):
         )
 
         user_name = user_name if user_name else self._get_config_value("user_name")
+        schema_raw = self._get_shard_schema_raw(user_name)
         if scope not in {"WorkingMemory", "LongTermMemory", "UserMemory", "OuterMemory"}:
             raise ValueError(f"Unsupported memory type scope: {scope}")
 
@@ -2274,7 +2297,7 @@ class PolarDBGraphDB(BaseGraphDB):
 
             cypher_query = f"""
                    WITH t as (
-                       SELECT * FROM cypher('{self.db_name}_graph', $$
+                       SELECT * FROM cypher('{schema_raw}', $$
                        MATCH (n:Memory)
                        WHERE {where_clause}
                        RETURN id(n) as id1,n
@@ -2285,7 +2308,7 @@ class PolarDBGraphDB(BaseGraphDB):
                        m.embedding,
                        t.n
                    FROM t,
-                        {self.db_name}_graph."Memory" m
+                        {schema_raw}."Memory" m
                    WHERE t.id1 = m.id;
                    """
             nodes = []
@@ -2328,7 +2351,7 @@ class PolarDBGraphDB(BaseGraphDB):
                 where_clause = " AND ".join(where_parts)
 
             cypher_query = f"""
-                   SELECT * FROM cypher('{self.db_name}_graph', $$
+                   SELECT * FROM cypher('{schema_raw}', $$
                    MATCH (n:Memory)
                    WHERE {where_clause}
                    RETURN properties(n) as props
@@ -2363,13 +2386,14 @@ class PolarDBGraphDB(BaseGraphDB):
         self, scope: str, include_embedding: bool = False, user_name: str | None = None
     ) -> list[dict]:
         user_name = user_name if user_name else self._get_config_value("user_name")
+        schema_raw = self._get_shard_schema_raw(user_name)
         if scope not in {"WorkingMemory", "LongTermMemory", "UserMemory", "OuterMemory"}:
             raise ValueError(f"Unsupported memory type scope: {scope}")
 
         if include_embedding:
             cypher_query = f"""
                 WITH t as (
-                    SELECT * FROM cypher('{self.db_name}_graph', $$
+                    SELECT * FROM cypher('{schema_raw}', $$
                     MATCH (n:Memory)
                     WHERE n.memory_type = '{scope}' AND n.user_name = '{user_name}'
                     RETURN id(n) as id1,n
@@ -2380,12 +2404,12 @@ class PolarDBGraphDB(BaseGraphDB):
                     m.embedding,
                     t.n
                 FROM t,
-                     {self.db_name}_graph."Memory" m
+                     {schema_raw}."Memory" m
                 WHERE t.id1 = m.id;
                 """
         else:
             cypher_query = f"""
-                SELECT * FROM cypher('{self.db_name}_graph', $$
+                SELECT * FROM cypher('{schema_raw}', $$
                 MATCH (n:Memory)
                 WHERE n.memory_type = '{scope}' AND n.user_name = '{user_name}'
                 RETURN properties(n) as props
@@ -2453,6 +2477,7 @@ class PolarDBGraphDB(BaseGraphDB):
         self, scope: str, include_embedding: bool = False, user_name: str | None = None
     ) -> list[dict]:
         user_name = user_name if user_name else self._get_config_value("user_name")
+        schema_raw = self._get_shard_schema_raw(user_name)
 
         if include_embedding:
             return_fields = "id(n) as id1,n"
@@ -2505,7 +2530,7 @@ class PolarDBGraphDB(BaseGraphDB):
             return_fields_agtype = ", ".join([f"{field} agtype" for field in fields])
 
         cypher_query = f"""
-            SELECT * FROM cypher('{self.db_name}_graph', $$
+            SELECT * FROM cypher('{schema_raw}', $$
             MATCH (n:Memory)
             WHERE n.memory_type = '{scope}'
               AND n.status = 'activated'
@@ -2526,7 +2551,7 @@ class PolarDBGraphDB(BaseGraphDB):
                         m.embedding,
                         t.n
                         FROM t,
-                             {self.db_name}_graph."Memory" m
+                             {schema_raw}."Memory" m
                         WHERE t.id1 = m.id
                     """
         logger.info(f"[get_structure_optimization_candidates] query: {cypher_query}")
@@ -2696,7 +2721,9 @@ class PolarDBGraphDB(BaseGraphDB):
     ) -> None:
         logger.info(f"[add_node] id: {id}, memory: {memory}, metadata: {metadata}")
 
-        metadata["user_name"] = user_name if user_name else self.config.user_name
+        user_name = user_name if user_name else self.config.user_name
+        schema_raw = self._get_shard_schema_raw(user_name)
+        metadata["user_name"] = user_name
 
         metadata = _prepare_node_metadata(metadata)
 
@@ -2744,12 +2771,12 @@ class PolarDBGraphDB(BaseGraphDB):
             with self._get_connection() as conn:
                 with conn.cursor() as cursor:
                     delete_query = f"""
-                        DELETE FROM {self.db_name}_graph."Memory"
-                        WHERE id = ag_catalog._make_graph_id('{self.db_name}_graph'::name, 'Memory'::name, %s::text::cstring)
+                        DELETE FROM {schema_raw}."Memory"
+                        WHERE id = ag_catalog._make_graph_id('{schema_raw}'::name, 'Memory'::name, %s::text::cstring)
                     """
                     cursor.execute(delete_query, (id,))
                     get_graph_id_query = f"""
-                                      SELECT ag_catalog._make_graph_id('{self.db_name}_graph'::name, 'Memory'::name, %s::text::cstring)
+                                      SELECT ag_catalog._make_graph_id('{schema_raw}'::name, 'Memory'::name, %s::text::cstring)
                                   """
                     cursor.execute(get_graph_id_query, (id,))
                     graph_id = cursor.fetchone()[0]
@@ -2757,9 +2784,9 @@ class PolarDBGraphDB(BaseGraphDB):
 
                     if embedding_vector:
                         insert_query = f"""
-                            INSERT INTO {self.db_name}_graph."Memory"(id, properties, {embedding_column})
+                            INSERT INTO {schema_raw}."Memory"(id, properties, {embedding_column})
                             VALUES (
-                                ag_catalog._make_graph_id('{self.db_name}_graph'::name, 'Memory'::name, %s::text::cstring),
+                                ag_catalog._make_graph_id('{schema_raw}'::name, 'Memory'::name, %s::text::cstring),
                                 %s,
                                 %s
                             )
@@ -2772,9 +2799,9 @@ class PolarDBGraphDB(BaseGraphDB):
                         )
                     else:
                         insert_query = f"""
-                            INSERT INTO {self.db_name}_graph."Memory"(id, properties)
+                            INSERT INTO {schema_raw}."Memory"(id, properties)
                             VALUES (
-                                ag_catalog._make_graph_id('{self.db_name}_graph'::name, 'Memory'::name, %s::text::cstring),
+                                ag_catalog._make_graph_id('{schema_raw}'::name, 'Memory'::name, %s::text::cstring),
                                 %s
                             )
                         """
@@ -2804,6 +2831,7 @@ class PolarDBGraphDB(BaseGraphDB):
             return
 
         effective_user_name = user_name if user_name else self.config.user_name
+        schema_raw = self._get_shard_schema_raw(effective_user_name)
 
         prepared_nodes = []
         for node_data in nodes:
@@ -2892,9 +2920,9 @@ class PolarDBGraphDB(BaseGraphDB):
                     ids_to_delete = [node["id"] for node in nodes_group]
                     if ids_to_delete:
                         delete_query = f"""
-                            DELETE FROM {self.db_name}_graph."Memory"
+                            DELETE FROM {schema_raw}."Memory"
                             WHERE id IN (
-                                SELECT ag_catalog._make_graph_id('{self.db_name}_graph'::name, 'Memory'::name, unnest(%s::text[])::cstring)
+                                SELECT ag_catalog._make_graph_id('{schema_raw}'::name, 'Memory'::name, unnest(%s::text[])::cstring)
                             )
                         """
                         cursor.execute(delete_query, (ids_to_delete,))
@@ -2902,7 +2930,7 @@ class PolarDBGraphDB(BaseGraphDB):
                     get_graph_ids_query = f"""
                         SELECT
                             id_val,
-                            ag_catalog._make_graph_id('{self.db_name}_graph'::name, 'Memory'::name, id_val::text::cstring) as graph_id
+                            ag_catalog._make_graph_id('{schema_raw}'::name, 'Memory'::name, id_val::text::cstring) as graph_id
                         FROM unnest(%s::text[]) as id_val
                     """
                     cursor.execute(get_graph_ids_query, (ids_to_delete,))
@@ -2920,9 +2948,9 @@ class PolarDBGraphDB(BaseGraphDB):
                         ):
                             prepare_query = f"""
                                 PREPARE {prepare_name} AS
-                                INSERT INTO {self.db_name}_graph."Memory"(id, properties, {embedding_column})
+                                INSERT INTO {schema_raw}."Memory"(id, properties, {embedding_column})
                                 VALUES (
-                                    ag_catalog._make_graph_id('{self.db_name}_graph'::name, 'Memory'::name, $1::text::cstring),
+                                    ag_catalog._make_graph_id('{schema_raw}'::name, 'Memory'::name, $1::text::cstring),
                                     $2::text::agtype,
                                     $3::vector
                                 )
@@ -2945,9 +2973,9 @@ class PolarDBGraphDB(BaseGraphDB):
                         else:
                             prepare_query = f"""
                                 PREPARE {prepare_name} AS
-                                INSERT INTO {self.db_name}_graph."Memory"(id, properties)
+                                INSERT INTO {schema_raw}."Memory"(id, properties)
                                 VALUES (
-                                    ag_catalog._make_graph_id('{self.db_name}_graph'::name, 'Memory'::name, $1::text::cstring),
+                                    ag_catalog._make_graph_id('{schema_raw}'::name, 'Memory'::name, $1::text::cstring),
                                     $2::text::agtype
                                 )
                             """
@@ -3018,6 +3046,7 @@ class PolarDBGraphDB(BaseGraphDB):
             return []
 
         user_name = user_name if user_name else self._get_config_value("user_name")
+        tbl = self.get_memory_graph_table_name(user_name)
 
         where_clauses = []
         params = []
@@ -3052,7 +3081,7 @@ class PolarDBGraphDB(BaseGraphDB):
 
         query = f"""
             SELECT id, properties, embedding
-            FROM "{self.db_name}_graph"."Memory"
+            FROM {tbl}."Memory"
             WHERE {where_clause}
         """
 
@@ -3119,6 +3148,7 @@ class PolarDBGraphDB(BaseGraphDB):
             return []
 
         user_name = user_name if user_name else self._get_config_value("user_name")
+        schema_raw = self._get_shard_schema_raw(user_name)
 
         where_clauses = [
             'n.status = "activated"',
@@ -3172,7 +3202,7 @@ class PolarDBGraphDB(BaseGraphDB):
         result_fields_str = ", ".join(result_fields)
         query = f"""
             SELECT * FROM (
-                SELECT * FROM cypher('{self.db_name}_graph', $$
+                SELECT * FROM cypher('{schema_raw}', $$
                 WITH {tag_list_literal} AS tag_list
                 MATCH (n:Memory)
                 WHERE {where_clause}
@@ -3336,10 +3366,11 @@ class PolarDBGraphDB(BaseGraphDB):
         type_filter = f" AND type(r) = '{type_esc}'" if type != "ANY" else ""
 
         if resolved_user_name:
+            schema_raw = self._get_shard_schema_raw(resolved_user_name)
             user_esc = resolved_user_name.replace("'", "''")
             cypher_body = self._build_cypher_edge_body(id_esc, user_esc, type, type_filter, direction)
             query = (
-                f"SELECT * FROM cypher('{self.db_name}_graph', $$\n"
+                f"SELECT * FROM cypher('{schema_raw}', $$\n"
                 f"{cypher_body}\n"
                 f"$$) AS (from_id agtype, to_id agtype, edge_type agtype)"
             )
@@ -4183,6 +4214,9 @@ class PolarDBGraphDB(BaseGraphDB):
             f" delete_node_by_prams memory_ids: {memory_ids}, file_ids: {file_ids}, filter: {filter}, writable_cube_ids: {writable_cube_ids}"
         )
 
+        user_name = writable_cube_ids[0] if writable_cube_ids else None
+        tbl = self.get_memory_graph_table_name(user_name)
+
         user_name_conditions = []
         if writable_cube_ids and len(writable_cube_ids) > 0:
             for cube_id in writable_cube_ids:
@@ -4239,7 +4273,7 @@ class PolarDBGraphDB(BaseGraphDB):
                 where_clause = " AND ".join(where_conditions)
 
                 delete_query = f"""
-                    DELETE FROM "{self.db_name}_graph"."Memory"
+                    DELETE FROM {tbl}."Memory"
                     WHERE {where_clause}
                 """
                 logger.info(f" delete_node_by_prams delete_query: {delete_query}")
@@ -4291,13 +4325,16 @@ class PolarDBGraphDB(BaseGraphDB):
 
         where_clause = f"({' OR '.join(id_conditions)})"
 
-        query = f"""
+        shard_queries = []
+        for shard_tbl in self._get_all_shard_table_names():
+            shard_queries.append(f"""
             SELECT
                 ag_catalog.agtype_access_operator(properties, '\"id\"'::agtype)::text AS memory_id,
                 ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype)::text AS user_name
-            FROM "{self.db_name}_graph"."Memory"
+            FROM {shard_tbl}."Memory"
             WHERE {where_clause}
-        """
+            """)
+        query = " UNION ALL ".join(shard_queries)
 
         logger.info(f"[get_user_names_by_memory_ids] query: {query}")
         result_dict = {}
@@ -4345,6 +4382,8 @@ class PolarDBGraphDB(BaseGraphDB):
         if not user_name:
             return {user_name: False}
 
+        tbl = self.get_memory_graph_table_name(user_name)
+
         def escape_user_name(un: str) -> str:
             un_str = un.replace("\\", "\\\\")
             un_str = un_str.replace('"', '\\"')
@@ -4354,7 +4393,7 @@ class PolarDBGraphDB(BaseGraphDB):
 
         query = f"""
             SELECT COUNT(*)
-            FROM "{self.db_name}_graph"."Memory"
+            FROM {tbl}."Memory"
             WHERE ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = '\"{escaped_un}\"'::agtype
         """
         logger.info(f"[exist_user_name] query: {query}")
@@ -4394,6 +4433,8 @@ class PolarDBGraphDB(BaseGraphDB):
             )
             return 0
 
+        tbl = self.get_memory_graph_table_name(mem_cube_id)
+
         try:
             with self._get_connection() as conn, conn.cursor() as cursor:
                 user_name_condition = "ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
@@ -4407,7 +4448,7 @@ class PolarDBGraphDB(BaseGraphDB):
                     where_params = [user_name_param, self.format_param_value(delete_record_id)]
 
                     delete_query = f"""
-                        DELETE FROM "{self.db_name}_graph"."Memory"
+                        DELETE FROM {tbl}."Memory"
                         WHERE {where_clause}
                     """
                     logger.info(f"[delete_node_by_mem_cube_id] Hard delete query: {delete_query}")
@@ -4430,7 +4471,7 @@ class PolarDBGraphDB(BaseGraphDB):
 
                     current_time = datetime.utcnow().isoformat()
                     update_query = f"""
-                        UPDATE "{self.db_name}_graph"."Memory"
+                        UPDATE {tbl}."Memory"
                         SET properties = (
                             properties::jsonb || %s::jsonb
                         )::text::agtype,
@@ -4483,6 +4524,8 @@ class PolarDBGraphDB(BaseGraphDB):
             )
             return 0
 
+        tbl = self.get_memory_graph_table_name(mem_cube_id)
+
         logger.info(
             f"recover_memory_by_mem_cube_id mem_cube_id={mem_cube_id}, "
             f"delete_record_id={delete_record_id}"
@@ -4506,7 +4549,7 @@ class PolarDBGraphDB(BaseGraphDB):
                 }
 
                 update_query = f"""
-                    UPDATE "{self.db_name}_graph"."Memory"
+                    UPDATE {tbl}."Memory"
                     SET properties = (
                         properties::jsonb || %s::jsonb
                     )::text::agtype,
