@@ -45,18 +45,6 @@ def generate_vector(dim=1024, low=-0.2, high=0.2):
     return [round(random.uniform(low, high), 6) for _ in range(dim)]
 
 
-def find_embedding(metadata):
-    def find_embedding(item):
-        for key in ["embedding", "embedding_1024", "embedding_3072", "embedding_768"]:
-            if key in item and isinstance(item[key], list):
-                return item[key]
-            if "metadata" in item and key in item["metadata"]:
-                return item["metadata"][key]
-            if "properties" in item and key in item["properties"]:
-                return item["properties"][key]
-        return None
-
-
 def detect_embedding_field(embedding_list):
     if not embedding_list:
         return None
@@ -733,7 +721,7 @@ class PolarDBGraphDB(BaseGraphDB):
         logger.info(
             f"polardb get_node id: {id}, include_embedding: {include_embedding}, user_name: {user_name}"
         )
-        start_time = time.time()
+        start_time = time.perf_counter()
         select_fields = "id, properties, embedding" if include_embedding else "id, properties"
         id_param = self.format_param_value(id)
 
@@ -788,9 +776,10 @@ class PolarDBGraphDB(BaseGraphDB):
                         except (json.JSONDecodeError, TypeError):
                             logger.warning(f"Failed to parse embedding for node {id}")
 
-                    elapsed_time = time.time() - start_time
+                    elapsed_time = (time.perf_counter() - start_time) * 1000.0
                     logger.info(
-                        f" polardb [get_node] get_node completed time in {elapsed_time:.2f}s"
+                        "polardb get_node get_node completed time in took %.1f ms",
+                        elapsed_time,
                     )
                     return self._parse_node(
                         {
@@ -3362,7 +3351,7 @@ class PolarDBGraphDB(BaseGraphDB):
     def get_edges(
         self, id: str, type: str = "ANY", direction: str = "ANY", user_name: str | None = None
     ) -> list[dict[str, str]]:
-        start_time = time.time()
+        start_time = time.perf_counter()
         logger.info(f" get_edges id:{id},type:{type},direction:{direction},user_name:{user_name}")
         resolved_user_name = user_name if user_name else self._get_config_value("user_name")
         if direction not in ("OUTGOING", "INCOMING", "ANY"):
@@ -3400,8 +3389,11 @@ class PolarDBGraphDB(BaseGraphDB):
             with self._get_connection() as conn, conn.cursor() as cursor:
                 cursor.execute(query)
                 edges = self._parse_edge_rows(cursor.fetchall())
-                elapsed_time = time.time() - start_time
-                logger.info(f"polardb get_edges completed time in {elapsed_time:.2f}s")
+                elapsed_time = (time.perf_counter() - start_time) * 1000.0
+                logger.info(
+                    "polardb get_edges completed time in took %.1f ms",
+                    elapsed_time,
+                )
                 return edges
         except Exception as e:
             logger.error(f"Failed to get edges: {e}", exc_info=True)
