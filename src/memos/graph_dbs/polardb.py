@@ -133,7 +133,7 @@ class PolarDBGraphDB(BaseGraphDB):
             keepalives_interval=15,
             keepalives_count=5,
             keepalives=1,
-            options=f"-c search_path={self.db_name}_graph_0,ag_catalog,$user,public",
+            # options=f"-c search_path={self.db_name}_graph_0,ag_catalog,$user,public",
         )
 
         self._shard_count = int(
@@ -330,38 +330,59 @@ class PolarDBGraphDB(BaseGraphDB):
             logger.warning(f"Failed to create indexes: {e}")
 
     def get_memory_count(self, memory_type: str, user_name: str | None = None) -> int:
-        user_name = user_name if user_name else self._get_config_value("user_name")
-        tbl = self.get_memory_graph_table_name(user_name)
-        query = f"""
-            SELECT COUNT(*)
-            FROM {tbl}."Memory"
-            WHERE ag_catalog.agtype_access_operator(properties, '"memory_type"'::agtype) = %s::agtype
-        """
-        query += "\nAND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
-        params = [self.format_param_value(memory_type), self.format_param_value(user_name)]
 
+        logger.info("get_memory_count request: memory_type=%s, user_name=%s", memory_type, user_name)
+        type_param = self.format_param_value(memory_type)
+        if user_name:
+            tbl = self.get_memory_graph_table_name(user_name)
+            query = (
+                f"SELECT COUNT(*) FROM {tbl}.\"Memory\""
+                f" WHERE ag_catalog.agtype_access_operator(properties, '\"memory_type\"'::agtype) = %s::agtype"
+                f" AND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
+            )
+            params = [type_param, self.format_param_value(user_name)]
+        else:
+            union_parts = [
+                f"SELECT COUNT(*) AS cnt FROM {tbl}.\"Memory\""
+                f" WHERE ag_catalog.agtype_access_operator(properties, '\"memory_type\"'::agtype) = %s::agtype"
+                for tbl in self._get_all_shard_table_names()
+            ]
+            query = f"SELECT SUM(cnt) FROM ({' UNION ALL '.join(union_parts)}) t"
+            params = [type_param] * len(union_parts)
+
+        logger.info("get_memory_count query: query=%s, params=%s", query, params)
         try:
             with self._get_connection() as conn, conn.cursor() as cursor:
                 cursor.execute(query, params)
                 result = cursor.fetchone()
-                return result[0] if result else 0
+                return int(result[0]) if result and result[0] else 0
         except Exception as e:
             logger.error(f"[get_memory_count] Failed: {e}")
             return -1
 
     @timed
     def node_not_exist(self, scope: str, user_name: str | None = None) -> int:
-        user_name = user_name if user_name else self._get_config_value("user_name")
-        tbl = self.get_memory_graph_table_name(user_name)
-        query = f"""
-            SELECT id
-            FROM {tbl}."Memory"
-            WHERE ag_catalog.agtype_access_operator(properties, '"memory_type"'::agtype) = %s::agtype
-        """
-        query += "\nAND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
-        query += "\nLIMIT 1"
-        params = [self.format_param_value(scope), self.format_param_value(user_name)]
 
+        logger.info(" node_not_exist request: scope=%s, user_name=%s", scope, user_name)
+        scope_param = self.format_param_value(scope)
+        if user_name:
+            tbl = self.get_memory_graph_table_name(user_name)
+            query = (
+                f"SELECT id FROM {tbl}.\"Memory\""
+                f" WHERE ag_catalog.agtype_access_operator(properties, '\"memory_type\"'::agtype) = %s::agtype"
+                f" AND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
+                f" LIMIT 1"
+            )
+            params = [scope_param, self.format_param_value(user_name)]
+        else:
+            union_parts = [
+                f"SELECT id FROM {tbl}.\"Memory\""
+                f" WHERE ag_catalog.agtype_access_operator(properties, '\"memory_type\"'::agtype) = %s::agtype"
+                for tbl in self._get_all_shard_table_names()
+            ]
+            query = " UNION ALL ".join(union_parts) + " LIMIT 1"
+            params = [scope_param] * len(union_parts)
+        logger.info("node_not_exist query=%s, params=%s", query,params)
         try:
             with self._get_connection() as conn, conn.cursor() as cursor:
                 cursor.execute(query, params)
@@ -375,6 +396,7 @@ class PolarDBGraphDB(BaseGraphDB):
     def remove_oldest_memory(
         self, memory_type: str, keep_latest: int, user_name: str | None = None
     ) -> None:
+
         start_time = time.perf_counter()
         logger.info(
             "remove_oldest_memory by memory_type:%s,keep_latest: %s,user_name:%s",
@@ -382,63 +404,73 @@ class PolarDBGraphDB(BaseGraphDB):
             keep_latest,
             user_name,
         )
-        user_name = user_name if user_name else self._get_config_value("user_name")
-        tbl = self.get_memory_graph_table_name(user_name)
 
-        select_query = f"""
-            SELECT id FROM {tbl}."Memory"
-            WHERE ag_catalog.agtype_access_operator(properties, '"memory_type"'::agtype) = %s::agtype
-            AND ag_catalog.agtype_access_operator(properties, '"user_name"'::agtype) = %s::agtype
-            ORDER BY ag_catalog.agtype_access_operator(properties, '"updated_at"'::agtype) DESC
-            OFFSET %s
-        """
-        select_params = [
-            self.format_param_value(memory_type),
-            self.format_param_value(user_name),
-            keep_latest,
-        ]
-        logger.info(
-            f"remove_oldest_memory by select_query:{select_query},select_params:{select_params}"
-        )
+        if user_name:
+            shard_tables = [self.get_memory_graph_table_name(user_name)]
+        else:
+            shard_tables = self._get_all_shard_table_names()
+
+        type_param = self.format_param_value(memory_type)
+        total_deleted = 0
+
         try:
             with self._get_connection() as conn, conn.cursor() as cursor:
-                cursor.execute(select_query, select_params)
-                ids_to_delete = [row[0] for row in cursor.fetchall()]
+                for tbl in shard_tables:
+                    if user_name:
+                        select_query = (
+                            f"SELECT id FROM {tbl}.\"Memory\""
+                            f" WHERE ag_catalog.agtype_access_operator(properties, '\"memory_type\"'::agtype) = %s::agtype"
+                            f" AND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
+                            f" ORDER BY ag_catalog.agtype_access_operator(properties, '\"updated_at\"'::agtype) DESC"
+                            f" OFFSET %s"
+                        )
+                        select_params = [type_param, self.format_param_value(user_name), keep_latest]
+                    else:
+                        select_query = (
+                            f"SELECT id FROM {tbl}.\"Memory\""
+                            f" WHERE ag_catalog.agtype_access_operator(properties, '\"memory_type\"'::agtype) = %s::agtype"
+                            f" ORDER BY ag_catalog.agtype_access_operator(properties, '\"updated_at\"'::agtype) DESC"
+                            f" OFFSET %s"
+                        )
+                        select_params = [type_param, keep_latest]
+                    logger.info("remove_oldest_memory select_query=%s, select_params=%s", select_query, select_params)
+                    cursor.execute(select_query, select_params)
+                    ids_to_delete = [row[0] for row in cursor.fetchall()]
 
-                if not ids_to_delete:
-                    logger.info(f"No {memory_type} memories to remove for user {user_name}")
-                    return
+                    if not ids_to_delete:
+                        continue
 
-                placeholders = ",".join(["%s"] * len(ids_to_delete))
-                delete_query = f"""
-                        DELETE FROM {tbl}."Memory"
-                        WHERE id IN ({placeholders})
-                    """
-                delete_params = ids_to_delete
+                    placeholders = ",".join(["%s"] * len(ids_to_delete))
+                    delete_query = f"DELETE FROM {tbl}.\"Memory\" WHERE id IN ({placeholders})"
+                    logger.info("remove_oldest_memory delete_query=%s, ids_to_delete=%s", delete_query, ids_to_delete)
+                    cursor.execute(delete_query, ids_to_delete)
+                    total_deleted += cursor.rowcount
 
-                cursor.execute(delete_query, delete_params)
-                deleted_count = cursor.rowcount
-                logger.info(
-                    f"Removed {deleted_count} oldest {memory_type} memories, "
-                    f"keeping {keep_latest} latest for user {user_name}, "
-                    f"removed ids: {ids_to_delete}"
-                )
                 elapsed = (time.perf_counter() - start_time) * 1000.0
-                logger.info("remove_oldest_memory internal took %.1f ms", elapsed)
+                logger.info(
+                    "remove_oldest_memory removed %d %s memories, keeping %d latest, took %.1f ms",
+                    total_deleted, memory_type, keep_latest, elapsed,
+                )
         except Exception as e:
             logger.error(f"[remove_oldest_memory] Failed: {e}", exc_info=True)
             raise
 
     @timed
     def update_node(self, id: str, fields: dict[str, Any], user_name: str | None = None) -> None:
+
+        logger.info("update_node id=%s, user_name=%s, fields_keys=%s", id, user_name, list(fields.keys()) if fields else [])
         if not fields:
             return
 
-        user_name = user_name if user_name else self.config.user_name
+        resolved_user_name = user_name
 
-        current_node = self.get_node(id, user_name=user_name)
+        current_node = self.get_node(id, user_name=resolved_user_name)
         if not current_node:
+            logger.info("update_node Node '%s' not found, skip update", id)
             return
+
+        if not resolved_user_name:
+            resolved_user_name = current_node.get("metadata", {}).get("user_name")
 
         properties = current_node["metadata"].copy()
         original_id = properties.get("id", id)
@@ -457,30 +489,29 @@ class PolarDBGraphDB(BaseGraphDB):
             if not isinstance(embedding_vector, list):
                 embedding_vector = None
 
-        tbl = self.get_memory_graph_table_name(user_name)
+        tbl = self.get_memory_graph_table_name(resolved_user_name)
+        id_param = self.format_param_value(id)
+
         if embedding_vector is not None:
-            query = f"""
-                UPDATE {tbl}."Memory"
-                SET properties = %s, embedding = %s
-                WHERE ag_catalog.agtype_access_operator(properties, '"id"'::agtype) = %s::agtype
-            """
-            params = [
-                json.dumps(properties),
-                json.dumps(embedding_vector),
-                self.format_param_value(id),
-            ]
+            query = (
+                f"UPDATE {tbl}.\"Memory\""
+                f" SET properties = %s, embedding = %s"
+                f" WHERE ag_catalog.agtype_access_operator(properties, '\"id\"'::agtype) = %s::agtype"
+            )
+            params = [json.dumps(properties), json.dumps(embedding_vector), id_param]
         else:
-            query = f"""
-                UPDATE {tbl}."Memory"
-                SET properties = %s
-                WHERE ag_catalog.agtype_access_operator(properties, '"id"'::agtype) = %s::agtype
-            """
-            params = [json.dumps(properties), self.format_param_value(id)]
+            query = (
+                f"UPDATE {tbl}.\"Memory\""
+                f" SET properties = %s"
+                f" WHERE ag_catalog.agtype_access_operator(properties, '\"id\"'::agtype) = %s::agtype"
+            )
+            params = [json.dumps(properties), id_param]
 
-        if user_name is not None:
-            query += "\nAND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
-            params.append(self.format_param_value(user_name))
+        if resolved_user_name:
+            query += " AND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
+            params.append(self.format_param_value(resolved_user_name))
 
+        logger.info("update_node query=%s, params_count=%d", query, len(params))
         try:
             with self._get_connection() as conn, conn.cursor() as cursor:
                 cursor.execute(query, params)
@@ -490,22 +521,33 @@ class PolarDBGraphDB(BaseGraphDB):
 
     @timed
     def delete_node(self, id: str, user_name: str | None = None) -> None:
-        tbl = self.get_memory_graph_table_name(user_name)
-        query = f"""
-            DELETE FROM {tbl}."Memory"
-            WHERE ag_catalog.agtype_access_operator(properties, '"id"'::agtype) = %s::agtype
-        """
-        params = [self.format_param_value(id)]
 
-        if user_name is not None:
-            query += "\nAND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
-            params.append(self.format_param_value(user_name))
+        logger.info("delete_node id=%s, user_name=%s", id, user_name)
+        resolved_user_name = user_name
 
+        if not resolved_user_name:
+            node = self.get_node(id)
+            if node:
+                resolved_user_name = node.get("metadata", {}).get("user_name")
+            if not resolved_user_name:
+                logger.warning("delete_node node '%s' not found, skip delete", id)
+                return
+
+        tbl = self.get_memory_graph_table_name(resolved_user_name)
+        id_param = self.format_param_value(id)
+        query = (
+            f"DELETE FROM {tbl}.\"Memory\""
+            f" WHERE ag_catalog.agtype_access_operator(properties, '\"id\"'::agtype) = %s::agtype"
+            f" AND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
+        )
+        params = [id_param, self.format_param_value(resolved_user_name)]
+
+        logger.info("delete_node query=%s, params=%s", query, params)
         try:
             with self._get_connection() as conn, conn.cursor() as cursor:
                 cursor.execute(query, params)
         except Exception as e:
-            logger.error(f"[delete_node] Failed to delete node '{id}': {e}", exc_info=True)
+            logger.error("delete_node failed to delete node '%s': %s", id, e, exc_info=True)
             raise
 
     @timed
@@ -575,101 +617,90 @@ class PolarDBGraphDB(BaseGraphDB):
     def add_edge(
         self, source_id: str, target_id: str, type: str, user_name: str | None = None
     ) -> None:
-        logger.info(
-            f"polardb [add_edge] source_id: {source_id}, target_id: {target_id}, type: {type},user_name:{user_name}"
-        )
 
-        start_time = time.time()
+        logger.info(
+            "add_edge source_id=%s, target_id=%s, type=%s, user_name=%s",
+            source_id, target_id, type, user_name,
+        )
+        start_time = time.perf_counter()
         if not source_id or not target_id:
-            logger.error(f"Edge '{source_id}' and '{target_id}' are both None")
+            logger.error("add_edge source_id and target_id must not be empty")
             return
 
-        source_exists = self.get_node(source_id, user_name=user_name) is not None
-        target_exists = self.get_node(target_id, user_name=user_name) is not None
+        resolved_user_name = user_name
 
-        if not source_exists or not target_exists:
+        source_node = self.get_node(source_id, user_name=resolved_user_name)
+        target_node = self.get_node(target_id, user_name=resolved_user_name)
+
+        if not source_node or not target_node:
             logger.warning(
-                "[add_edge] Source %s or target %s does not exist.", source_exists, target_exists
+                "add_edge source %s exists=%s, target %s exists=%s, skip",
+                source_id, source_node is not None, target_id, target_node is not None,
             )
             return
 
+        if not resolved_user_name:
+            resolved_user_name = source_node.get("metadata", {}).get("user_name")
+
+        schema_raw = self._get_shard_schema_raw(resolved_user_name)
         properties = {}
-        if user_name is not None:
-            properties["user_name"] = user_name
-        schema_raw = self._get_shard_schema_raw(user_name)
+        if resolved_user_name:
+            properties["user_name"] = resolved_user_name
+
         query = f"""
             INSERT INTO {schema_raw}."{type}"(id, start_id, end_id, properties)
             SELECT
                 ag_catalog._next_graph_id('{schema_raw}'::name, '{type}'),
                 ag_catalog._make_graph_id('{schema_raw}'::name, 'Memory'::name, '{source_id}'::text::cstring),
                 ag_catalog._make_graph_id('{schema_raw}'::name, 'Memory'::name, '{target_id}'::text::cstring),
-                jsonb_build_object('user_name', '{user_name}')::text::agtype
+                jsonb_build_object('user_name', '{resolved_user_name}')::text::agtype
             WHERE NOT EXISTS (
                 SELECT 1 FROM {schema_raw}."{type}"
                 WHERE start_id = ag_catalog._make_graph_id('{schema_raw}'::name, 'Memory'::name, '{source_id}'::text::cstring)
                   AND end_id   = ag_catalog._make_graph_id('{schema_raw}'::name, 'Memory'::name, '{target_id}'::text::cstring)
             );
         """
-        logger.info(f"polardb [add_edge] query: {query}, properties: {json.dumps(properties)}")
+        logger.info("add_edge query=%s", query)
         try:
             with self._get_connection() as conn, conn.cursor() as cursor:
-                cursor.execute(query, (source_id, target_id, type, json.dumps(properties)))
-                logger.info(f"Edge created: {source_id} -[{type}]-> {target_id}")
-
-                elapsed_time = time.time() - start_time
-                logger.info(f" polardb [add_edge] insert completed time in {elapsed_time:.2f}s")
+                cursor.execute(query)
+                elapsed_time = (time.perf_counter() - start_time) * 1000.0
+                logger.info(
+                    "add_edge created completed successfully in took %.1f ms",
+                    elapsed_time,
+                )
         except Exception as e:
-            logger.error(f"Failed to insert edge: {e}", exc_info=True)
+            logger.error("add_edge failed: %s", e, exc_info=True)
             raise
 
     @timed
-    def delete_edge(self, source_id: str, target_id: str, type: str) -> None:
-        query = f"""
-            DELETE FROM "{self.db_name}_graph"."Edges"
-            WHERE source_id = %s AND target_id = %s AND edge_type = %s
-        """
-        with self._get_connection() as conn, conn.cursor() as cursor:
-            cursor.execute(query, (source_id, target_id, type))
-            logger.info(f"Edge deleted: {source_id} -[{type}]-> {target_id}")
+    def delete_edge(self, source_id: str, target_id: str, type: str, user_name: str | None = None) -> None:
 
-    @timed
-    def edge_exists_old(
-        self, source_id: str, target_id: str, type: str = "ANY", direction: str = "OUTGOING"
-    ) -> bool:
-        where_clauses = []
-        params = []
+        logger.info("delete_edge source_id=%s, target_id=%s, type=%s, user_name=%s", source_id, target_id, type, user_name)
+        resolved_user_name = user_name
 
-        if direction == "OUTGOING":
-            where_clauses.append("source_id = %s AND target_id = %s")
-            params.extend([source_id, target_id])
-        elif direction == "INCOMING":
-            where_clauses.append("source_id = %s AND target_id = %s")
-            params.extend([target_id, source_id])
-        elif direction == "ANY":
-            where_clauses.append(
-                "((source_id = %s AND target_id = %s) OR (source_id = %s AND target_id = %s))"
-            )
-            params.extend([source_id, target_id, target_id, source_id])
-        else:
-            raise ValueError(
-                f"Invalid direction: {direction}. Must be 'OUTGOING', 'INCOMING', or 'ANY'."
-            )
+        if not resolved_user_name:
+            source_node = self.get_node(source_id)
+            if source_node:
+                resolved_user_name = source_node.get("metadata", {}).get("user_name")
+            if not resolved_user_name:
+                logger.warning("delete_edge cannot resolve shard for source_id=%s, skip", source_id)
+                return
 
-        if type != "ANY":
-            where_clauses.append("edge_type = %s")
-            params.append(type)
-
-        where_clause = " AND ".join(where_clauses)
-
-        query = f"""
-            SELECT 1 FROM "{self.db_name}_graph"."Edges"
-            WHERE {where_clause}
-            LIMIT 1
-        """
-        with self._get_connection() as conn, conn.cursor() as cursor:
-            cursor.execute(query, params)
-            result = cursor.fetchone()
-            return result is not None
+        tbl = self.get_memory_graph_table_name(resolved_user_name)
+        query = (
+            f"DELETE FROM {tbl}.\"Edges\""
+            f" WHERE source_id = %s AND target_id = %s AND edge_type = %s"
+        )
+        params = [source_id, target_id, type]
+        logger.info("delete_edge query=%s, params=%s", query, params)
+        try:
+            with self._get_connection() as conn, conn.cursor() as cursor:
+                cursor.execute(query, params)
+                logger.info("delete_edge done %s -[%s]-> %s", source_id, type, target_id)
+        except Exception as e:
+            logger.error("delete_edge failed: %s", e, exc_info=True)
+            raise
 
     @timed
     def edge_exists(
@@ -680,7 +711,12 @@ class PolarDBGraphDB(BaseGraphDB):
         direction: str = "OUTGOING",
         user_name: str | None = None,
     ) -> bool:
-        user_name = user_name if user_name else self.config.user_name
+
+        logger.info(
+            "edge_exists source_id=%s, target_id=%s, type=%s, direction=%s, user_name=%s",
+            source_id, target_id, type, direction, user_name,
+        )
+        resolved_user_name = user_name
 
         if direction == "OUTGOING":
             pattern = "(a:Memory)-[r]->(b:Memory)"
@@ -692,21 +728,43 @@ class PolarDBGraphDB(BaseGraphDB):
             raise ValueError(
                 f"Invalid direction: {direction}. Must be 'OUTGOING', 'INCOMING', or 'ANY'."
             )
-        schema_raw = self._get_shard_schema_raw(user_name)
-        query = f"SELECT * FROM cypher('{schema_raw}', $$"
-        query += f"\nMATCH {pattern}"
-        query += f"\nWHERE a.user_name = '{user_name}' AND b.user_name = '{user_name}'"
-        query += f"\nAND a.id = '{source_id}' AND b.id = '{target_id}'"
-        if type != "ANY":
-            query += f"\n AND type(r) = '{type}'"
 
-        query += "\nRETURN r"
-        query += "\n$$) AS (r agtype)"
+        type_filter = f" AND type(r) = '{type}'" if type != "ANY" else ""
 
-        with self._get_connection() as conn, conn.cursor() as cursor:
-            cursor.execute(query)
-            result = cursor.fetchone()
-            return result is not None and result[0] is not None
+        if resolved_user_name:
+            schema_raw = self._get_shard_schema_raw(resolved_user_name)
+            query = (
+                f"SELECT * FROM cypher('{schema_raw}', $$"
+                f" MATCH {pattern}"
+                f" WHERE a.user_name = '{resolved_user_name}' AND b.user_name = '{resolved_user_name}'"
+                f" AND a.id = '{source_id}' AND b.id = '{target_id}'"
+                f"{type_filter}"
+                f" RETURN r"
+                f" $$) AS (r agtype)"
+            )
+        else:
+            union_parts = []
+            for schema_raw in [f"{self.db_name}_graph_{i}" for i in range(self._shard_count)]:
+                part = (
+                    f"SELECT * FROM cypher('{schema_raw}', $$"
+                    f" MATCH {pattern}"
+                    f" WHERE a.id = '{source_id}' AND b.id = '{target_id}'"
+                    f"{type_filter}"
+                    f" RETURN r"
+                    f" $$) AS (r agtype)"
+                )
+                union_parts.append(part)
+            query = " UNION ALL ".join(union_parts) + " LIMIT 1"
+
+        logger.info("edge_exists query=%s", query)
+        try:
+            with self._get_connection() as conn, conn.cursor() as cursor:
+                cursor.execute(query)
+                result = cursor.fetchone()
+                return result is not None and result[0] is not None
+        except Exception as e:
+            logger.error("edge_exists failed: %s", e, exc_info=True)
+            raise
 
     @timed
     def get_node(
@@ -789,215 +847,82 @@ class PolarDBGraphDB(BaseGraphDB):
             return None
 
     @timed
-    def get_nodes(self, ids: list[str], user_name: str, **kwargs) -> list[dict[str, Any]]:
-        logger.info(f"get_nodes ids:{ids},user_name:{user_name}")
+    def get_nodes(self, ids: list[str], user_name: str | None = None, **kwargs) -> list[dict[str, Any]]:
+
+        logger.info("get_nodes ids=%s, user_name=%s", ids, user_name)
         if not ids:
             return []
 
-        tbl = self.get_memory_graph_table_name(user_name)
+        resolved_user_name = user_name
         placeholders = ",".join(["%s"] * len(ids))
-        params = [self.format_param_value(id_val) for id_val in ids]
+        id_params = [self.format_param_value(id_val) for id_val in ids]
 
-        query = f"""
-            SELECT id, properties, embedding
-            FROM {tbl}."Memory"
-            WHERE ag_catalog.agtype_access_operator(properties, '\"id\"'::agtype) = ANY(ARRAY[{placeholders}]::agtype[])
-        """
-
-        if user_name is not None:
-            query += " AND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
-            params.append(self.format_param_value(user_name))
-
-        logger.info(f"get_nodes query:{query},params:{params}")
-
-        with self._get_connection() as conn, conn.cursor() as cursor:
-            cursor.execute(query, params)
-            results = cursor.fetchall()
-
-            nodes = []
-            for row in results:
-                node_id, properties_json, embedding_json = row
-                if isinstance(properties_json, str):
-                    try:
-                        properties = json.loads(properties_json)
-                    except (json.JSONDecodeError, TypeError):
-                        logger.warning(f"Failed to parse properties for node {node_id}")
-                        properties = {}
-                else:
-                    properties = properties_json if properties_json else {}
-
-                if embedding_json is not None and kwargs.get("include_embedding"):
-                    try:
-                        embedding = (
-                            json.loads(embedding_json)
-                            if isinstance(embedding_json, str)
-                            else embedding_json
-                        )
-                        properties["embedding"] = embedding
-                    except (json.JSONDecodeError, TypeError):
-                        logger.warning(f"Failed to parse embedding for node {node_id}")
-                nodes.append(
-                    self._parse_node(
-                        {
-                            "id": properties.get("id", node_id),
-                            "memory": properties.get("memory", ""),
-                            "metadata": properties,
-                        }
-                    )
-                )
-            return nodes
-
-    @timed
-    def get_edges_old(
-        self, id: str, type: str = "ANY", direction: str = "ANY"
-    ) -> list[dict[str, str]]:
-        try:
-            with self.connection.cursor() as cursor:
-                cursor.execute(f"""
-                    CREATE TABLE IF NOT EXISTS "{self.db_name}_graph"."Edges" (
-                        id SERIAL PRIMARY KEY,
-                        source_id TEXT NOT NULL,
-                        target_id TEXT NOT NULL,
-                        edge_type TEXT NOT NULL,
-                        properties JSONB,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        FOREIGN KEY (source_id) REFERENCES "{self.db_name}_graph"."Memory"(id),
-                        FOREIGN KEY (target_id) REFERENCES "{self.db_name}_graph"."Memory"(id)
-                    );
-                """)
-
-                cursor.execute(f"""
-                    CREATE INDEX IF NOT EXISTS idx_edges_source
-                    ON "{self.db_name}_graph"."Edges" (source_id);
-                """)
-                cursor.execute(f"""
-                    CREATE INDEX IF NOT EXISTS idx_edges_target
-                    ON "{self.db_name}_graph"."Edges" (target_id);
-                """)
-                cursor.execute(f"""
-                    CREATE INDEX IF NOT EXISTS idx_edges_type
-                    ON "{self.db_name}_graph"."Edges" (edge_type);
-                """)
-        except Exception as e:
-            logger.warning(f"Failed to create edges table: {e}")
-
-        where_clauses = []
-        params = [id]
-
-        if type != "ANY":
-            where_clauses.append("edge_type = %s")
-            params.append(type)
-
-        if direction == "OUTGOING":
-            where_clauses.append("source_id = %s")
-        elif direction == "INCOMING":
-            where_clauses.append("target_id = %s")
+        if resolved_user_name:
+            tbl = self.get_memory_graph_table_name(resolved_user_name)
+            query = (
+                f"SELECT id, properties, embedding FROM {tbl}.\"Memory\""
+                f" WHERE ag_catalog.agtype_access_operator(properties, '\"id\"'::agtype) = ANY(ARRAY[{placeholders}]::agtype[])"
+                f" AND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
+            )
+            params = id_params + [self.format_param_value(resolved_user_name)]
         else:
-            where_clauses.append("(source_id = %s OR target_id = %s)")
-            params.append(id)
+            union_parts = [
+                f"SELECT id, properties, embedding FROM {tbl}.\"Memory\""
+                f" WHERE ag_catalog.agtype_access_operator(properties, '\"id\"'::agtype) = ANY(ARRAY[{placeholders}]::agtype[])"
+                for tbl in self._get_all_shard_table_names()
+            ]
+            query = " UNION ALL ".join(union_parts)
+            params = []
+            for _ in union_parts:
+                params.extend(id_params)
 
-        where_clause = " AND ".join(where_clauses)
+        logger.info("get_nodes query=%s, params_count=%d", query, len(params))
 
-        query = f"""
-            SELECT source_id, target_id, edge_type
-            FROM "{self.db_name}_graph"."Edges"
-            WHERE {where_clause}
-        """
+        try:
+            with self._get_connection() as conn, conn.cursor() as cursor:
+                cursor.execute(query, params)
+                results = cursor.fetchall()
 
-        with self.connection.cursor() as cursor:
-            cursor.execute(query, params)
-            results = cursor.fetchall()
+                nodes = []
+                for row in results:
+                    node_id, properties_json, embedding_json = row
+                    if isinstance(properties_json, str):
+                        try:
+                            properties = json.loads(properties_json)
+                        except (json.JSONDecodeError, TypeError):
+                            logger.warning("get_nodes failed to parse properties for node %s", node_id)
+                            properties = {}
+                    else:
+                        properties = properties_json if properties_json else {}
 
-            edges = []
-            for row in results:
-                source_id, target_id, edge_type = row
-                edges.append({"from": source_id, "to": target_id, "type": edge_type})
-            return edges
+                    if embedding_json is not None and kwargs.get("include_embedding"):
+                        try:
+                            embedding = (
+                                json.loads(embedding_json)
+                                if isinstance(embedding_json, str)
+                                else embedding_json
+                            )
+                            properties["embedding"] = embedding
+                        except (json.JSONDecodeError, TypeError):
+                            logger.warning("get_nodes failed to parse embedding for node %s", node_id)
+                    nodes.append(
+                        self._parse_node(
+                            {
+                                "id": properties.get("id", node_id),
+                                "memory": properties.get("memory", ""),
+                                "metadata": properties,
+                            }
+                        )
+                    )
+                return nodes
+        except Exception as e:
+            logger.error("get_nodes failed: %s", e, exc_info=True)
+            raise
 
     def get_neighbors(
         self, id: str, type: str, direction: Literal["in", "out", "both"] = "out"
     ) -> list[str]:
         raise NotImplementedError
-
-    @timed
-    def get_neighbors_by_tag_old(
-        self,
-        tags: list[str],
-        exclude_ids: list[str],
-        top_k: int = 5,
-        min_overlap: int = 1,
-    ) -> list[dict[str, Any]]:
-        where_clauses = []
-        params = []
-
-        if exclude_ids:
-            placeholders = ",".join(["%s"] * len(exclude_ids))
-            where_clauses.append(f"id NOT IN ({placeholders})")
-            params.extend(exclude_ids)
-
-        where_clauses.append("properties->>'status' = %s")
-        params.append("activated")
-
-        where_clauses.append("properties->>'type' != %s")
-        params.append("reasoning")
-
-        where_clauses.append("properties->>'memory_type' != %s")
-        params.append("WorkingMemory")
-
-        if not self._get_config_value("use_multi_db", True) and self._get_config_value("user_name"):
-            where_clauses.append("properties->>'user_name' = %s")
-            params.append(self._get_config_value("user_name"))
-
-        where_clause = " AND ".join(where_clauses)
-
-        query = f"""
-            SELECT id, properties, embedding
-            FROM "{self.db_name}_graph"."Memory"
-            WHERE {where_clause}
-        """
-
-        with self.connection.cursor() as cursor:
-            cursor.execute(query, params)
-            results = cursor.fetchall()
-
-            nodes_with_overlap = []
-            for row in results:
-                node_id, properties_json, embedding_json = row
-                properties = properties_json if properties_json else {}
-
-                if embedding_json is not None:
-                    try:
-                        embedding = (
-                            json.loads(embedding_json)
-                            if isinstance(embedding_json, str)
-                            else embedding_json
-                        )
-                        properties["embedding"] = embedding
-                    except (json.JSONDecodeError, TypeError):
-                        logger.warning(f"Failed to parse embedding for node {node_id}")
-
-                node_tags = properties.get("tags", [])
-                if isinstance(node_tags, str):
-                    try:
-                        node_tags = json.loads(node_tags)
-                    except (json.JSONDecodeError, TypeError):
-                        node_tags = []
-
-                overlap_tags = [tag for tag in tags if tag in node_tags]
-                overlap_count = len(overlap_tags)
-
-                if overlap_count >= min_overlap:
-                    node_data = self._parse_node(
-                        {
-                            "id": properties.get("id", node_id),
-                            "memory": properties.get("memory", ""),
-                            "metadata": properties,
-                        }
-                    )
-                    nodes_with_overlap.append((node_data, overlap_count))
-
-            nodes_with_overlap.sort(key=lambda x: x[1], reverse=True)
-            return [node for node, _ in nodes_with_overlap[:top_k]]
 
     @timed
     def get_children_with_embeddings(
@@ -1074,6 +999,29 @@ class PolarDBGraphDB(BaseGraphDB):
     def get_path(self, source_id: str, target_id: str, max_depth: int = 3) -> list[str]:
         raise NotImplementedError
 
+    def _build_subgraph_cypher(
+        self, schema_raw: str, center_id: str, center_status: str, user_filter: str, depth: int
+    ) -> str:
+        if depth == 1:
+            return (
+                f"SELECT * FROM cypher('{schema_raw}', $$"
+                f" MATCH(center:Memory)-[r]->(neighbor:Memory)"
+                f" WHERE center.id = '{center_id}' AND center.status = '{center_status}' {user_filter}"
+                f" RETURN collect(DISTINCT center), collect(DISTINCT neighbor), collect(DISTINCT r)"
+                f" $$) AS (centers agtype, neighbors agtype, rels agtype)"
+            )
+        return (
+            f"SELECT * FROM cypher('{schema_raw}', $$"
+            f" MATCH(center:Memory)-[r]->(neighbor:Memory)"
+            f" WHERE center.id = '{center_id}' AND center.status = '{center_status}' {user_filter}"
+            f" RETURN collect(DISTINCT center), collect(DISTINCT neighbor), collect(DISTINCT r)"
+            f" UNION ALL"
+            f" MATCH(center:Memory)-[r]->(n:Memory)-[r1]->(neighbor:Memory)"
+            f" WHERE center.id = '{center_id}' AND center.status = '{center_status}' {user_filter}"
+            f" RETURN collect(DISTINCT center), collect(DISTINCT neighbor), collect(DISTINCT r1)"
+            f" $$) AS (centers agtype, neighbors agtype, rels agtype)"
+        )
+
     @timed
     def get_subgraph(
         self,
@@ -1082,45 +1030,31 @@ class PolarDBGraphDB(BaseGraphDB):
         center_status: str = "activated",
         user_name: str | None = None,
     ) -> dict[str, Any]:
-        logger.info(f"[get_subgraph] center_id: {center_id}")
+        logger.info(
+            "get_subgraph center_id=%s, depth=%s, center_status=%s, user_name=%s",
+            center_id, depth, center_status, user_name,
+        )
         if not 1 <= depth <= 5:
             raise ValueError("depth must be 1-5")
 
-        user_name = user_name if user_name else self._get_config_value("user_name")
-        schema_raw = self._get_shard_schema_raw(user_name)
+        resolved_user_name = user_name
 
         if center_id.startswith('"') and center_id.endswith('"'):
             center_id = center_id[1:-1]
-        if depth == 1:
-            query = f"""
-                SELECT * FROM cypher('{schema_raw}', $$
-                        MATCH(center: Memory)-[r]->(neighbor:Memory)
-                        WHERE
-                        center.id = '{center_id}'
-                        AND center.status = '{center_status}'
-                        AND center.user_name = '{user_name}'
-                        RETURN collect(DISTINCT center), collect(DISTINCT neighbor), collect(DISTINCT r)
-                    $$ ) as (centers agtype, neighbors agtype, rels agtype);
-                """
+
+        if resolved_user_name:
+            schema_raw = self._get_shard_schema_raw(resolved_user_name)
+            user_filter = f"AND center.user_name = '{resolved_user_name}'"
+            query = self._build_subgraph_cypher(schema_raw, center_id, center_status, user_filter, depth)
         else:
-            query = f"""
-                SELECT * FROM cypher('{schema_raw}', $$
-                        MATCH(center: Memory)-[r]->(neighbor:Memory)
-                        WHERE
-                        center.id = '{center_id}'
-                        AND center.status = '{center_status}'
-                        AND center.user_name = '{user_name}'
-                        RETURN collect(DISTINCT center), collect(DISTINCT neighbor), collect(DISTINCT r)
-                UNION ALL
-                        MATCH(center: Memory)-[r]->(n:Memory)-[r1]->(neighbor:Memory)
-                        WHERE
-                       center.id = '{center_id}'
-                        AND center.status = '{center_status}'
-                        AND center.user_name = '{user_name}'
-                        RETURN collect(DISTINCT center), collect(DISTINCT neighbor), collect(DISTINCT r1)
-                    $$ ) as (centers agtype, neighbors agtype, rels agtype);
-                """
-        logger.info(f"[get_subgraph] Query: {query}")
+            union_parts = []
+            for i in range(self._shard_count):
+                schema_raw = f"{self.db_name}_graph_{i}"
+                query_part = self._build_subgraph_cypher(schema_raw, center_id, center_status, "", depth)
+                union_parts.append(query_part)
+            query = " UNION ALL ".join(union_parts)
+
+        logger.info("get_subgraph query=%s", query)
         try:
             with self._get_connection() as conn, conn.cursor() as cursor:
                 cursor.execute(query)
@@ -1235,7 +1169,7 @@ class PolarDBGraphDB(BaseGraphDB):
                 )
 
         except Exception as e:
-            logger.error(f"Failed to get subgraph: {e}", exc_info=True)
+            logger.error("get_subgraph failed: %s", e, exc_info=True)
             return {"core_node": None, "neighbors": [], "edges": []}
 
     def get_context_chain(self, id: str, type: str = "FOLLOWS") -> list[str]:
@@ -1275,8 +1209,12 @@ class PolarDBGraphDB(BaseGraphDB):
         return_fields: list[str] | None = None,
         **kwargs,
     ) -> list[dict]:
-        user_name = user_name if user_name else self._get_config_value("user_name")
-        tbl = self.get_memory_graph_table_name(user_name)
+
+        logger.info(
+            "search_by_keywords_like query_word=%s, scope=%s, user_name=%s",
+            query_word, scope, user_name,
+        )
+        resolved_user_name = user_name
 
         where_clauses = []
 
@@ -1294,7 +1232,7 @@ class PolarDBGraphDB(BaseGraphDB):
             )
 
         user_name_conditions = self._build_user_name_and_kb_ids_conditions_sql(
-            user_name=user_name,
+            user_name=resolved_user_name,
             knowledgebase_ids=knowledgebase_ids,
             default_user_name=self.config.user_name,
         )
@@ -1322,40 +1260,46 @@ class PolarDBGraphDB(BaseGraphDB):
         where_clauses.append("""(properties -> '"memory"')::text LIKE %s""")
         where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
-        select_clause = """SELECT
-                ag_catalog.agtype_access_operator(properties, '"id"'::agtype) AS old_id,
-                agtype_object_field_text(properties, 'memory') as memory_text"""
+        select_clause = (
+            "SELECT ag_catalog.agtype_access_operator(properties, '\"id\"'::agtype) AS old_id,"
+            " agtype_object_field_text(properties, 'memory') as memory_text"
+        )
         if return_fields:
             select_clause += ", properties"
 
-        query = f"""
-            {select_clause}
-            FROM {tbl}."Memory"
-            {where_clause}
-            """
+        if resolved_user_name:
+            tbl = self.get_memory_graph_table_name(resolved_user_name)
+            query = f"{select_clause} FROM {tbl}.\"Memory\" {where_clause}"
+            params = (query_word,)
+        else:
+            union_parts = [
+                f"{select_clause} FROM {tbl}.\"Memory\" {where_clause}"
+                for tbl in self._get_all_shard_table_names()
+            ]
+            query = " UNION ALL ".join(union_parts)
+            params = tuple(query_word for _ in union_parts)
 
-        params = (query_word,)
-        logger.info(
-            f"[search_by_keywords_LIKE start:]  user_name: {user_name}, query: {query}, params: {params}"
-        )
-        with self._get_connection() as conn, conn.cursor() as cursor:
-            cursor.execute(query, params)
-            results = cursor.fetchall()
-            output = []
-            for row in results:
-                oldid = row[0]
-                id_val = str(oldid)
-                if id_val.startswith('"') and id_val.endswith('"'):
-                    id_val = id_val[1:-1]
-                item = {"id": id_val}
-                if return_fields:
-                    properties = row[2]
-                    item.update(self._extract_fields_from_properties(properties, return_fields))
-                output.append(item)
-            logger.info(
-                f"[search_by_keywords_LIKE end:] user_name: {user_name}, query: {query}, params: {params} recalled: {output}"
-            )
-            return output
+        logger.info("search_by_keywords_like query=%s, params=%s", query, params)
+        try:
+            with self._get_connection() as conn, conn.cursor() as cursor:
+                cursor.execute(query, params)
+                results = cursor.fetchall()
+                output = []
+                for row in results:
+                    oldid = row[0]
+                    id_val = str(oldid)
+                    if id_val.startswith('"') and id_val.endswith('"'):
+                        id_val = id_val[1:-1]
+                    item = {"id": id_val}
+                    if return_fields:
+                        properties = row[2]
+                        item.update(self._extract_fields_from_properties(properties, return_fields))
+                    output.append(item)
+                logger.info("search_by_keywords_like recalled %d results", len(output))
+                return output
+        except Exception as e:
+            logger.error("search_by_keywords_like failed: %s", e, exc_info=True)
+            raise
 
     @timed
     def search_by_keywords_tfidf(
@@ -1372,8 +1316,11 @@ class PolarDBGraphDB(BaseGraphDB):
         return_fields: list[str] | None = None,
         **kwargs,
     ) -> list[dict]:
-        user_name = user_name if user_name else self._get_config_value("user_name")
-        tbl = self.get_memory_graph_table_name(user_name)
+        logger.info(
+            "search_by_keywords_tfidf query_words=%s, scope=%s, user_name=%s",
+            query_words, scope, user_name,
+        )
+        resolved_user_name = user_name
 
         where_clauses = []
 
@@ -1391,7 +1338,7 @@ class PolarDBGraphDB(BaseGraphDB):
             )
 
         user_name_conditions = self._build_user_name_and_kb_ids_conditions_sql(
-            user_name=user_name,
+            user_name=resolved_user_name,
             knowledgebase_ids=knowledgebase_ids,
             default_user_name=self.config.user_name,
         )
@@ -1421,41 +1368,46 @@ class PolarDBGraphDB(BaseGraphDB):
 
         where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
-        select_clause = """SELECT
-                ag_catalog.agtype_access_operator(properties, '"id"'::agtype) AS old_id,
-                agtype_object_field_text(properties, 'memory') as memory_text"""
+        select_clause = (
+            "SELECT ag_catalog.agtype_access_operator(properties, '\"id\"'::agtype) AS old_id,"
+            " agtype_object_field_text(properties, 'memory') as memory_text"
+        )
         if return_fields:
             select_clause += ", properties"
 
-        query = f"""
-            {select_clause}
-            FROM {tbl}."Memory"
-            {where_clause}
-        """
+        if resolved_user_name:
+            tbl = self.get_memory_graph_table_name(resolved_user_name)
+            query = f"{select_clause} FROM {tbl}.\"Memory\" {where_clause}"
+            params = (tsquery_string,)
+        else:
+            union_parts = [
+                f"{select_clause} FROM {tbl}.\"Memory\" {where_clause}"
+                for tbl in self._get_all_shard_table_names()
+            ]
+            query = " UNION ALL ".join(union_parts)
+            params = tuple(tsquery_string for _ in union_parts)
 
-        params = (tsquery_string,)
-        logger.info(
-            f"[search_by_keywords_TFIDF start:] user_name: {user_name}, query: {query}, params: {params}"
-        )
-        with self._get_connection() as conn, conn.cursor() as cursor:
-            cursor.execute(query, params)
-            results = cursor.fetchall()
-            output = []
-            for row in results:
-                oldid = row[0]
-                id_val = str(oldid)
-                if id_val.startswith('"') and id_val.endswith('"'):
-                    id_val = id_val[1:-1]
-                item = {"id": id_val}
-                if return_fields:
-                    properties = row[2]
-                    item.update(self._extract_fields_from_properties(properties, return_fields))
-                output.append(item)
-
-            logger.info(
-                f"[search_by_keywords_TFIDF end:] user_name: {user_name}, query: {query}, params: {params} recalled: {output}"
-            )
-            return output
+        logger.info("search_by_keywords_tfidf query=%s, params=%s", query, params)
+        try:
+            with self._get_connection() as conn, conn.cursor() as cursor:
+                cursor.execute(query, params)
+                results = cursor.fetchall()
+                output = []
+                for row in results:
+                    oldid = row[0]
+                    id_val = str(oldid)
+                    if id_val.startswith('"') and id_val.endswith('"'):
+                        id_val = id_val[1:-1]
+                    item = {"id": id_val}
+                    if return_fields:
+                        properties = row[2]
+                        item.update(self._extract_fields_from_properties(properties, return_fields))
+                    output.append(item)
+                logger.info("search_by_keywords_tfidf recalled %d results", len(output))
+                return output
+        except Exception as e:
+            logger.error("search_by_keywords_tfidf failed: %s", e, exc_info=True)
+            raise
 
     @timed
     def search_by_fulltext(
@@ -1474,21 +1426,13 @@ class PolarDBGraphDB(BaseGraphDB):
         return_fields: list[str] | None = None,
         **kwargs,
     ) -> list[dict]:
-        user_name = user_name if user_name else self._get_config_value("user_name")
-        tbl = self.get_memory_graph_table_name(user_name)
+
+        resolved_user_name = user_name
 
         start_time = time.perf_counter()
         logger.info(
-            " search_by_fulltext query_words=%s top_k=%s scope=%s status=%s threshold=%s search_filter=%s user_name=%s knowledgebase_ids=%s filter=%s",
-            query_words,
-            top_k,
-            scope,
-            status,
-            threshold,
-            search_filter,
-            user_name,
-            knowledgebase_ids,
-            filter,
+            "search_by_fulltext query_words=%s, top_k=%s, scope=%s, user_name=%s",
+            query_words, top_k, scope, resolved_user_name,
         )
         where_clauses = []
 
@@ -1506,7 +1450,7 @@ class PolarDBGraphDB(BaseGraphDB):
             )
 
         user_name_conditions = self._build_user_name_and_kb_ids_conditions_sql(
-            user_name=user_name,
+            user_name=resolved_user_name,
             knowledgebase_ids=knowledgebase_ids,
             default_user_name=self.config.user_name,
         )
@@ -1529,16 +1473,18 @@ class PolarDBGraphDB(BaseGraphDB):
                     )
 
         filter_conditions = self._build_filter_conditions_sql(filter)
-
         where_clauses.extend(filter_conditions)
         tsquery_string = " | ".join(query_words)
 
         where_clauses.append(f"{tsvector_field} @@ to_tsquery('{tsquery_config}', %s)")
 
-        select_cols = f"""ag_catalog.agtype_access_operator(m.properties, '"id"'::agtype) AS old_id,
-                ts_rank(m.{tsvector_field}, q.fq) AS rank"""
+        select_cols = (
+            f"ag_catalog.agtype_access_operator(m.properties, '\"id\"'::agtype) AS old_id,"
+            f" ts_rank(m.{tsvector_field}, q.fq) AS rank"
+        )
         if return_fields:
             select_cols += ", m.properties"
+
         where_with_q = []
         for w in where_clauses:
             if f"{tsvector_field} @@ to_tsquery(" in w:
@@ -1550,40 +1496,63 @@ class PolarDBGraphDB(BaseGraphDB):
                     .replace("ARRAY[properties,", "ARRAY[m.properties,")
                 )
         where_clause_cte = f"WHERE {' AND '.join(where_with_q)}" if where_with_q else ""
-        query = f"""
-            /*+ Set(max_parallel_workers_per_gather 0) */
-            WITH q AS (SELECT to_tsquery('{tsquery_config}', %s) AS fq)
-            SELECT {select_cols}
-            FROM {tbl}."Memory" m
-            CROSS JOIN q
-            {where_clause_cte}
-            LIMIT {top_k};
-        """
-        params = [tsquery_string]
-        logger.info("search_by_fulltext query=%s params=%s", query, params)
 
-        with self._get_connection() as conn, conn.cursor() as cursor:
-            cursor.execute(query, params)
-            results = cursor.fetchall()
-            output = []
-            for row in results:
-                oldid = row[0]
-                rank = row[1]
+        if resolved_user_name:
+            tbl = self.get_memory_graph_table_name(resolved_user_name)
+            query = (
+                f"/*+ Set(max_parallel_workers_per_gather 0) */"
+                f" WITH q AS (SELECT to_tsquery('{tsquery_config}', %s) AS fq)"
+                f" SELECT {select_cols}"
+                f" FROM {tbl}.\"Memory\" m CROSS JOIN q"
+                f" {where_clause_cte}"
+                f" LIMIT {top_k}"
+            )
+            params = [tsquery_string]
+        else:
+            shard_selects = []
+            for tbl in self._get_all_shard_table_names():
+                part = (
+                    f"SELECT {select_cols}"
+                    f" FROM {tbl}.\"Memory\" m CROSS JOIN q"
+                    f" {where_clause_cte}"
+                )
+                shard_selects.append(part)
+            inner_union = " UNION ALL ".join(shard_selects)
+            query = (
+                f"/*+ Set(max_parallel_workers_per_gather 0) */"
+                f" WITH q AS (SELECT to_tsquery('{tsquery_config}', %s) AS fq)"
+                f" {inner_union}"
+                f" LIMIT {top_k}"
+            )
+            params = [tsquery_string]
 
-                id_val = str(oldid)
-                if id_val.startswith('"') and id_val.endswith('"'):
-                    id_val = id_val[1:-1]
-                score_val = float(rank)
+        logger.info("search_by_fulltext query=%s, params=%s", query, params)
+        try:
+            with self._get_connection() as conn, conn.cursor() as cursor:
+                cursor.execute(query, params)
+                results = cursor.fetchall()
+                output = []
+                for row in results:
+                    oldid = row[0]
+                    rank = row[1]
 
-                if threshold is None or score_val >= threshold:
-                    item = {"id": id_val, "score": score_val}
-                    if return_fields:
-                        properties = row[2]
-                        item.update(self._extract_fields_from_properties(properties, return_fields))
-                    output.append(item)
-            elapsed = (time.perf_counter() - start_time) * 1000.0
-            logger.info("search_by_fulltext internal took %.1f ms", elapsed)
-            return output[:top_k]
+                    id_val = str(oldid)
+                    if id_val.startswith('"') and id_val.endswith('"'):
+                        id_val = id_val[1:-1]
+                    score_val = float(rank)
+
+                    if threshold is None or score_val >= threshold:
+                        item = {"id": id_val, "score": score_val}
+                        if return_fields:
+                            properties = row[2]
+                            item.update(self._extract_fields_from_properties(properties, return_fields))
+                        output.append(item)
+                elapsed = (time.perf_counter() - start_time) * 1000.0
+                logger.info("search_by_fulltext recalled %d results, took %.1f ms", len(output), elapsed)
+                return output[:top_k]
+        except Exception as e:
+            logger.error("search_by_fulltext failed: %s", e, exc_info=True)
+            raise
 
     @timed
     def search_by_embedding(
@@ -1734,7 +1703,6 @@ class PolarDBGraphDB(BaseGraphDB):
             f" get_by_metadata user_name:{user_name},filter: {filter}, knowledgebase_ids: {knowledgebase_ids},filters:{filters}"
         )
 
-        user_name = user_name if user_name else self._get_config_value("user_name")
         schema_raw = self._get_shard_schema_raw(user_name)
 
         where_conditions = []
@@ -1815,66 +1783,6 @@ class PolarDBGraphDB(BaseGraphDB):
         return ids
 
     @timed
-    def get_grouped_counts1(
-        self,
-        group_fields: list[str],
-        where_clause: str = "",
-        params: dict[str, Any] | None = None,
-        user_name: str | None = None,
-    ) -> list[dict[str, Any]]:
-        user_name = user_name if user_name else self.config.user_name
-        schema_raw = self._get_shard_schema_raw(user_name)
-        if not group_fields:
-            raise ValueError("group_fields cannot be empty")
-
-        final_params = params.copy() if params else {}
-        if not self.config.use_multi_db and (self.config.user_name or user_name):
-            user_clause = "n.user_name = $user_name"
-            final_params["user_name"] = user_name
-            if where_clause:
-                where_clause = where_clause.strip()
-                if where_clause.upper().startswith("WHERE"):
-                    where_clause += f" AND {user_clause}"
-                else:
-                    where_clause = f"WHERE {where_clause} AND {user_clause}"
-            else:
-                where_clause = f"WHERE {user_clause}"
-        group_fields_cypher = ", ".join([f"n.{field} AS {field}" for field in group_fields])
-        group_fields_cypher_polardb = ", ".join([f"{field} agtype" for field in group_fields])
-        query = f"""
-               SELECT * FROM cypher('{schema_raw}', $$
-                   MATCH (n:Memory)
-                   {where_clause}
-                   RETURN {group_fields_cypher}, COUNT(n) AS count1
-               $$ ) as ({group_fields_cypher_polardb}, count1 agtype);
-               """
-        try:
-            with self.connection.cursor() as cursor:
-                if params and isinstance(params, list):
-                    cursor.execute(query, final_params)
-                else:
-                    cursor.execute(query)
-                results = cursor.fetchall()
-
-                output = []
-                for row in results:
-                    group_values = {}
-                    for i, field in enumerate(group_fields):
-                        value = row[i]
-                        if hasattr(value, "value"):
-                            group_values[field] = value.value
-                        else:
-                            group_values[field] = str(value)
-                    count_value = row[-1]
-                    output.append({**group_values, "count": count_value})
-
-                return output
-
-        except Exception as e:
-            logger.error(f"Failed to get grouped counts: {e}", exc_info=True)
-            return []
-
-    @timed
     def get_grouped_counts(
         self,
         group_fields: list[str],
@@ -1882,40 +1790,43 @@ class PolarDBGraphDB(BaseGraphDB):
         params: dict[str, Any] | None = None,
         user_name: str | None = None,
     ) -> list[dict[str, Any]]:
+
         start_time = time.perf_counter()
         logger.info(
-            "get_grouped_counts by group_fields:%s,where_clause: %s,params:%s,user_name:%s",
-            group_fields,
-            where_clause,
-            params,
-            user_name,
+            "get_grouped_counts group_fields=%s, where_clause=%s, params=%s, user_name=%s",
+            group_fields, where_clause, params, user_name,
         )
         if not group_fields:
             raise ValueError("group_fields cannot be empty")
 
-        user_name = user_name if user_name else self._get_config_value("user_name")
-        tbl = self.get_memory_graph_table_name(user_name)
+        resolved_user_name = user_name
 
-        user_clause = f"ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = '\"{user_name}\"'::agtype"
-        if where_clause:
-            where_clause = where_clause.strip()
-            if where_clause.upper().startswith("WHERE"):
-                where_clause += f" AND {user_clause}"
+        effective_where = where_clause.strip() if where_clause else ""
+
+        if resolved_user_name:
+            user_clause = (
+                f"ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype)"
+                f" = '\"{resolved_user_name}\"'::agtype"
+            )
+            if effective_where:
+                if effective_where.upper().startswith("WHERE"):
+                    effective_where += f" AND {user_clause}"
+                else:
+                    effective_where = f"WHERE {effective_where} AND {user_clause}"
             else:
-                where_clause = f"WHERE {where_clause} AND {user_clause}"
-        else:
-            where_clause = f"WHERE {user_clause}"
+                effective_where = f"WHERE {user_clause}"
 
         if params and isinstance(params, dict):
             for key, value in params.items():
                 if isinstance(value, str):
                     value = f"'{value}'"
-                where_clause = where_clause.replace(f"${key}", str(value))
+                effective_where = effective_where.replace(f"${key}", str(value))
 
-        if "user_name = %s" in where_clause:
-            where_clause = where_clause.replace(
+        if "user_name = %s" in effective_where and resolved_user_name:
+            effective_where = effective_where.replace(
                 "user_name = %s",
-                f"ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = '\"{user_name}\"'::agtype",
+                f"ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype)"
+                f" = '\"{resolved_user_name}\"'::agtype",
             )
 
         cte_select_list = []
@@ -1926,20 +1837,35 @@ class PolarDBGraphDB(BaseGraphDB):
             cte_select_list.append(
                 f"ag_catalog.agtype_access_operator(properties, '\"{field}\"'::agtype) AS {alias}"
             )
+        cte_cols = ", ".join(cte_select_list)
         outer_select = ", ".join(f"{a}::text" for a in aliases)
         outer_group_by = ", ".join(aliases)
-        query = f"""
-            WITH t AS (
-                SELECT {", ".join(cte_select_list)}
-                FROM {tbl}."Memory"
-                {where_clause}
-                LIMIT 100
+
+        if resolved_user_name:
+            tbl = self.get_memory_graph_table_name(resolved_user_name)
+            query = (
+                f"WITH t AS ("
+                f" SELECT {cte_cols} FROM {tbl}.\"Memory\" {effective_where} LIMIT 100"
+                f") SELECT {outer_select}, count(*) AS count FROM t GROUP BY {outer_group_by}"
             )
-            SELECT {outer_select}, count(*) AS count
-            FROM t
-            GROUP BY {outer_group_by}
-        """
-        logger.info(f"get_grouped_counts query:{query},params:{params}")
+        else:
+            if not effective_where:
+                effective_where_inner = ""
+            elif effective_where.upper().startswith("WHERE"):
+                effective_where_inner = effective_where
+            else:
+                effective_where_inner = f"WHERE {effective_where}"
+
+            union_parts = [
+                f"SELECT {cte_cols} FROM {tbl}.\"Memory\" {effective_where_inner}"
+                for tbl in self._get_all_shard_table_names()
+            ]
+            query = (
+                f"WITH t AS ({' UNION ALL '.join(union_parts)} LIMIT 100)"
+                f" SELECT {outer_select}, count(*) AS count FROM t GROUP BY {outer_group_by}"
+            )
+
+        logger.info("get_grouped_counts query=%s", query)
 
         try:
             with self._get_connection() as conn, conn.cursor() as cursor:
@@ -1962,11 +1888,11 @@ class PolarDBGraphDB(BaseGraphDB):
                     output.append({**group_values, "count": int(count_value)})
 
                 elapsed = (time.perf_counter() - start_time) * 1000.0
-                logger.info("get_grouped_counts internal took %.1f ms", elapsed)
+                logger.info("get_grouped_counts took %.1f ms, results=%d", elapsed, len(output))
                 return output
 
         except Exception as e:
-            logger.error(f"Failed to get grouped counts: {e}", exc_info=True)
+            logger.error("get_grouped_counts failed: %s", e, exc_info=True)
             return []
 
     def deduplicate_nodes(self) -> None:
@@ -2001,7 +1927,7 @@ class PolarDBGraphDB(BaseGraphDB):
     @timed
     def export_graph(
         self,
-        user_name: str,
+        user_name: str | None = None,
         include_embedding: bool = False,
         user_id: str | None = None,
         page: int | None = None,
@@ -2011,12 +1937,14 @@ class PolarDBGraphDB(BaseGraphDB):
         status: list[str] | None = None,
         **kwargs,
     ) -> dict[str, Any]:
+
         start_time = time.perf_counter()
         logger.info(
-            f" export_graph include_embedding: {include_embedding}, user_name: {user_name}, user_id: {user_id}, page: {page}, page_size: {page_size}, filter: {filter}, memory_type: {memory_type}, status: {status}"
+            "export_graph include_embedding=%s, user_name=%s, user_id=%s, page=%s, page_size=%s, filter=%s, memory_type=%s, status=%s",
+            include_embedding, user_name, user_id, page, page_size, filter, memory_type, status,
         )
+        resolved_user_name = user_name
         user_id = user_id if user_id else self._get_config_value("user_id")
-        tbl = self.get_memory_graph_table_name(user_name)
 
         extracted_object_type: str | None = None
         extracted_mem_cube_id: str | None = None
@@ -2079,9 +2007,9 @@ class PolarDBGraphDB(BaseGraphDB):
             and extracted_mem_cube_id.strip() != ""
         )
 
-        if user_name and not has_object_type_filter:
+        if resolved_user_name and not has_object_type_filter:
             where_conditions.append(
-                f"ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = '\"{user_name}\"'::agtype"
+                f"ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = '\"{resolved_user_name}\"'::agtype"
             )
 
         if has_object_type_filter:
@@ -2126,7 +2054,7 @@ class PolarDBGraphDB(BaseGraphDB):
             )
 
         filter_conditions = self._build_filter_conditions_sql(filter_for_sql)
-        logger.info(f"[export_graph] filter_conditions: {filter_conditions}")
+        logger.info("export_graph filter_conditions=%s", filter_conditions)
         if filter_conditions:
             where_conditions.extend(filter_conditions)
 
@@ -2138,32 +2066,38 @@ class PolarDBGraphDB(BaseGraphDB):
         if use_pagination:
             pagination_clause = f"LIMIT {page_size} OFFSET {offset}"
 
-        order_clause = """
-            ORDER BY ag_catalog.agtype_access_operator(properties, '"created_at"'::agtype) DESC NULLS LAST,id DESC
-        """
-        count_query = f"""
-            SELECT COUNT(*) AS total_count
-            FROM {tbl}."Memory"
-            {where_clause}
-        """
-        if include_embedding:
-            data_query = f"""
-                SELECT id, properties, embedding
-                FROM {tbl}."Memory"
-                {where_clause}
-                {order_clause}
-                {pagination_clause}
-            """
+        order_clause = (
+            " ORDER BY ag_catalog.agtype_access_operator(properties, '\"created_at\"'::agtype)"
+            " DESC NULLS LAST, id DESC"
+        )
+
+        select_cols = "id, properties, embedding" if include_embedding else "id, properties"
+
+        if resolved_user_name:
+            tbl = self.get_memory_graph_table_name(resolved_user_name)
+            count_query = f"SELECT COUNT(*) AS total_count FROM {tbl}.\"Memory\" {where_clause}"
+            data_query = (
+                f"SELECT {select_cols} FROM {tbl}.\"Memory\""
+                f" {where_clause} {order_clause} {pagination_clause}"
+            )
         else:
-            data_query = f"""
-                SELECT id, properties
-                FROM {tbl}."Memory"
-                {where_clause}
-                {order_clause}
-                {pagination_clause}
-            """
-        logger.info(f"[export_graph nodes] count_query: {count_query}")
-        logger.info(f"[export_graph nodes] data_query: {data_query}")
+            count_parts = [
+                f"SELECT COUNT(*) AS cnt FROM {tbl}.\"Memory\" {where_clause}"
+                for tbl in self._get_all_shard_table_names()
+            ]
+            count_query = f"SELECT SUM(cnt) FROM ({' UNION ALL '.join(count_parts)}) t"
+
+            data_parts = [
+                f"SELECT {select_cols} FROM {tbl}.\"Memory\" {where_clause}"
+                for tbl in self._get_all_shard_table_names()
+            ]
+            data_query = (
+                f"SELECT {select_cols} FROM ({' UNION ALL '.join(data_parts)}) t"
+                f" {order_clause} {pagination_clause}"
+            )
+
+        logger.info("export_graph count_query=%s", count_query)
+        logger.info("export_graph data_query=%s", data_query)
 
         try:
             with self._get_connection() as conn, conn.cursor() as cursor:
@@ -2201,10 +2135,10 @@ class PolarDBGraphDB(BaseGraphDB):
                 nodes.append(self._parse_node(properties))
 
         except Exception as e:
-            logger.error(f"[EXPORT GRAPH - NODES] Exception: {e}", exc_info=True)
-            raise RuntimeError(f"[EXPORT GRAPH - NODES] Exception: {e}") from e
+            logger.error("export_graph nodes failed: %s", e, exc_info=True)
+            raise RuntimeError(f"export_graph nodes failed: {e}") from e
         elapsed = (time.perf_counter() - start_time) * 1000.0
-        logger.info("export internal took %.1f ms", elapsed)
+        logger.info("export_graph took %.1f ms, total_nodes=%d", elapsed, total_nodes)
 
         edges = []
         return {
@@ -2235,23 +2169,24 @@ class PolarDBGraphDB(BaseGraphDB):
     def get_all_memory_items(
         self,
         scope: str,
-        user_name: str,
+        user_name: str | None = None,
         include_embedding: bool = False,
         filter: dict | None = None,
         knowledgebase_ids: list | None = None,
         status: str | None = None,
     ) -> list[dict]:
+
         logger.info(
-            f"[get_all_memory_items] user_name: {user_name},filter: {filter}, knowledgebase_ids: {knowledgebase_ids}, status: {status},scope:{scope}"
+            "get_all_memory_items scope=%s, user_name=%s, filter=%s, knowledgebase_ids=%s, status=%s",
+            scope, user_name, filter, knowledgebase_ids, status,
         )
 
-        user_name = user_name if user_name else self._get_config_value("user_name")
-        schema_raw = self._get_shard_schema_raw(user_name)
+        resolved_user_name = user_name
         if scope not in {"WorkingMemory", "LongTermMemory", "UserMemory", "OuterMemory"}:
             raise ValueError(f"Unsupported memory type scope: {scope}")
 
         user_name_conditions = self._build_user_name_and_kb_ids_conditions_cypher(
-            user_name=user_name,
+            user_name=resolved_user_name,
             knowledgebase_ids=knowledgebase_ids,
             default_user_name=self._get_config_value("user_name"),
         )
@@ -2265,47 +2200,57 @@ class PolarDBGraphDB(BaseGraphDB):
             user_name_where = ""
 
         filter_where_clause = self._build_filter_conditions_cypher(filter)
-        logger.info(f"[get_all_memory_items] filter_where_clause: {filter_where_clause}")
+        logger.info("get_all_memory_items filter_where_clause=%s", filter_where_clause)
+
+        where_parts = [f"n.memory_type = '{scope}'"]
+        if status:
+            where_parts.append(f"n.status = '{status}'")
+        if user_name_where:
+            where_parts.append(user_name_where)
+        if filter_where_clause:
+            where_clause = " AND ".join(where_parts) + filter_where_clause
+        else:
+            where_clause = " AND ".join(where_parts)
+
+        if resolved_user_name:
+            shard_schemas = [self._get_shard_schema_raw(resolved_user_name)]
+        else:
+            shard_schemas = [f"{self.db_name}_graph_{i}" for i in range(self._shard_count)]
 
         if include_embedding:
-            where_parts = [f"n.memory_type = '{scope}'"]
-            if status:
-                where_parts.append(f"n.status = '{status}'")
-            if user_name_where:
-                where_parts.append(user_name_where)
-            if filter_where_clause:
-                where_clause = " AND ".join(where_parts) + filter_where_clause
+            if len(shard_schemas) == 1:
+                sr = shard_schemas[0]
+                cypher_query = (
+                    f"WITH t AS ("
+                    f" SELECT * FROM cypher('{sr}', $$"
+                    f" MATCH (n:Memory) WHERE {where_clause}"
+                    f" RETURN id(n) as id1, n LIMIT 100"
+                    f" $$) AS (id1 agtype, n agtype)"
+                    f") SELECT m.embedding, t.n FROM t, {sr}.\"Memory\" m WHERE t.id1 = m.id"
+                )
             else:
-                where_clause = " AND ".join(where_parts)
+                union_parts = []
+                for sr in shard_schemas:
+                    part = (
+                        f"SELECT m.embedding, t.n FROM ("
+                        f" SELECT * FROM cypher('{sr}', $$"
+                        f" MATCH (n:Memory) WHERE {where_clause}"
+                        f" RETURN id(n) as id1, n LIMIT 100"
+                        f" $$) AS (id1 agtype, n agtype)"
+                        f") t, {sr}.\"Memory\" m WHERE t.id1 = m.id"
+                    )
+                    union_parts.append(part)
+                cypher_query = " UNION ALL ".join(union_parts)
 
-            cypher_query = f"""
-                   WITH t as (
-                       SELECT * FROM cypher('{schema_raw}', $$
-                       MATCH (n:Memory)
-                       WHERE {where_clause}
-                       RETURN id(n) as id1,n
-                       LIMIT 100
-                       $$) AS (id1 agtype,n agtype)
-                   )
-                   SELECT
-                       m.embedding,
-                       t.n
-                   FROM t,
-                        {schema_raw}."Memory" m
-                   WHERE t.id1 = m.id;
-                   """
             nodes = []
             node_ids = set()
-            logger.info(f"[get_all_memory_items] cypher_query: {cypher_query}")
+            logger.info("get_all_memory_items cypher_query=%s", cypher_query)
             try:
                 with self._get_connection() as conn, conn.cursor() as cursor:
                     cursor.execute(cypher_query)
                     results = cursor.fetchall()
 
                     for row in results:
-                        """
-                            if isinstance(row, (list, tuple)) and len(row) >= 2:
-                            """
                         if isinstance(row, list | tuple) and len(row) >= 2:
                             embedding_val, node_val = row[0], row[1]
                         else:
@@ -2319,139 +2264,43 @@ class PolarDBGraphDB(BaseGraphDB):
                                 node_ids.add(node_id)
 
             except Exception as e:
-                logger.warning(f"Failed to get memories: {e}", exc_info=True)
+                logger.warning("get_all_memory_items failed: %s", e, exc_info=True)
 
             return nodes
         else:
-            where_parts = [f"n.memory_type = '{scope}'"]
-            if status:
-                where_parts.append(f"n.status = '{status}'")
-            if user_name_where:
-                where_parts.append(user_name_where)
-            if filter_where_clause:
-                where_clause = " AND ".join(where_parts) + filter_where_clause
+            if len(shard_schemas) == 1:
+                sr = shard_schemas[0]
+                cypher_query = (
+                    f"SELECT * FROM cypher('{sr}', $$"
+                    f" MATCH (n:Memory) WHERE {where_clause}"
+                    f" RETURN properties(n) as props LIMIT 100"
+                    f" $$) AS (nprops agtype)"
+                )
             else:
-                where_clause = " AND ".join(where_parts)
-
-            cypher_query = f"""
-                   SELECT * FROM cypher('{schema_raw}', $$
-                   MATCH (n:Memory)
-                   WHERE {where_clause}
-                   RETURN properties(n) as props
-                   LIMIT 100
-                   $$) AS (nprops agtype)
-               """
+                union_parts = []
+                for sr in shard_schemas:
+                    part = (
+                        f"SELECT * FROM cypher('{sr}', $$"
+                        f" MATCH (n:Memory) WHERE {where_clause}"
+                        f" RETURN properties(n) as props LIMIT 100"
+                        f" $$) AS (nprops agtype)"
+                    )
+                    union_parts.append(part)
+                cypher_query = " UNION ALL ".join(union_parts)
 
             nodes = []
-            logger.info(f"[get_all_memory_items] cypher_query: {cypher_query}")
+            logger.info("get_all_memory_items cypher_query=%s", cypher_query)
             try:
                 with self._get_connection() as conn, conn.cursor() as cursor:
                     cursor.execute(cypher_query)
                     results = cursor.fetchall()
 
                     for row in results:
-                        """
-                            if isinstance(row[0], str):
-                                memory_data = json.loads(row[0])
-                            else:
-                                memory_data = row[0]  # 如果已经是字典，直接使用
-                            nodes.append(self._parse_node(memory_data))
-                            """
                         memory_data = json.loads(row[0]) if isinstance(row[0], str) else row[0]
                         nodes.append(self._parse_node(memory_data))
 
             except Exception as e:
-                logger.error(f"Failed to get memories: {e}", exc_info=True)
-
-            return nodes
-
-    def get_all_memory_items_old(
-        self, scope: str, include_embedding: bool = False, user_name: str | None = None
-    ) -> list[dict]:
-        user_name = user_name if user_name else self._get_config_value("user_name")
-        schema_raw = self._get_shard_schema_raw(user_name)
-        if scope not in {"WorkingMemory", "LongTermMemory", "UserMemory", "OuterMemory"}:
-            raise ValueError(f"Unsupported memory type scope: {scope}")
-
-        if include_embedding:
-            cypher_query = f"""
-                WITH t as (
-                    SELECT * FROM cypher('{schema_raw}', $$
-                    MATCH (n:Memory)
-                    WHERE n.memory_type = '{scope}' AND n.user_name = '{user_name}'
-                    RETURN id(n) as id1,n
-                    LIMIT 100
-                    $$) AS (id1 agtype,n agtype)
-                )
-                SELECT
-                    m.embedding,
-                    t.n
-                FROM t,
-                     {schema_raw}."Memory" m
-                WHERE t.id1 = m.id;
-                """
-        else:
-            cypher_query = f"""
-                SELECT * FROM cypher('{schema_raw}', $$
-                MATCH (n:Memory)
-                WHERE n.memory_type = '{scope}' AND n.user_name = '{user_name}'
-                RETURN properties(n) as props
-                LIMIT 100
-                $$) AS (nprops agtype)
-            """
-
-            nodes = []
-            try:
-                with self.connection.cursor() as cursor:
-                    cursor.execute(cypher_query)
-                    results = cursor.fetchall()
-
-                    for row in results:
-                        node_agtype = row[0]
-
-                        if isinstance(node_agtype, str):
-                            try:
-                                json_str = node_agtype.replace("::vertex", "")
-                                node_data = json.loads(json_str)
-
-                                if isinstance(node_data, dict) and "properties" in node_data:
-                                    properties = node_data["properties"]
-                                    parsed_node_data = {
-                                        "id": properties.get("id", ""),
-                                        "memory": properties.get("memory", ""),
-                                        "metadata": properties,
-                                    }
-
-                                    if include_embedding and "embedding" in properties:
-                                        parsed_node_data["embedding"] = properties["embedding"]
-
-                                    nodes.append(self._parse_node(parsed_node_data))
-                                    logger.debug(
-                                        f"[get_all_memory_items] Parsed node successfully: {properties.get('id', '')}"
-                                    )
-                                else:
-                                    logger.warning(f"Invalid node data format: {node_data}")
-
-                            except (json.JSONDecodeError, TypeError) as e:
-                                logger.error(f"JSON parsing failed: {e}")
-                        elif node_agtype and hasattr(node_agtype, "value"):
-                            node_props = node_agtype.value
-                            if isinstance(node_props, dict):
-                                node_data = {
-                                    "id": node_props.get("id", ""),
-                                    "memory": node_props.get("memory", ""),
-                                    "metadata": node_props,
-                                }
-
-                                if include_embedding and "embedding" in node_props:
-                                    node_data["embedding"] = node_props["embedding"]
-
-                                nodes.append(self._parse_node(node_data))
-                        else:
-                            logger.warning(f"Unknown data format: {type(node_agtype)}")
-
-            except Exception as e:
-                logger.error(f"Failed to get memories: {e}", exc_info=True)
+                logger.error("get_all_memory_items failed: %s", e, exc_info=True)
 
             return nodes
 
@@ -2459,8 +2308,12 @@ class PolarDBGraphDB(BaseGraphDB):
     def get_structure_optimization_candidates(
         self, scope: str, include_embedding: bool = False, user_name: str | None = None
     ) -> list[dict]:
-        user_name = user_name if user_name else self._get_config_value("user_name")
-        schema_raw = self._get_shard_schema_raw(user_name)
+
+        logger.info(
+            "get_structure_optimization_candidates scope=%s, include_embedding=%s, user_name=%s",
+            scope, include_embedding, user_name,
+        )
+        resolved_user_name = user_name
 
         if include_embedding:
             return_fields = "id(n) as id1,n"
@@ -2512,32 +2365,37 @@ class PolarDBGraphDB(BaseGraphDB):
             ]
             return_fields_agtype = ", ".join([f"{field} agtype" for field in fields])
 
-        cypher_query = f"""
-            SELECT * FROM cypher('{schema_raw}', $$
-            MATCH (n:Memory)
-            WHERE n.memory_type = '{scope}'
-              AND n.status = 'activated'
-              AND n.user_name = '{user_name}'
-            OPTIONAL MATCH (n)-[:PARENT]->(c:Memory)
-            OPTIONAL MATCH (p:Memory)-[:PARENT]->(n)
-            WITH n, c, p
-            WHERE c IS NULL AND p IS NULL
-            RETURN {return_fields}
-            $$) AS ({return_fields_agtype})
-        """
-        if include_embedding:
-            cypher_query = f"""
-                    WITH t as (
-                        {cypher_query}
-                    )
-                        SELECT
-                        m.embedding,
-                        t.n
-                        FROM t,
-                             {schema_raw}."Memory" m
-                        WHERE t.id1 = m.id
-                    """
-        logger.info(f"[get_structure_optimization_candidates] query: {cypher_query}")
+        if resolved_user_name:
+            shard_schemas = [self._get_shard_schema_raw(resolved_user_name)]
+            user_filter = f"AND n.user_name = '{resolved_user_name}'"
+        else:
+            shard_schemas = [f"{self.db_name}_graph_{i}" for i in range(self._shard_count)]
+            user_filter = ""
+
+        def _build_shard_query(sr: str) -> str:
+            base = (
+                f"SELECT * FROM cypher('{sr}', $$"
+                f" MATCH (n:Memory)"
+                f" WHERE n.memory_type = '{scope}' AND n.status = 'activated' {user_filter}"
+                f" OPTIONAL MATCH (n)-[:PARENT]->(c:Memory)"
+                f" OPTIONAL MATCH (p:Memory)-[:PARENT]->(n)"
+                f" WITH n, c, p WHERE c IS NULL AND p IS NULL"
+                f" RETURN {return_fields}"
+                f" $$) AS ({return_fields_agtype})"
+            )
+            if include_embedding:
+                return (
+                    f"SELECT m.embedding, t.n FROM ({base}) t,"
+                    f" {sr}.\"Memory\" m WHERE t.id1 = m.id"
+                )
+            return base
+
+        if len(shard_schemas) == 1:
+            cypher_query = _build_shard_query(shard_schemas[0])
+        else:
+            cypher_query = " UNION ALL ".join(_build_shard_query(sr) for sr in shard_schemas)
+
+        logger.info("get_structure_optimization_candidates query=%s", cypher_query)
 
         candidates = []
         node_ids = set()
@@ -2611,7 +2469,7 @@ class PolarDBGraphDB(BaseGraphDB):
                             logger.error(f"Failed to parse node: {e}")
 
         except Exception as e:
-            logger.error(f"Failed to get structure optimization candidates: {e}", exc_info=True)
+            logger.error("get_structure_optimization_candidates failed: %s", e, exc_info=True)
 
         return candidates
 
@@ -3257,29 +3115,34 @@ class PolarDBGraphDB(BaseGraphDB):
 
     @timed
     def import_graph(self, data: dict[str, Any], user_name: str | None = None) -> None:
-        user_name = user_name if user_name else self._get_config_value("user_name")
+
+        logger.info("import_graph user_name=%s, nodes=%d, edges=%d",
+                     user_name, len(data.get("nodes", [])), len(data.get("edges", [])))
+        resolved_user_name = user_name
 
         for node in data.get("nodes", []):
             try:
                 id, memory, metadata = _compose_node(node)
-                metadata["user_name"] = user_name
+                node_user_name = resolved_user_name or metadata.get("user_name")
+                if node_user_name:
+                    metadata["user_name"] = node_user_name
                 metadata = _prepare_node_metadata(metadata)
                 metadata.update({"id": id, "memory": memory})
 
-                self.add_node(id, memory, metadata)
+                self.add_node(id, memory, metadata, user_name=node_user_name)
 
             except Exception as e:
-                logger.error(f"Fail to load node: {node}, error: {e}")
+                logger.error("import_graph fail to load node: %s, error: %s", node.get("id", "unknown"), e)
 
         for edge in data.get("edges", []):
             try:
                 source_id, target_id = edge["source"], edge["target"]
                 edge_type = edge["type"]
 
-                self.add_edge(source_id, target_id, edge_type, user_name)
+                self.add_edge(source_id, target_id, edge_type, resolved_user_name)
 
             except Exception as e:
-                logger.error(f"Fail to load edge: {edge}, error: {e}")
+                logger.error("import_graph fail to load edge: %s, error: %s", edge, e)
 
     def _build_cypher_edge_body(
         self, id_esc: str, user_esc: str | None, type: str, type_filter: str, direction: str
@@ -3345,9 +3208,10 @@ class PolarDBGraphDB(BaseGraphDB):
     def get_edges(
         self, id: str, type: str = "ANY", direction: str = "ANY", user_name: str | None = None
     ) -> list[dict[str, str]]:
+
         start_time = time.perf_counter()
         logger.info(f" get_edges id:{id},type:{type},direction:{direction},user_name:{user_name}")
-        resolved_user_name = user_name if user_name else self._get_config_value("user_name")
+        resolved_user_name = user_name
         if direction not in ("OUTGOING", "INCOMING", "ANY"):
             raise ValueError("Invalid direction. Must be 'OUTGOING', 'INCOMING', or 'ANY'.")
 
@@ -4207,11 +4071,9 @@ class PolarDBGraphDB(BaseGraphDB):
     ) -> int:
         batch_start_time = time.time()
         logger.info(
-            f" delete_node_by_prams memory_ids: {memory_ids}, file_ids: {file_ids}, filter: {filter}, writable_cube_ids: {writable_cube_ids}"
+            "delete_node_by_prams memory_ids=%s, file_ids=%s, filter=%s, writable_cube_ids=%s",
+            memory_ids, file_ids, filter, writable_cube_ids,
         )
-
-        user_name = writable_cube_ids[0] if writable_cube_ids else None
-        tbl = self.get_memory_graph_table_name(user_name)
 
         user_name_conditions = []
         if writable_cube_ids and len(writable_cube_ids) > 0:
@@ -4223,71 +4085,68 @@ class PolarDBGraphDB(BaseGraphDB):
         filter_conditions = []
         if filter:
             filter_conditions = self._build_filter_conditions_sql(filter)
-            logger.info(f"[delete_node_by_prams] filter_conditions: {filter_conditions}")
+            logger.info("delete_node_by_prams filter_conditions=%s", filter_conditions)
 
         if not memory_ids and not file_ids and not filter_conditions:
-            logger.warning(
-                "[delete_node_by_prams] No nodes to delete (no memory_ids, file_ids, or filter provided)"
-            )
+            logger.warning("delete_node_by_prams no nodes to delete (no memory_ids, file_ids, or filter)")
             return 0
+
+        where_conditions = []
+
+        if memory_ids:
+            id_conditions = []
+            for node_id in memory_ids:
+                id_conditions.append(
+                    f"ag_catalog.agtype_access_operator(properties, '\"id\"'::agtype) = '\"{node_id}\"'::agtype"
+                )
+            where_conditions.append(f"({' OR '.join(id_conditions)})")
+
+        if file_ids:
+            file_id_conditions = []
+            for file_id in file_ids:
+                file_id_conditions.append(
+                    f"agtype_in_operator(agtype_access_operator(VARIADIC ARRAY[properties, '\"file_ids\"'::agtype]), '\"{file_id}\"'::agtype)"
+                )
+            where_conditions.append(f"({' OR '.join(file_id_conditions)})")
+
+        if filter_conditions:
+            where_conditions.extend(filter_conditions)
+
+        if user_name_conditions:
+            user_name_where = " OR ".join(user_name_conditions)
+            where_conditions.append(f"({user_name_where})")
+
+        if not where_conditions:
+            logger.warning("delete_node_by_prams no WHERE conditions to delete")
+            return 0
+
+        where_clause = " AND ".join(where_conditions)
+
+        if writable_cube_ids:
+            shard_set = set()
+            for cube_id in writable_cube_ids:
+                shard_set.add(self.get_memory_graph_table_name(cube_id))
+            target_tables = list(shard_set)
+        else:
+            target_tables = self._get_all_shard_table_names()
 
         total_deleted_count = 0
         try:
             with self._get_connection() as conn, conn.cursor() as cursor:
-                where_conditions = []
-
-                if memory_ids:
-                    logger.info(f"[delete_node_by_prams] Processing {len(memory_ids)} memory_ids")
-                    id_conditions = []
-                    for node_id in memory_ids:
-                        id_conditions.append(
-                            f"ag_catalog.agtype_access_operator(properties, '\"id\"'::agtype) = '\"{node_id}\"'::agtype"
-                        )
-                    where_conditions.append(f"({' OR '.join(id_conditions)})")
-
-                if file_ids:
-                    logger.info(f"[delete_node_by_prams] Processing {len(file_ids)} file_ids")
-                    file_id_conditions = []
-                    for file_id in file_ids:
-                        file_id_conditions.append(
-                            f"agtype_in_operator(agtype_access_operator(VARIADIC ARRAY[properties, '\"file_ids\"'::agtype]), '\"{file_id}\"'::agtype)"
-                        )
-                    where_conditions.append(f"({' OR '.join(file_id_conditions)})")
-
-                if filter_conditions:
-                    logger.info("[delete_node_by_prams] Processing filter conditions")
-                    where_conditions.extend(filter_conditions)
-
-                if user_name_conditions:
-                    user_name_where = " OR ".join(user_name_conditions)
-                    where_conditions.append(f"({user_name_where})")
-
-                if not where_conditions:
-                    logger.warning("[delete_node_by_prams] No WHERE conditions to delete")
-                    return 0
-
-                where_clause = " AND ".join(where_conditions)
-
-                delete_query = f"""
-                    DELETE FROM {tbl}."Memory"
-                    WHERE {where_clause}
-                """
-                logger.info(f" delete_node_by_prams delete_query: {delete_query}")
-
-                cursor.execute(delete_query)
-                deleted_count = cursor.rowcount
-                total_deleted_count = deleted_count
-
-                logger.info(f"[delete_node_by_prams] Deleted {deleted_count} nodes")
+                for tbl in target_tables:
+                    delete_query = f"DELETE FROM {tbl}.\"Memory\" WHERE {where_clause}"
+                    logger.info("delete_node_by_prams delete_query=%s", delete_query)
+                    cursor.execute(delete_query)
+                    total_deleted_count += cursor.rowcount
 
                 elapsed_time = (time.time() - batch_start_time) * 1000.0
                 logger.info(
-                    f"delete_node_by_prams Deletion completed successfully in {elapsed_time:.2f}s, total deleted {total_deleted_count} nodes"
+                    "delete_node_by_prams completed in %.2fms, total deleted %d nodes",
+                    elapsed_time, total_deleted_count,
                 )
         except Exception as e:
-            logger.error(f"[delete_node_by_prams] Failed to delete nodes: {e}", exc_info=True)
+            logger.error("delete_node_by_prams failed: %s", e, exc_info=True)
             raise
-        logger.info(f"[delete_node_by_prams] Successfully deleted {total_deleted_count} nodes")
         return total_deleted_count
 
     @timed
