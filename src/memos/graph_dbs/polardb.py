@@ -236,24 +236,18 @@ class PolarDBGraphDB(BaseGraphDB):
                     logger.warning("Failed to return connection to pool: %s", e)
             self._semaphore.release()
 
-    def get_memory_graph_table_name(self, user_name: str | None) -> str:
-        shard_count = self._shard_count
-        if not user_name:
-            return f'"{self.db_name}_graph_0"'
-        hash_val = int(hashlib.md5(user_name.encode("utf-8")).hexdigest(), 16)
-        shard_id = hash_val % shard_count
-        return f'"{self.db_name}_graph_{shard_id}"'
-
-    def _get_all_shard_table_names(self) -> list[str]:
-        return [f'"{self.db_name}_graph_{i}"' for i in range(self._shard_count)]
-
     def _get_shard_schema_raw(self, user_name: str | None) -> str:
-        shard_count = self._shard_count
         if not user_name:
             return f"{self.db_name}_graph_0"
         hash_val = int(hashlib.md5(user_name.encode("utf-8")).hexdigest(), 16)
-        shard_id = hash_val % shard_count
+        shard_id = hash_val % self._shard_count
         return f"{self.db_name}_graph_{shard_id}"
+
+    def get_memory_graph_table_name(self, user_name: str | None) -> str:
+        return f'"{self._get_shard_schema_raw(user_name)}"'
+
+    def _get_all_shard_table_names(self) -> list[str]:
+        return [f'"{self.db_name}_graph_{i}"' for i in range(self._shard_count)]
 
     def _ensure_database_exists(self):
         try:
