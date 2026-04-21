@@ -93,8 +93,8 @@ class PolarDBGraphDB(BaseGraphDB):
             port = config.get("port")
             user = config.get("user")
             password = config.get("password")
-            maxconn = config.get("maxconn", 100)
-            self._connection_wait_timeout = config.get("connection_wait_timeout", 60)
+            maxconn = config.get("maxconn", 10)
+            self._connection_wait_timeout = config.get("connection_wait_timeout", 30)
             self._skip_connection_health_check = config.get("skip_connection_health_check", False)
             self._warm_up_on_startup_by_full = config.get("warm_up_on_startup_by_full", False)
             self._warm_up_on_startup_by_all = config.get("warm_up_on_startup_by_all", False)
@@ -105,8 +105,8 @@ class PolarDBGraphDB(BaseGraphDB):
             port = config.port
             user = config.user
             password = config.password
-            maxconn = config.maxconn if hasattr(config, "maxconn") else 100
-            self._connection_wait_timeout = getattr(config, "connection_wait_timeout", 60)
+            maxconn = config.maxconn if hasattr(config, "maxconn") else 10
+            self._connection_wait_timeout = getattr(config, "connection_wait_timeout", 30)
             self._skip_connection_health_check = getattr(
                 config, "skip_connection_health_check", False
             )
@@ -117,9 +117,16 @@ class PolarDBGraphDB(BaseGraphDB):
             )
 
         logger.info(
-            f" db_name: {self.db_name} maxconn: {maxconn} connection_wait_timeout: {self._connection_wait_timeout}s"
+            f" polardb init db_name: {self.db_name} && maxconn: {maxconn} && connection_wait_timeout: {self._connection_wait_timeout}s"
         )
 
+        self._shard_count = int(
+            config.get("shard_count", 100)
+            if isinstance(config, dict)
+            else getattr(config, "shard_count", 100)
+        )
+        shard_schemas = ",".join(f"{self.db_name}_graph_{i}" for i in range(self._shard_count))
+        self._all_shards_search_path = f'{self.db_name}_graph,{shard_schemas},ag_catalog,"$user",public'
         self.connection_pool = psycopg2.pool.ThreadedConnectionPool(
             minconn=1,
             maxconn=maxconn,
@@ -133,17 +140,8 @@ class PolarDBGraphDB(BaseGraphDB):
             keepalives_interval=15,
             keepalives_count=5,
             keepalives=1,
-            # options=f"-c search_path={self.db_name}_graph_0,ag_catalog,$user,public",
+            options=f"-c search_path={self._all_shards_search_path}",
         )
-
-        self._shard_count = int(
-            config.get("shard_count", 100)
-            if isinstance(config, dict)
-            else getattr(config, "shard_count", 100)
-        )
-
-        shard_schemas = ",".join(f"{self.db_name}_graph_{i}" for i in range(self._shard_count))
-        self._all_shards_search_path = f'{shard_schemas},ag_catalog,"$user",public'
 
         self._semaphore = threading.BoundedSemaphore(maxconn)
 
