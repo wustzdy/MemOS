@@ -903,15 +903,7 @@ class PolarDBGraphDB(BaseGraphDB):
                             properties["embedding"] = embedding
                         except (json.JSONDecodeError, TypeError):
                             logger.warning("get_nodes failed to parse embedding for node %s", node_id)
-                    nodes.append(
-                        self._parse_node(
-                            {
-                                "id": properties.get("id", node_id),
-                                "memory": properties.get("memory", ""),
-                                "metadata": properties,
-                            }
-                        )
-                    )
+                    nodes.append(self._parse_node(properties))
                 return nodes
         except Exception as e:
             logger.error("get_nodes failed: %s", e, exc_info=True)
