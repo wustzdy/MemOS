@@ -126,7 +126,9 @@ class PolarDBGraphDB(BaseGraphDB):
             else getattr(config, "shard_count", 100)
         )
         shard_schemas = ",".join(f"{self.db_name}_graph_{i}" for i in range(self._shard_count))
-        self._all_shards_search_path = f'{self.db_name}_graph,{shard_schemas},ag_catalog,"$user",public'
+        self._all_shards_search_path = (
+            f'{self.db_name}_graph,{shard_schemas},ag_catalog,"$user",public'
+        )
         self.connection_pool = psycopg2.pool.ThreadedConnectionPool(
             minconn=1,
             maxconn=maxconn,
@@ -328,20 +330,21 @@ class PolarDBGraphDB(BaseGraphDB):
             logger.warning(f"Failed to create indexes: {e}")
 
     def get_memory_count(self, memory_type: str, user_name: str | None = None) -> int:
-
-        logger.info("get_memory_count request: memory_type=%s, user_name=%s", memory_type, user_name)
+        logger.info(
+            "get_memory_count request: memory_type=%s, user_name=%s", memory_type, user_name
+        )
         type_param = self.format_param_value(memory_type)
         if user_name:
             tbl = self.get_memory_graph_table_name(user_name)
             query = (
-                f"SELECT COUNT(*) FROM {tbl}.\"Memory\""
+                f'SELECT COUNT(*) FROM {tbl}."Memory"'
                 f" WHERE ag_catalog.agtype_access_operator(properties, '\"memory_type\"'::agtype) = %s::agtype"
                 f" AND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
             )
             params = [type_param, self.format_param_value(user_name)]
         else:
             union_parts = [
-                f"SELECT COUNT(*) AS cnt FROM {tbl}.\"Memory\""
+                f'SELECT COUNT(*) AS cnt FROM {tbl}."Memory"'
                 f" WHERE ag_catalog.agtype_access_operator(properties, '\"memory_type\"'::agtype) = %s::agtype"
                 for tbl in self._get_all_shard_table_names()
             ]
@@ -360,13 +363,12 @@ class PolarDBGraphDB(BaseGraphDB):
 
     @timed
     def node_not_exist(self, scope: str, user_name: str | None = None) -> int:
-
         logger.info(" node_not_exist request: scope=%s, user_name=%s", scope, user_name)
         scope_param = self.format_param_value(scope)
         if user_name:
             tbl = self.get_memory_graph_table_name(user_name)
             query = (
-                f"SELECT id FROM {tbl}.\"Memory\""
+                f'SELECT id FROM {tbl}."Memory"'
                 f" WHERE ag_catalog.agtype_access_operator(properties, '\"memory_type\"'::agtype) = %s::agtype"
                 f" AND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
                 f" LIMIT 1"
@@ -374,13 +376,13 @@ class PolarDBGraphDB(BaseGraphDB):
             params = [scope_param, self.format_param_value(user_name)]
         else:
             union_parts = [
-                f"SELECT id FROM {tbl}.\"Memory\""
+                f'SELECT id FROM {tbl}."Memory"'
                 f" WHERE ag_catalog.agtype_access_operator(properties, '\"memory_type\"'::agtype) = %s::agtype"
                 for tbl in self._get_all_shard_table_names()
             ]
             query = " UNION ALL ".join(union_parts) + " LIMIT 1"
             params = [scope_param] * len(union_parts)
-        logger.info("node_not_exist query=%s, params=%s", query,params)
+        logger.info("node_not_exist query=%s, params=%s", query, params)
         try:
             with self._get_connection() as conn, conn.cursor() as cursor:
                 cursor.execute(query, params)
@@ -394,7 +396,6 @@ class PolarDBGraphDB(BaseGraphDB):
     def remove_oldest_memory(
         self, memory_type: str, keep_latest: int, user_name: str | None = None
     ) -> None:
-
         start_time = time.perf_counter()
         logger.info(
             "remove_oldest_memory by memory_type:%s,keep_latest: %s,user_name:%s",
@@ -416,22 +417,30 @@ class PolarDBGraphDB(BaseGraphDB):
                 for tbl in shard_tables:
                     if user_name:
                         select_query = (
-                            f"SELECT id FROM {tbl}.\"Memory\""
+                            f'SELECT id FROM {tbl}."Memory"'
                             f" WHERE ag_catalog.agtype_access_operator(properties, '\"memory_type\"'::agtype) = %s::agtype"
                             f" AND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
                             f" ORDER BY ag_catalog.agtype_access_operator(properties, '\"updated_at\"'::agtype) DESC"
                             f" OFFSET %s"
                         )
-                        select_params = [type_param, self.format_param_value(user_name), keep_latest]
+                        select_params = [
+                            type_param,
+                            self.format_param_value(user_name),
+                            keep_latest,
+                        ]
                     else:
                         select_query = (
-                            f"SELECT id FROM {tbl}.\"Memory\""
+                            f'SELECT id FROM {tbl}."Memory"'
                             f" WHERE ag_catalog.agtype_access_operator(properties, '\"memory_type\"'::agtype) = %s::agtype"
                             f" ORDER BY ag_catalog.agtype_access_operator(properties, '\"updated_at\"'::agtype) DESC"
                             f" OFFSET %s"
                         )
                         select_params = [type_param, keep_latest]
-                    logger.info("remove_oldest_memory select_query=%s, select_params=%s", select_query, select_params)
+                    logger.info(
+                        "remove_oldest_memory select_query=%s, select_params=%s",
+                        select_query,
+                        select_params,
+                    )
                     cursor.execute(select_query, select_params)
                     ids_to_delete = [row[0] for row in cursor.fetchall()]
 
@@ -439,15 +448,22 @@ class PolarDBGraphDB(BaseGraphDB):
                         continue
 
                     placeholders = ",".join(["%s"] * len(ids_to_delete))
-                    delete_query = f"DELETE FROM {tbl}.\"Memory\" WHERE id IN ({placeholders})"
-                    logger.info("remove_oldest_memory delete_query=%s, ids_to_delete=%s", delete_query, ids_to_delete)
+                    delete_query = f'DELETE FROM {tbl}."Memory" WHERE id IN ({placeholders})'
+                    logger.info(
+                        "remove_oldest_memory delete_query=%s, ids_to_delete=%s",
+                        delete_query,
+                        ids_to_delete,
+                    )
                     cursor.execute(delete_query, ids_to_delete)
                     total_deleted += cursor.rowcount
 
                 elapsed = (time.perf_counter() - start_time) * 1000.0
                 logger.info(
                     "remove_oldest_memory removed %d %s memories, keeping %d latest, took %.1f ms",
-                    total_deleted, memory_type, keep_latest, elapsed,
+                    total_deleted,
+                    memory_type,
+                    keep_latest,
+                    elapsed,
                 )
         except Exception as e:
             logger.error(f"[remove_oldest_memory] Failed: {e}", exc_info=True)
@@ -455,8 +471,12 @@ class PolarDBGraphDB(BaseGraphDB):
 
     @timed
     def update_node(self, id: str, fields: dict[str, Any], user_name: str | None = None) -> None:
-
-        logger.info("update_node id=%s, user_name=%s, fields_keys=%s", id, user_name, list(fields.keys()) if fields else [])
+        logger.info(
+            "update_node id=%s, user_name=%s, fields_keys=%s",
+            id,
+            user_name,
+            list(fields.keys()) if fields else [],
+        )
         if not fields:
             return
 
@@ -492,14 +512,14 @@ class PolarDBGraphDB(BaseGraphDB):
 
         if embedding_vector is not None:
             query = (
-                f"UPDATE {tbl}.\"Memory\""
+                f'UPDATE {tbl}."Memory"'
                 f" SET properties = %s, embedding = %s"
                 f" WHERE ag_catalog.agtype_access_operator(properties, '\"id\"'::agtype) = %s::agtype"
             )
             params = [json.dumps(properties), json.dumps(embedding_vector), id_param]
         else:
             query = (
-                f"UPDATE {tbl}.\"Memory\""
+                f'UPDATE {tbl}."Memory"'
                 f" SET properties = %s"
                 f" WHERE ag_catalog.agtype_access_operator(properties, '\"id\"'::agtype) = %s::agtype"
             )
@@ -519,7 +539,6 @@ class PolarDBGraphDB(BaseGraphDB):
 
     @timed
     def delete_node(self, id: str, user_name: str | None = None) -> None:
-
         logger.info("delete_node id=%s, user_name=%s", id, user_name)
         resolved_user_name = user_name
 
@@ -534,7 +553,7 @@ class PolarDBGraphDB(BaseGraphDB):
         tbl = self.get_memory_graph_table_name(resolved_user_name)
         id_param = self.format_param_value(id)
         query = (
-            f"DELETE FROM {tbl}.\"Memory\""
+            f'DELETE FROM {tbl}."Memory"'
             f" WHERE ag_catalog.agtype_access_operator(properties, '\"id\"'::agtype) = %s::agtype"
             f" AND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
         )
@@ -615,10 +634,12 @@ class PolarDBGraphDB(BaseGraphDB):
     def add_edge(
         self, source_id: str, target_id: str, type: str, user_name: str | None = None
     ) -> None:
-
         logger.info(
             "add_edge source_id=%s, target_id=%s, type=%s, user_name=%s",
-            source_id, target_id, type, user_name,
+            source_id,
+            target_id,
+            type,
+            user_name,
         )
         start_time = time.perf_counter()
         if not source_id or not target_id:
@@ -633,7 +654,10 @@ class PolarDBGraphDB(BaseGraphDB):
         if not source_node or not target_node:
             logger.warning(
                 "add_edge source %s exists=%s, target %s exists=%s, skip",
-                source_id, source_node is not None, target_id, target_node is not None,
+                source_id,
+                source_node is not None,
+                target_id,
+                target_node is not None,
             )
             return
 
@@ -672,9 +696,16 @@ class PolarDBGraphDB(BaseGraphDB):
             raise
 
     @timed
-    def delete_edge(self, source_id: str, target_id: str, type: str, user_name: str | None = None) -> None:
-
-        logger.info("delete_edge source_id=%s, target_id=%s, type=%s, user_name=%s", source_id, target_id, type, user_name)
+    def delete_edge(
+        self, source_id: str, target_id: str, type: str, user_name: str | None = None
+    ) -> None:
+        logger.info(
+            "delete_edge source_id=%s, target_id=%s, type=%s, user_name=%s",
+            source_id,
+            target_id,
+            type,
+            user_name,
+        )
         resolved_user_name = user_name
 
         if not resolved_user_name:
@@ -687,8 +718,7 @@ class PolarDBGraphDB(BaseGraphDB):
 
         tbl = self.get_memory_graph_table_name(resolved_user_name)
         query = (
-            f"DELETE FROM {tbl}.\"Edges\""
-            f" WHERE source_id = %s AND target_id = %s AND edge_type = %s"
+            f'DELETE FROM {tbl}."Edges" WHERE source_id = %s AND target_id = %s AND edge_type = %s'
         )
         params = [source_id, target_id, type]
         logger.info("delete_edge query=%s, params=%s", query, params)
@@ -709,10 +739,13 @@ class PolarDBGraphDB(BaseGraphDB):
         direction: str = "OUTGOING",
         user_name: str | None = None,
     ) -> bool:
-
         logger.info(
             "edge_exists source_id=%s, target_id=%s, type=%s, direction=%s, user_name=%s",
-            source_id, target_id, type, direction, user_name,
+            source_id,
+            target_id,
+            type,
+            direction,
+            user_name,
         )
         resolved_user_name = user_name
 
@@ -845,8 +878,9 @@ class PolarDBGraphDB(BaseGraphDB):
             return None
 
     @timed
-    def get_nodes(self, ids: list[str], user_name: str | None = None, **kwargs) -> list[dict[str, Any]]:
-
+    def get_nodes(
+        self, ids: list[str], user_name: str | None = None, **kwargs
+    ) -> list[dict[str, Any]]:
         logger.info("get_nodes ids=%s, user_name=%s", ids, user_name)
         if not ids:
             return []
@@ -858,14 +892,14 @@ class PolarDBGraphDB(BaseGraphDB):
         if resolved_user_name:
             tbl = self.get_memory_graph_table_name(resolved_user_name)
             query = (
-                f"SELECT id, properties, embedding FROM {tbl}.\"Memory\""
+                f'SELECT id, properties, embedding FROM {tbl}."Memory"'
                 f" WHERE ag_catalog.agtype_access_operator(properties, '\"id\"'::agtype) = ANY(ARRAY[{placeholders}]::agtype[])"
                 f" AND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
             )
             params = id_params + [self.format_param_value(resolved_user_name)]
         else:
             union_parts = [
-                f"SELECT id, properties, embedding FROM {tbl}.\"Memory\""
+                f'SELECT id, properties, embedding FROM {tbl}."Memory"'
                 f" WHERE ag_catalog.agtype_access_operator(properties, '\"id\"'::agtype) = ANY(ARRAY[{placeholders}]::agtype[])"
                 for tbl in self._get_all_shard_table_names()
             ]
@@ -888,7 +922,9 @@ class PolarDBGraphDB(BaseGraphDB):
                         try:
                             properties = json.loads(properties_json)
                         except (json.JSONDecodeError, TypeError):
-                            logger.warning("get_nodes failed to parse properties for node %s", node_id)
+                            logger.warning(
+                                "get_nodes failed to parse properties for node %s", node_id
+                            )
                             properties = {}
                     else:
                         properties = properties_json if properties_json else {}
@@ -902,7 +938,9 @@ class PolarDBGraphDB(BaseGraphDB):
                             )
                             properties["embedding"] = embedding
                         except (json.JSONDecodeError, TypeError):
-                            logger.warning("get_nodes failed to parse embedding for node %s", node_id)
+                            logger.warning(
+                                "get_nodes failed to parse embedding for node %s", node_id
+                            )
                     nodes.append(self._parse_node(properties))
                 return nodes
         except Exception as e:
@@ -1022,7 +1060,10 @@ class PolarDBGraphDB(BaseGraphDB):
     ) -> dict[str, Any]:
         logger.info(
             "get_subgraph center_id=%s, depth=%s, center_status=%s, user_name=%s",
-            center_id, depth, center_status, user_name,
+            center_id,
+            depth,
+            center_status,
+            user_name,
         )
         if not 1 <= depth <= 5:
             raise ValueError("depth must be 1-5")
@@ -1035,12 +1076,16 @@ class PolarDBGraphDB(BaseGraphDB):
         if resolved_user_name:
             schema_raw = self._get_shard_schema_raw(resolved_user_name)
             user_filter = f"AND center.user_name = '{resolved_user_name}'"
-            query = self._build_subgraph_cypher(schema_raw, center_id, center_status, user_filter, depth)
+            query = self._build_subgraph_cypher(
+                schema_raw, center_id, center_status, user_filter, depth
+            )
         else:
             union_parts = []
             for i in range(self._shard_count):
                 schema_raw = f"{self.db_name}_graph_{i}"
-                query_part = self._build_subgraph_cypher(schema_raw, center_id, center_status, "", depth)
+                query_part = self._build_subgraph_cypher(
+                    schema_raw, center_id, center_status, "", depth
+                )
                 union_parts.append(query_part)
             query = " UNION ALL ".join(union_parts)
 
@@ -1199,10 +1244,11 @@ class PolarDBGraphDB(BaseGraphDB):
         return_fields: list[str] | None = None,
         **kwargs,
     ) -> list[dict]:
-
         logger.info(
             "search_by_keywords_like query_word=%s, scope=%s, user_name=%s",
-            query_word, scope, user_name,
+            query_word,
+            scope,
+            user_name,
         )
         resolved_user_name = user_name
 
@@ -1259,11 +1305,11 @@ class PolarDBGraphDB(BaseGraphDB):
 
         if resolved_user_name:
             tbl = self.get_memory_graph_table_name(resolved_user_name)
-            query = f"{select_clause} FROM {tbl}.\"Memory\" {where_clause}"
+            query = f'{select_clause} FROM {tbl}."Memory" {where_clause}'
             params = (query_word,)
         else:
             union_parts = [
-                f"{select_clause} FROM {tbl}.\"Memory\" {where_clause}"
+                f'{select_clause} FROM {tbl}."Memory" {where_clause}'
                 for tbl in self._get_all_shard_table_names()
             ]
             query = " UNION ALL ".join(union_parts)
@@ -1308,7 +1354,9 @@ class PolarDBGraphDB(BaseGraphDB):
     ) -> list[dict]:
         logger.info(
             "search_by_keywords_tfidf query_words=%s, scope=%s, user_name=%s",
-            query_words, scope, user_name,
+            query_words,
+            scope,
+            user_name,
         )
         resolved_user_name = user_name
 
@@ -1367,11 +1415,11 @@ class PolarDBGraphDB(BaseGraphDB):
 
         if resolved_user_name:
             tbl = self.get_memory_graph_table_name(resolved_user_name)
-            query = f"{select_clause} FROM {tbl}.\"Memory\" {where_clause}"
+            query = f'{select_clause} FROM {tbl}."Memory" {where_clause}'
             params = (tsquery_string,)
         else:
             union_parts = [
-                f"{select_clause} FROM {tbl}.\"Memory\" {where_clause}"
+                f'{select_clause} FROM {tbl}."Memory" {where_clause}'
                 for tbl in self._get_all_shard_table_names()
             ]
             query = " UNION ALL ".join(union_parts)
@@ -1416,13 +1464,15 @@ class PolarDBGraphDB(BaseGraphDB):
         return_fields: list[str] | None = None,
         **kwargs,
     ) -> list[dict]:
-
         resolved_user_name = user_name
 
         start_time = time.perf_counter()
         logger.info(
             "search_by_fulltext query_words=%s, top_k=%s, scope=%s, user_name=%s",
-            query_words, top_k, scope, resolved_user_name,
+            query_words,
+            top_k,
+            scope,
+            resolved_user_name,
         )
         where_clauses = []
 
@@ -1493,7 +1543,7 @@ class PolarDBGraphDB(BaseGraphDB):
                 f"/*+ Set(max_parallel_workers_per_gather 0) */"
                 f" WITH q AS (SELECT to_tsquery('{tsquery_config}', %s) AS fq)"
                 f" SELECT {select_cols}"
-                f" FROM {tbl}.\"Memory\" m CROSS JOIN q"
+                f' FROM {tbl}."Memory" m CROSS JOIN q'
                 f" {where_clause_cte}"
                 f" LIMIT {top_k}"
             )
@@ -1501,11 +1551,7 @@ class PolarDBGraphDB(BaseGraphDB):
         else:
             shard_selects = []
             for tbl in self._get_all_shard_table_names():
-                part = (
-                    f"SELECT {select_cols}"
-                    f" FROM {tbl}.\"Memory\" m CROSS JOIN q"
-                    f" {where_clause_cte}"
-                )
+                part = f'SELECT {select_cols} FROM {tbl}."Memory" m CROSS JOIN q {where_clause_cte}'
                 shard_selects.append(part)
             inner_union = " UNION ALL ".join(shard_selects)
             query = (
@@ -1535,10 +1581,14 @@ class PolarDBGraphDB(BaseGraphDB):
                         item = {"id": id_val, "score": score_val}
                         if return_fields:
                             properties = row[2]
-                            item.update(self._extract_fields_from_properties(properties, return_fields))
+                            item.update(
+                                self._extract_fields_from_properties(properties, return_fields)
+                            )
                         output.append(item)
                 elapsed = (time.perf_counter() - start_time) * 1000.0
-                logger.info("search_by_fulltext recalled %d results, took %.1f ms", len(output), elapsed)
+                logger.info(
+                    "search_by_fulltext recalled %d results, took %.1f ms", len(output), elapsed
+                )
                 return output[:top_k]
         except Exception as e:
             logger.error("search_by_fulltext failed: %s", e, exc_info=True)
@@ -1681,20 +1731,22 @@ class PolarDBGraphDB(BaseGraphDB):
 
     @timed
     def get_by_metadata(
-            self,
-            filters: list[dict[str, Any]],
-            user_name: str | None = None,
-            filter: dict | None = None,
-            knowledgebase_ids: list | None = None,
-            user_name_flag: bool = True,
-            **kwargs,
+        self,
+        filters: list[dict[str, Any]],
+        user_name: str | None = None,
+        filter: dict | None = None,
+        knowledgebase_ids: list | None = None,
+        user_name_flag: bool = True,
+        **kwargs,
     ) -> list[str]:
-
         start_time = time.perf_counter()
         resolved_user_name = user_name
         logger.info(
             "get_by_metadata user_name=%s, filter=%s, knowledgebase_ids=%s, filters=%s",
-            resolved_user_name, filter, knowledgebase_ids, filters,
+            resolved_user_name,
+            filter,
+            knowledgebase_ids,
+            filters,
         )
 
         if not resolved_user_name:
@@ -1793,11 +1845,13 @@ class PolarDBGraphDB(BaseGraphDB):
         params: dict[str, Any] | None = None,
         user_name: str | None = None,
     ) -> list[dict[str, Any]]:
-
         start_time = time.perf_counter()
         logger.info(
             "get_grouped_counts group_fields=%s, where_clause=%s, params=%s, user_name=%s",
-            group_fields, where_clause, params, user_name,
+            group_fields,
+            where_clause,
+            params,
+            user_name,
         )
         if not group_fields:
             raise ValueError("group_fields cannot be empty")
@@ -1848,7 +1902,7 @@ class PolarDBGraphDB(BaseGraphDB):
             tbl = self.get_memory_graph_table_name(resolved_user_name)
             query = (
                 f"WITH t AS ("
-                f" SELECT {cte_cols} FROM {tbl}.\"Memory\" {effective_where} LIMIT 100"
+                f' SELECT {cte_cols} FROM {tbl}."Memory" {effective_where} LIMIT 100'
                 f") SELECT {outer_select}, count(*) AS count FROM t GROUP BY {outer_group_by}"
             )
         else:
@@ -1860,7 +1914,7 @@ class PolarDBGraphDB(BaseGraphDB):
                 effective_where_inner = f"WHERE {effective_where}"
 
             union_parts = [
-                f"SELECT {cte_cols} FROM {tbl}.\"Memory\" {effective_where_inner}"
+                f'SELECT {cte_cols} FROM {tbl}."Memory" {effective_where_inner}'
                 for tbl in self._get_all_shard_table_names()
             ]
             query = (
@@ -1940,11 +1994,17 @@ class PolarDBGraphDB(BaseGraphDB):
         status: list[str] | None = None,
         **kwargs,
     ) -> dict[str, Any]:
-
         start_time = time.perf_counter()
         logger.info(
             "export_graph include_embedding=%s, user_name=%s, user_id=%s, page=%s, page_size=%s, filter=%s, memory_type=%s, status=%s",
-            include_embedding, user_name, user_id, page, page_size, filter, memory_type, status,
+            include_embedding,
+            user_name,
+            user_id,
+            page,
+            page_size,
+            filter,
+            memory_type,
+            status,
         )
         resolved_user_name = user_name
         user_id = user_id if user_id else self._get_config_value("user_id")
@@ -2078,20 +2138,20 @@ class PolarDBGraphDB(BaseGraphDB):
 
         if resolved_user_name:
             tbl = self.get_memory_graph_table_name(resolved_user_name)
-            count_query = f"SELECT COUNT(*) AS total_count FROM {tbl}.\"Memory\" {where_clause}"
+            count_query = f'SELECT COUNT(*) AS total_count FROM {tbl}."Memory" {where_clause}'
             data_query = (
-                f"SELECT {select_cols} FROM {tbl}.\"Memory\""
+                f'SELECT {select_cols} FROM {tbl}."Memory"'
                 f" {where_clause} {order_clause} {pagination_clause}"
             )
         else:
             count_parts = [
-                f"SELECT COUNT(*) AS cnt FROM {tbl}.\"Memory\" {where_clause}"
+                f'SELECT COUNT(*) AS cnt FROM {tbl}."Memory" {where_clause}'
                 for tbl in self._get_all_shard_table_names()
             ]
             count_query = f"SELECT SUM(cnt) FROM ({' UNION ALL '.join(count_parts)}) t"
 
             data_parts = [
-                f"SELECT {select_cols} FROM {tbl}.\"Memory\" {where_clause}"
+                f'SELECT {select_cols} FROM {tbl}."Memory" {where_clause}'
                 for tbl in self._get_all_shard_table_names()
             ]
             data_query = (
@@ -2178,10 +2238,13 @@ class PolarDBGraphDB(BaseGraphDB):
         knowledgebase_ids: list | None = None,
         status: str | None = None,
     ) -> list[dict]:
-
         logger.info(
             "get_all_memory_items scope=%s, user_name=%s, filter=%s, knowledgebase_ids=%s, status=%s",
-            scope, user_name, filter, knowledgebase_ids, status,
+            scope,
+            user_name,
+            filter,
+            knowledgebase_ids,
+            status,
         )
 
         resolved_user_name = user_name
@@ -2228,7 +2291,7 @@ class PolarDBGraphDB(BaseGraphDB):
                     f" MATCH (n:Memory) WHERE {where_clause}"
                     f" RETURN id(n) as id1, n LIMIT 100"
                     f" $$) AS (id1 agtype, n agtype)"
-                    f") SELECT m.embedding, t.n FROM t, {sr}.\"Memory\" m WHERE t.id1 = m.id"
+                    f') SELECT m.embedding, t.n FROM t, {sr}."Memory" m WHERE t.id1 = m.id'
                 )
             else:
                 union_parts = []
@@ -2239,7 +2302,7 @@ class PolarDBGraphDB(BaseGraphDB):
                         f" MATCH (n:Memory) WHERE {where_clause}"
                         f" RETURN id(n) as id1, n LIMIT 100"
                         f" $$) AS (id1 agtype, n agtype)"
-                        f") t, {sr}.\"Memory\" m WHERE t.id1 = m.id"
+                        f') t, {sr}."Memory" m WHERE t.id1 = m.id'
                     )
                     union_parts.append(part)
                 cypher_query = " UNION ALL ".join(union_parts)
@@ -2310,10 +2373,11 @@ class PolarDBGraphDB(BaseGraphDB):
     def get_structure_optimization_candidates(
         self, scope: str, include_embedding: bool = False, user_name: str | None = None
     ) -> list[dict]:
-
         logger.info(
             "get_structure_optimization_candidates scope=%s, include_embedding=%s, user_name=%s",
-            scope, include_embedding, user_name,
+            scope,
+            include_embedding,
+            user_name,
         )
         resolved_user_name = user_name
 
@@ -2387,8 +2451,7 @@ class PolarDBGraphDB(BaseGraphDB):
             )
             if include_embedding:
                 return (
-                    f"SELECT m.embedding, t.n FROM ({base}) t,"
-                    f" {sr}.\"Memory\" m WHERE t.id1 = m.id"
+                    f'SELECT m.embedding, t.n FROM ({base}) t, {sr}."Memory" m WHERE t.id1 = m.id'
                 )
             return base
 
@@ -3117,9 +3180,12 @@ class PolarDBGraphDB(BaseGraphDB):
 
     @timed
     def import_graph(self, data: dict[str, Any], user_name: str | None = None) -> None:
-
-        logger.info("import_graph user_name=%s, nodes=%d, edges=%d",
-                     user_name, len(data.get("nodes", [])), len(data.get("edges", [])))
+        logger.info(
+            "import_graph user_name=%s, nodes=%d, edges=%d",
+            user_name,
+            len(data.get("nodes", [])),
+            len(data.get("edges", [])),
+        )
         resolved_user_name = user_name
 
         for node in data.get("nodes", []):
@@ -3134,7 +3200,9 @@ class PolarDBGraphDB(BaseGraphDB):
                 self.add_node(id, memory, metadata, user_name=node_user_name)
 
             except Exception as e:
-                logger.error("import_graph fail to load node: %s, error: %s", node.get("id", "unknown"), e)
+                logger.error(
+                    "import_graph fail to load node: %s, error: %s", node.get("id", "unknown"), e
+                )
 
         for edge in data.get("edges", []):
             try:
@@ -3210,7 +3278,6 @@ class PolarDBGraphDB(BaseGraphDB):
     def get_edges(
         self, id: str, type: str = "ANY", direction: str = "ANY", user_name: str | None = None
     ) -> list[dict[str, str]]:
-
         start_time = time.perf_counter()
         logger.info(f" get_edges id:{id},type:{type},direction:{direction},user_name:{user_name}")
         resolved_user_name = user_name
@@ -4072,7 +4139,10 @@ class PolarDBGraphDB(BaseGraphDB):
         batch_start_time = time.time()
         logger.info(
             "delete_node_by_prams memory_ids=%s, file_ids=%s, filter=%s, writable_cube_ids=%s",
-            memory_ids, file_ids, filter, writable_cube_ids,
+            memory_ids,
+            file_ids,
+            filter,
+            writable_cube_ids,
         )
 
         user_name_conditions = []
@@ -4088,7 +4158,9 @@ class PolarDBGraphDB(BaseGraphDB):
             logger.info("delete_node_by_prams filter_conditions=%s", filter_conditions)
 
         if not memory_ids and not file_ids and not filter_conditions:
-            logger.warning("delete_node_by_prams no nodes to delete (no memory_ids, file_ids, or filter)")
+            logger.warning(
+                "delete_node_by_prams no nodes to delete (no memory_ids, file_ids, or filter)"
+            )
             return 0
 
         where_conditions = []
@@ -4134,7 +4206,7 @@ class PolarDBGraphDB(BaseGraphDB):
         try:
             with self._get_connection() as conn, conn.cursor() as cursor:
                 for tbl in target_tables:
-                    delete_query = f"DELETE FROM {tbl}.\"Memory\" WHERE {where_clause}"
+                    delete_query = f'DELETE FROM {tbl}."Memory" WHERE {where_clause}'
                     logger.info("delete_node_by_prams delete_query=%s", delete_query)
                     cursor.execute(delete_query)
                     total_deleted_count += cursor.rowcount
@@ -4142,7 +4214,8 @@ class PolarDBGraphDB(BaseGraphDB):
                 elapsed_time = (time.time() - batch_start_time) * 1000.0
                 logger.info(
                     "delete_node_by_prams completed in %.2fms, total deleted %d nodes",
-                    elapsed_time, total_deleted_count,
+                    elapsed_time,
+                    total_deleted_count,
                 )
         except Exception as e:
             logger.error("delete_node_by_prams failed: %s", e, exc_info=True)
