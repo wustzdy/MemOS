@@ -1697,6 +1697,12 @@ class PolarDBGraphDB(BaseGraphDB):
             resolved_user_name, filter, knowledgebase_ids, filters,
         )
 
+        if not resolved_user_name:
+            raise ValueError(
+                "get_by_metadata requires a non-empty user_name to locate a single shard; "
+                "cross-shard scans are disallowed due to heavy cost"
+            )
+
         where_conditions = []
 
         for f in filters:
