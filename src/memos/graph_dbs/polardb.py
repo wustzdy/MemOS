@@ -896,7 +896,7 @@ class PolarDBGraphDB(BaseGraphDB):
                 f" WHERE ag_catalog.agtype_access_operator(properties, '\"id\"'::agtype) = ANY(ARRAY[{placeholders}]::agtype[])"
                 f" AND ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = %s::agtype"
             )
-            params = id_params + [self.format_param_value(resolved_user_name)]
+            params = [*id_params, self.format_param_value(resolved_user_name)]
         else:
             union_parts = [
                 f'SELECT id, properties, embedding FROM {tbl}."Memory"'
