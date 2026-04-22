@@ -1681,19 +1681,21 @@ class PolarDBGraphDB(BaseGraphDB):
 
     @timed
     def get_by_metadata(
-        self,
-        filters: list[dict[str, Any]],
-        user_name: str,
-        filter: dict | None = None,
-        knowledgebase_ids: list | None = None,
-        user_name_flag: bool = True,
+            self,
+            filters: list[dict[str, Any]],
+            user_name: str | None = None,
+            filter: dict | None = None,
+            knowledgebase_ids: list | None = None,
+            user_name_flag: bool = True,
+            **kwargs,
     ) -> list[str]:
-        start_time = time.perf_counter()
-        logger.info(
-            f" get_by_metadata user_name:{user_name},filter: {filter}, knowledgebase_ids: {knowledgebase_ids},filters:{filters}"
-        )
 
-        schema_raw = self._get_shard_schema_raw(user_name)
+        start_time = time.perf_counter()
+        resolved_user_name = user_name
+        logger.info(
+            "get_by_metadata user_name=%s, filter=%s, knowledgebase_ids=%s, filters=%s",
+            resolved_user_name, filter, knowledgebase_ids, filters,
+        )
 
         where_conditions = []
 
@@ -1734,11 +1736,10 @@ class PolarDBGraphDB(BaseGraphDB):
                 raise ValueError(f"Unsupported operator: {op}")
 
         user_name_conditions = self._build_user_name_and_kb_ids_conditions_cypher(
-            user_name=user_name,
+            user_name=resolved_user_name,
             knowledgebase_ids=knowledgebase_ids,
-            default_user_name=self._get_config_value("user_name"),
         )
-        logger.info(f"get_by_metadata user_name_conditions: {user_name_conditions}")
+        logger.info("get_by_metadata user_name_conditions=%s", user_name_conditions)
 
         if user_name_conditions:
             if len(user_name_conditions) == 1:
@@ -1747,29 +1748,35 @@ class PolarDBGraphDB(BaseGraphDB):
                 where_conditions.append(f"({' OR '.join(user_name_conditions)})")
 
         filter_where_clause = self._build_filter_conditions_cypher(filter)
-        logger.info(f"get_by_metadata filter_where_clause: {filter_where_clause}")
+        logger.info("get_by_metadata filter_where_clause=%s", filter_where_clause)
 
         where_str = " AND ".join(where_conditions) + filter_where_clause
 
-        cypher_query = f"""
-               SELECT * FROM cypher('{schema_raw}', $$
-               MATCH (n:Memory)
-               WHERE {where_str}
-               RETURN n.id AS id
-               $$) AS (id agtype)
-           """
+        if resolved_user_name:
+            schema_raw = self._get_shard_schema_raw(resolved_user_name)
+            target_shards = [schema_raw]
+        else:
+            target_shards = [f"{self.db_name}_graph_{i}" for i in range(self._shard_count)]
 
         ids = []
-        logger.info(f"get_by_metadata cypher_query: {cypher_query}")
         try:
             with self._get_connection() as conn, conn.cursor() as cursor:
-                cursor.execute(cypher_query)
-                results = cursor.fetchall()
-                ids = [str(item[0]).strip('"') for item in results]
+                for shard in target_shards:
+                    cypher_query = f"""
+                        SELECT * FROM cypher('{shard}', $$
+                        MATCH (n:Memory)
+                        WHERE {where_str}
+                        RETURN n.id AS id
+                        $$) AS (id agtype)
+                    """
+                    logger.info("get_by_metadata shard=%s, cypher_query=%s", shard, cypher_query)
+                    cursor.execute(cypher_query)
+                    results = cursor.fetchall()
+                    ids.extend(str(item[0]).strip('"') for item in results)
         except Exception as e:
-            logger.warning(f"Failed to get metadata: {e}, query is {cypher_query}")
+            logger.warning("get_by_metadata failed: %s", e, exc_info=True)
         elapsed = (time.perf_counter() - start_time) * 1000.0
-        logger.info("get_by_metadata internal took %.1f ms", elapsed)
+        logger.info("get_by_metadata recalled %d ids, took %.1f ms", len(ids), elapsed)
         return ids
 
     @timed
@@ -2178,7 +2185,6 @@ class PolarDBGraphDB(BaseGraphDB):
         user_name_conditions = self._build_user_name_and_kb_ids_conditions_cypher(
             user_name=resolved_user_name,
             knowledgebase_ids=knowledgebase_ids,
-            default_user_name=self._get_config_value("user_name"),
         )
 
         if user_name_conditions:
@@ -3289,13 +3295,11 @@ class PolarDBGraphDB(BaseGraphDB):
         self,
         user_name: str | None,
         knowledgebase_ids: list | None,
-        default_user_name: str | None = None,
     ) -> list[str]:
         user_name_conditions = []
-        effective_user_name = user_name if user_name else default_user_name
 
-        if effective_user_name:
-            escaped_user_name = effective_user_name.replace("'", "''")
+        if user_name:
+            escaped_user_name = user_name.replace("'", "''")
             user_name_conditions.append(f"n.user_name = '{escaped_user_name}'")
 
         if knowledgebase_ids and isinstance(knowledgebase_ids, list) and len(knowledgebase_ids) > 0:
