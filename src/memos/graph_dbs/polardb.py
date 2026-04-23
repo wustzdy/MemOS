@@ -1750,9 +1750,7 @@ class PolarDBGraphDB(BaseGraphDB):
         )
 
         if not resolved_user_name:
-            raise ValueError(
-                "get_by_metadata requires user_name && user_name is not null "
-            )
+            raise ValueError("get_by_metadata requires user_name && user_name is not null ")
 
         where_conditions = []
 
@@ -2379,6 +2377,10 @@ class PolarDBGraphDB(BaseGraphDB):
             user_name,
         )
         resolved_user_name = user_name
+        if not resolved_user_name:
+            raise ValueError(
+                "get_structure_optimization_candidates requires user_name && user_name is not null "
+            )
 
         if include_embedding:
             return_fields = "id(n) as id1,n"
@@ -3034,144 +3036,6 @@ class PolarDBGraphDB(BaseGraphDB):
 
                 nodes_with_overlap.sort(key=lambda x: x[1], reverse=True)
                 return [node for node, _ in nodes_with_overlap[:top_k]]
-
-        except Exception as e:
-            logger.error(f"Failed to get neighbors by tag: {e}", exc_info=True)
-            return []
-
-    def get_neighbors_by_tag_ccl(
-        self,
-        tags: list[str],
-        exclude_ids: list[str],
-        top_k: int = 5,
-        min_overlap: int = 1,
-        include_embedding: bool = False,
-        user_name: str | None = None,
-    ) -> list[dict[str, Any]]:
-        if not tags:
-            return []
-
-        user_name = user_name if user_name else self._get_config_value("user_name")
-        schema_raw = self._get_shard_schema_raw(user_name)
-
-        where_clauses = [
-            'n.status = "activated"',
-            'NOT (n.node_type = "reasoning")',
-            'NOT (n.memory_type = "WorkingMemory")',
-        ]
-        where_clauses = [
-            'n.status = "activated"',
-            'NOT (n.memory_type = "WorkingMemory")',
-        ]
-
-        if exclude_ids:
-            exclude_ids_str = "[" + ", ".join(f'"{id}"' for id in exclude_ids) + "]"
-            where_clauses.append(f"NOT (n.id IN {exclude_ids_str})")
-
-        where_clauses.append(f'n.user_name = "{user_name}"')
-
-        where_clause = " AND ".join(where_clauses)
-        tag_list_literal = "[" + ", ".join(f'"{t}"' for t in tags) + "]"
-
-        return_fields = [
-            "n.id AS id",
-            "n.memory AS memory",
-            "n.user_name AS user_name",
-            "n.user_id AS user_id",
-            "n.session_id AS session_id",
-            "n.status AS status",
-            "n.key AS key",
-            "n.confidence AS confidence",
-            "n.tags AS tags",
-            "n.created_at AS created_at",
-            "n.updated_at AS updated_at",
-            "n.memory_type AS memory_type",
-            "n.sources AS sources",
-            "n.source AS source",
-            "n.node_type AS node_type",
-            "n.visibility AS visibility",
-            "n.background AS background",
-        ]
-
-        if include_embedding:
-            return_fields.append("n.embedding AS embedding")
-
-        return_fields_str = ", ".join(return_fields)
-        result_fields = []
-        for field in return_fields:
-            field_name = field.split(" AS ")[-1]
-            result_fields.append(f"{field_name} agtype")
-
-        result_fields.append("overlap_count agtype")
-        result_fields_str = ", ".join(result_fields)
-        query = f"""
-            SELECT * FROM (
-                SELECT * FROM cypher('{schema_raw}', $$
-                WITH {tag_list_literal} AS tag_list
-                MATCH (n:Memory)
-                WHERE {where_clause}
-                RETURN {return_fields_str},
-                       size([tag IN n.tags WHERE tag IN tag_list]) AS overlap_count
-                $$) AS ({result_fields_str})
-            ) AS subquery
-            ORDER BY (overlap_count::integer) DESC
-            LIMIT {top_k}
-        """
-        logger.debug(f"get_neighbors_by_tag: {query}")
-        try:
-            with self.connection.cursor() as cursor:
-                cursor.execute(query)
-                results = cursor.fetchall()
-
-                neighbors = []
-                for row in results:
-                    props = {}
-                    overlap_count = None
-
-                    field_names = [
-                        "id",
-                        "memory",
-                        "user_name",
-                        "user_id",
-                        "session_id",
-                        "status",
-                        "key",
-                        "confidence",
-                        "tags",
-                        "created_at",
-                        "updated_at",
-                        "memory_type",
-                        "sources",
-                        "source",
-                        "node_type",
-                        "visibility",
-                        "background",
-                    ]
-
-                    if include_embedding:
-                        field_names.append("embedding")
-                    field_names.append("overlap_count")
-
-                    for i, field in enumerate(field_names):
-                        if field == "overlap_count":
-                            overlap_count = row[i].value if hasattr(row[i], "value") else row[i]
-                        else:
-                            props[field] = row[i].value if hasattr(row[i], "value") else row[i]
-                    overlap_int = int(overlap_count)
-                    if overlap_count is not None and overlap_int >= min_overlap:
-                        parsed = self._parse_node(props)
-                        parsed["overlap_count"] = overlap_int
-                        neighbors.append(parsed)
-
-                neighbors.sort(key=lambda x: x["overlap_count"], reverse=True)
-                neighbors = neighbors[:top_k]
-
-                result = []
-                for neighbor in neighbors:
-                    neighbor.pop("overlap_count", None)
-                    result.append(neighbor)
-
-                return result
 
         except Exception as e:
             logger.error(f"Failed to get neighbors by tag: {e}", exc_info=True)
