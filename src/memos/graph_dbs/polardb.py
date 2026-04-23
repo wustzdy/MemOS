@@ -1273,7 +1273,6 @@ class PolarDBGraphDB(BaseGraphDB):
         user_name_conditions = self._build_user_name_and_kb_ids_conditions_sql(
             user_name=resolved_user_name,
             knowledgebase_ids=knowledgebase_ids,
-            default_user_name=self.config.user_name,
         )
 
         if user_name_conditions:
@@ -1381,7 +1380,6 @@ class PolarDBGraphDB(BaseGraphDB):
         user_name_conditions = self._build_user_name_and_kb_ids_conditions_sql(
             user_name=resolved_user_name,
             knowledgebase_ids=knowledgebase_ids,
-            default_user_name=self.config.user_name,
         )
 
         if user_name_conditions:
@@ -1495,7 +1493,6 @@ class PolarDBGraphDB(BaseGraphDB):
         user_name_conditions = self._build_user_name_and_kb_ids_conditions_sql(
             user_name=resolved_user_name,
             knowledgebase_ids=knowledgebase_ids,
-            default_user_name=self.config.user_name,
         )
 
         if user_name_conditions:
@@ -1643,7 +1640,6 @@ class PolarDBGraphDB(BaseGraphDB):
         user_name_conditions = self._build_user_name_and_kb_ids_conditions_sql(
             user_name=user_name,
             knowledgebase_ids=knowledgebase_ids,
-            default_user_name=self.config.user_name,
         )
 
         if user_name_conditions:
@@ -3253,14 +3249,12 @@ class PolarDBGraphDB(BaseGraphDB):
         self,
         user_name: str | None,
         knowledgebase_ids: list | None,
-        default_user_name: str | None = None,
     ) -> list[str]:
         user_name_conditions = []
-        effective_user_name = user_name if user_name else default_user_name
 
         if user_name:
             user_name_conditions.append(
-                f"ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = '\"{effective_user_name}\"'::agtype"
+                f"ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = '\"{user_name}\"'::agtype"
             )
 
         if knowledgebase_ids and isinstance(knowledgebase_ids, list) and len(knowledgebase_ids) > 0:
