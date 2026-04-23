@@ -2621,9 +2621,7 @@ class PolarDBGraphDB(BaseGraphDB):
             self.connection.close()
 
     @timed
-    def add_node(
-        self, id: str, memory: str, metadata: dict[str, Any], user_name: str
-    ) -> None:
+    def add_node(self, id: str, memory: str, metadata: dict[str, Any], user_name: str) -> None:
         logger.info(f"[add_node] id: {id}, memory: {memory}, metadata: {metadata}")
 
         user_name = user_name if user_name else self.config.user_name
@@ -4213,9 +4211,7 @@ class PolarDBGraphDB(BaseGraphDB):
         )
 
         if not mem_cube_id:
-            raise ValueError(
-                "delete_node_by_mem_cube_id mem_cube_id is required but not provided"
-            )
+            raise ValueError("delete_node_by_mem_cube_id mem_cube_id is required but not provided")
         if not delete_record_id:
             raise ValueError(
                 "delete_node_by_mem_cube_id delete_record_id is required but not provided"
