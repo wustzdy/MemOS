@@ -3166,11 +3166,11 @@ class PolarDBGraphDB(BaseGraphDB):
             cypher_body = self._build_cypher_edge_body(id_esc, None, type, type_filter, direction)
             union_parts = [
                 (
-                    f"SELECT * FROM cypher('{tbl}', $$\n"
+                    f"SELECT * FROM cypher('{self.db_name}_graph_{i}', $$\n"
                     f"{cypher_body}\n"
                     f"$$) AS (from_id agtype, to_id agtype, edge_type agtype)"
                 )
-                for tbl in self._get_all_shard_table_names()
+                for i in range(self._shard_count)
             ]
             query = " UNION ALL ".join(union_parts)
 
