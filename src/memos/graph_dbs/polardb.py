@@ -3995,91 +3995,265 @@ class PolarDBGraphDB(BaseGraphDB):
         file_ids: list[str] | None = None,
         filter: dict | None = None,
     ) -> int:
-        batch_start_time = time.time()
         logger.info(
-            "delete_node_by_prams memory_ids=%s, file_ids=%s, filter=%s, writable_cube_ids=%s",
-            memory_ids,
-            file_ids,
+            "delete_node_by_prams memory_ids_count=%d file_ids_count=%d filter=%s writable_cube_ids=%s",
+            len(memory_ids) if memory_ids else 0,
+            len(file_ids) if file_ids else 0,
             filter,
             writable_cube_ids,
         )
 
-        user_name_conditions = []
-        if writable_cube_ids and len(writable_cube_ids) > 0:
-            for cube_id in writable_cube_ids:
-                user_name_conditions.append(
-                    f"agtype_access_operator(VARIADIC ARRAY[properties, '\"user_name\"'::agtype]) = '\"{cube_id}\"'::agtype"
-                )
-
-        filter_conditions = []
-        if filter:
-            filter_conditions = self._build_filter_conditions_sql(filter)
-            logger.info("delete_node_by_prams filter_conditions=%s", filter_conditions)
-
-        if not memory_ids and not file_ids and not filter_conditions:
-            logger.warning(
-                "delete_node_by_prams no nodes to delete (no memory_ids, file_ids, or filter)"
-            )
-            return 0
-
-        where_conditions = []
-
         if memory_ids:
-            id_conditions = []
-            for node_id in memory_ids:
-                id_conditions.append(
-                    f"ag_catalog.agtype_access_operator(properties, '\"id\"'::agtype) = '\"{node_id}\"'::agtype"
-                )
-            where_conditions.append(f"({' OR '.join(id_conditions)})")
+            return self._delete_by_memory_ids(memory_ids)
 
-        if file_ids:
-            file_id_conditions = []
-            for file_id in file_ids:
-                file_id_conditions.append(
-                    f"agtype_in_operator(agtype_access_operator(VARIADIC ARRAY[properties, '\"file_ids\"'::agtype]), '\"{file_id}\"'::agtype)"
-                )
-            where_conditions.append(f"({' OR '.join(file_id_conditions)})")
+        if writable_cube_ids and file_ids:
+            return self._delete_by_cube_and_file_ids(writable_cube_ids, file_ids)
 
-        if filter_conditions:
-            where_conditions.extend(filter_conditions)
+        if filter:
+            return self._delete_by_filter(filter)
 
-        if user_name_conditions:
-            user_name_where = " OR ".join(user_name_conditions)
-            where_conditions.append(f"({user_name_where})")
+        logger.warning(
+            "delete_node_by_prams no matching scenario: memory_ids/cube+file/filter all empty"
+        )
+        return 0
 
-        if not where_conditions:
-            logger.warning("delete_node_by_prams no WHERE conditions to delete")
+    @timed
+    def _delete_by_memory_ids(self, memory_ids: list[str]) -> int:
+        target_tables = self._get_all_shard_table_names()
+        if not target_tables:
             return 0
 
-        where_clause = " AND ".join(where_conditions)
+        batch_start_time = time.time()
 
-        if writable_cube_ids:
-            shard_set = set()
-            for cube_id in writable_cube_ids:
-                shard_set.add(self.get_memory_graph_table_name(cube_id))
-            target_tables = list(shard_set)
-        else:
-            target_tables = self._get_all_shard_table_names()
+        cte_parts: list[str] = []
+        count_parts: list[str] = []
+        params: list = []
 
-        total_deleted_count = 0
+        for idx, tbl in enumerate(target_tables):
+            schema_raw = tbl.strip('"')
+            cte_name = f"d{idx}"
+            cte_parts.append(
+                f"{cte_name} AS ("
+                f'DELETE FROM {tbl}."Memory" WHERE id IN ('
+                f"SELECT ag_catalog._make_graph_id("
+                f"'{schema_raw}'::name, 'Memory'::name, "
+                f"unnest(%s::text[])::cstring)"
+                f") RETURNING 1"
+                f")"
+            )
+            count_parts.append(f"(SELECT count(*) FROM {cte_name})")
+            params.append(memory_ids)
+
+        sql = (
+            "WITH "
+            + ", ".join(cte_parts)
+            + " SELECT "
+            + " + ".join(count_parts)
+            + " AS total_deleted"
+        )
+        total_deleted = 0
         try:
             with self._get_connection() as conn, conn.cursor() as cursor:
-                for tbl in target_tables:
-                    delete_query = f'DELETE FROM {tbl}."Memory" WHERE {where_clause}'
-                    logger.info("delete_node_by_prams delete_query=%s", delete_query)
-                    cursor.execute(delete_query)
-                    total_deleted_count += cursor.rowcount
-
-                elapsed_time = (time.time() - batch_start_time) * 1000.0
-                logger.info(
-                    "delete_node_by_prams completed in %.2fms, total deleted %d nodes",
-                    elapsed_time,
-                    total_deleted_count,
-                )
+                cursor.execute(sql, params)
+                row = cursor.fetchone()
+                total_deleted = int(row[0]) if row and row[0] is not None else 0
         except Exception as e:
-            logger.error("delete_node_by_prams failed: %s", e, exc_info=True)
+            logger.error("delete_by_memory_ids failed: %s", e, exc_info=True)
             raise
-        return total_deleted_count
+
+        elapsed_ms = (time.time() - batch_start_time) * 1000.0
+        logger.info(
+            "delete_by_memory_ids completed in %.2fms, deleted %d nodes"
+            " (shards=%d, single round-trip)",
+            elapsed_ms,
+            total_deleted,
+            len(target_tables),
+        )
+        return total_deleted
+
+    @timed
+    def _delete_by_cube_and_file_ids(
+        self,
+        writable_cube_ids: list[str],
+        file_ids: list[str],
+    ) -> int:
+        shard_to_cube_ids: dict[str, list[str]] = {}
+        for cube_id in writable_cube_ids:
+            shard = self.get_memory_graph_table_name(cube_id)
+            shard_to_cube_ids.setdefault(shard, []).append(cube_id)
+
+        target_tables = list(shard_to_cube_ids.keys())
+        if not target_tables:
+            return 0
+
+        logger.info(
+            "_delete_by_cube_and_file_ids routed %d cube_ids to %d shard(s)",
+            len(writable_cube_ids),
+            len(target_tables),
+        )
+
+        batch_start_time = time.time()
+
+        file_id_clauses = []
+        file_id_params: list = []
+        for file_id in file_ids:
+            file_id_clauses.append(
+                "agtype_in_operator("
+                "agtype_access_operator("
+                "VARIADIC ARRAY[properties, '\"file_ids\"'::agtype]), %s::agtype)"
+            )
+            file_id_params.append(f'"{file_id}"')
+        file_ids_where = f"({' OR '.join(file_id_clauses)})"
+
+        cte_parts: list[str] = []
+        count_parts: list[str] = []
+        params: list = []
+
+        for idx, tbl in enumerate(target_tables):
+            cube_ids_on_shard = shard_to_cube_ids[tbl]
+            cte_name = f"d{idx}"
+
+            if len(cube_ids_on_shard) == 1:
+                cube_ids_where = (
+                    "ag_catalog.agtype_access_operator("
+                    "VARIADIC ARRAY[properties, '\"user_name\"'::agtype])::text"
+                    " = %s"
+                )
+                params.append(f'"{cube_ids_on_shard[0]}"')
+            else:
+                cube_ids_where = (
+                    "ag_catalog.agtype_access_operator("
+                    "VARIADIC ARRAY[properties, '\"user_name\"'::agtype])::text"
+                    " = ANY(%s::text[])"
+                )
+                params.append([f'"{cid}"' for cid in cube_ids_on_shard])
+
+            params.extend(file_id_params)
+
+            cte_parts.append(
+                f"{cte_name} AS ("
+                f'DELETE FROM {tbl}."Memory" WHERE '
+                f"{cube_ids_where} AND {file_ids_where}"
+                f" RETURNING 1"
+                f")"
+            )
+            count_parts.append(f"(SELECT count(*) FROM {cte_name})")
+
+        sql = (
+            "WITH "
+            + ", ".join(cte_parts)
+            + " SELECT "
+            + " + ".join(count_parts)
+            + " AS total_deleted"
+        )
+
+        total_deleted = 0
+        try:
+            with self._get_connection() as conn, conn.cursor() as cursor:
+                cursor.execute(sql, params)
+                row = cursor.fetchone()
+                total_deleted = int(row[0]) if row and row[0] is not None else 0
+        except Exception as e:
+            logger.error("delete_by_cube_and_file_ids failed: %s", e, exc_info=True)
+            raise
+
+        elapsed_ms = (time.time() - batch_start_time) * 1000.0
+        logger.info(
+            "delete_by_cube_and_file_ids completed in %.2fms, deleted %d nodes"
+            " (shards=%d, single round-trip)",
+            elapsed_ms,
+            total_deleted,
+            len(target_tables),
+        )
+        return total_deleted
+
+    @timed
+    def _delete_by_filter(self, filter: dict) -> int:
+        filter_conditions = self._build_filter_conditions_sql(filter)
+        if not filter_conditions:
+            logger.warning("_delete_by_filter produced no WHERE conditions, skip")
+            return 0
+        logger.info("_delete_by_filter filter_conditions=%s", filter_conditions)
+
+        where_clause = " AND ".join(filter_conditions)
+        target_tables = self._resolve_shards_from_filter(filter)
+        if not target_tables:
+            return 0
+
+        batch_start_time = time.time()
+
+        if len(target_tables) == 1:
+            tbl = target_tables[0]
+            sql = f'DELETE FROM {tbl}."Memory" WHERE {where_clause}'
+        else:
+            cte_parts: list[str] = []
+            count_parts: list[str] = []
+            for idx, tbl in enumerate(target_tables):
+                cte_name = f"d{idx}"
+                cte_parts.append(
+                    f"{cte_name} AS ("
+                    f'DELETE FROM {tbl}."Memory" WHERE {where_clause}'
+                    f" RETURNING 1"
+                    f")"
+                )
+                count_parts.append(f"(SELECT count(*) FROM {cte_name})")
+            sql = (
+                "WITH "
+                + ", ".join(cte_parts)
+                + " SELECT "
+                + " + ".join(count_parts)
+                + " AS total_deleted"
+            )
+
+        total_deleted = 0
+        try:
+            with self._get_connection() as conn, conn.cursor() as cursor:
+                cursor.execute(sql)
+                if len(target_tables) == 1:
+                    total_deleted = cursor.rowcount
+                else:
+                    row = cursor.fetchone()
+                    total_deleted = int(row[0]) if row and row[0] is not None else 0
+        except Exception as e:
+            logger.error("delete_by_filter failed: %s", e, exc_info=True)
+            raise
+
+        elapsed_ms = (time.time() - batch_start_time) * 1000.0
+        logger.info(
+            "delete_by_filter completed in %.2fms, deleted %d nodes"
+            " (shards=%d, single round-trip)",
+            elapsed_ms,
+            total_deleted,
+            len(target_tables),
+        )
+        return total_deleted
+
+    def _resolve_shards_from_filter(self, filter: dict) -> list[str]:
+        if not isinstance(filter, dict):
+            return self._get_all_shard_table_names()
+
+        user_name_value = filter.get("user_name")
+        if isinstance(user_name_value, str) and user_name_value:
+            shard = self.get_memory_graph_table_name(user_name_value)
+            logger.info(
+                "_delete_by_filter routed to single shard %s via user_name=%s",
+                shard,
+                user_name_value,
+            )
+            return [shard]
+
+        if isinstance(user_name_value, list) and user_name_value and all(
+            isinstance(v, str) and v for v in user_name_value
+        ):
+            shards = list({self.get_memory_graph_table_name(v) for v in user_name_value})
+            logger.info(
+                "_delete_by_filter routed to %d shards via user_name in %s",
+                len(shards),
+                user_name_value,
+            )
+            return shards
+
+        return self._get_all_shard_table_names()
 
     @timed
     def get_user_names_by_memory_ids(self, memory_ids: list[str]) -> dict[str, str | None]:
