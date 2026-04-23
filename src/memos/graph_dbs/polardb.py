@@ -249,6 +249,9 @@ class PolarDBGraphDB(BaseGraphDB):
     def _get_all_shard_table_names(self) -> list[str]:
         return [f'"{self.db_name}_graph_{i}"' for i in range(self._shard_count)]
 
+    def _get_all_shard_schemas(self) -> list[str]:
+        return [f"{self.db_name}_graph_{i}" for i in range(self._shard_count)]
+
     def _ensure_database_exists(self):
         try:
             logger.info(f"Using database '{self.db_name}'")
@@ -3166,11 +3169,11 @@ class PolarDBGraphDB(BaseGraphDB):
             cypher_body = self._build_cypher_edge_body(id_esc, None, type, type_filter, direction)
             union_parts = [
                 (
-                    f"SELECT * FROM cypher('{self.db_name}_graph_{i}', $$\n"
+                    f"SELECT * FROM cypher('{schema}', $$\n"
                     f"{cypher_body}\n"
                     f"$$) AS (from_id agtype, to_id agtype, edge_type agtype)"
                 )
-                for i in range(self._shard_count)
+                for schema in self._get_all_shard_schemas()
             ]
             query = " UNION ALL ".join(union_parts)
 
