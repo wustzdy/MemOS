@@ -2622,7 +2622,7 @@ class PolarDBGraphDB(BaseGraphDB):
 
     @timed
     def add_node(
-        self, id: str, memory: str, metadata: dict[str, Any], user_name: str | None = None
+        self, id: str, memory: str, metadata: dict[str, Any], user_name: str
     ) -> None:
         logger.info(f"[add_node] id: {id}, memory: {memory}, metadata: {metadata}")
 
@@ -2726,7 +2726,7 @@ class PolarDBGraphDB(BaseGraphDB):
     def add_nodes_batch(
         self,
         nodes: list[dict[str, Any]],
-        user_name: str | None = None,
+        user_name: str,
     ) -> None:
         logger.info(f" add_nodes_batch Processing only first node (total nodes: {len(nodes)})")
 
@@ -2737,9 +2737,10 @@ class PolarDBGraphDB(BaseGraphDB):
 
         effective_user_name = user_name if user_name else self.config.user_name
         schema_raw = self._get_shard_schema_raw(effective_user_name)
+        logger.info(f" add_nodes_batch schema_raw:%s: {schema_raw}")
 
         prepared_nodes = []
-        for node_data in nodes:
+        for node_data in nodes[:2]:
             try:
                 id = node_data["id"]
                 memory = node_data["memory"]
@@ -4202,8 +4203,8 @@ class PolarDBGraphDB(BaseGraphDB):
     @timed
     def delete_node_by_mem_cube_id(
         self,
-        mem_cube_id: str | None = None,
-        delete_record_id: str | None = None,
+        mem_cube_id: str,
+        delete_record_id: str,
         hard_delete: bool = False,
     ) -> int:
         logger.info(
@@ -4212,15 +4213,13 @@ class PolarDBGraphDB(BaseGraphDB):
         )
 
         if not mem_cube_id:
-            logger.warning("[delete_node_by_mem_cube_id] mem_cube_id is required but not provided")
-            return 0
-
-        if not delete_record_id:
-            logger.warning(
-                "[delete_node_by_mem_cube_id] delete_record_id is required but not provided"
+            raise ValueError(
+                "delete_node_by_mem_cube_id mem_cube_id is required but not provided"
             )
-            return 0
-
+        if not delete_record_id:
+            raise ValueError(
+                "delete_node_by_mem_cube_id delete_record_id is required but not provided"
+            )
         tbl = self.get_memory_graph_table_name(mem_cube_id)
 
         try:
@@ -4296,22 +4295,21 @@ class PolarDBGraphDB(BaseGraphDB):
     @timed
     def recover_memory_by_mem_cube_id(
         self,
-        mem_cube_id: str | None = None,
-        delete_record_id: str | None = None,
+        mem_cube_id: str,
+        delete_record_id: str,
     ) -> int:
         logger.info(
             f"recover_memory_by_mem_cube_id mem_cube_id:{mem_cube_id},delete_record_id:{delete_record_id}"
         )
         if not mem_cube_id:
-            logger.warning("recover_memory_by_mem_cube_id mem_cube_id is required but not provided")
-            return 0
+            raise ValueError(
+                "recover_memory_by_mem_cube_id mem_cube_id is required but not provided"
+            )
 
         if not delete_record_id:
-            logger.warning(
+            raise ValueError(
                 "recover_memory_by_mem_cube_id delete_record_id is required but not provided"
             )
-            return 0
-
         tbl = self.get_memory_graph_table_name(mem_cube_id)
 
         logger.info(
