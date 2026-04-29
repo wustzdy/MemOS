@@ -121,9 +121,9 @@ class PolarDBGraphDB(BaseGraphDB):
         )
 
         self._shard_count = int(
-            config.get("shard_count", 100)
+            config.get("shard_count", 400)
             if isinstance(config, dict)
-            else getattr(config, "shard_count", 100)
+            else getattr(config, "shard_count", 400)
         )
         shard_schemas = ",".join(f"{self.db_name}_graph_{i}" for i in range(self._shard_count))
         self._all_shards_search_path = (
@@ -1545,6 +1545,7 @@ class PolarDBGraphDB(BaseGraphDB):
                 f" SELECT {select_cols}"
                 f' FROM {tbl}."Memory" m CROSS JOIN q'
                 f" {where_clause_cte}"
+                f" ORDER BY rank DESC"
                 f" LIMIT {top_k}"
             )
             params = [tsquery_string]
@@ -1558,6 +1559,7 @@ class PolarDBGraphDB(BaseGraphDB):
                 f"/*+ Set(max_parallel_workers_per_gather 0) */"
                 f" WITH q AS (SELECT to_tsquery('{tsquery_config}', %s) AS fq)"
                 f" {inner_union}"
+                f" ORDER BY rank DESC"
                 f" LIMIT {top_k}"
             )
             params = [tsquery_string]
@@ -3996,9 +3998,9 @@ class PolarDBGraphDB(BaseGraphDB):
         filter: dict | None = None,
     ) -> int:
         logger.info(
-            "delete_node_by_prams memory_ids_count=%d file_ids_count=%d filter=%s writable_cube_ids=%s",
-            len(memory_ids) if memory_ids else 0,
-            len(file_ids) if file_ids else 0,
+            "delete_node_by_prams memory_ids=%s file_ids=%s filter=%s writable_cube_ids=%s",
+            memory_ids,
+            file_ids,
             filter,
             writable_cube_ids,
         )
