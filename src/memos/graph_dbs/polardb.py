@@ -252,6 +252,31 @@ class PolarDBGraphDB(BaseGraphDB):
     def _get_all_shard_schemas(self) -> list[str]:
         return [f"{self.db_name}_graph_{i}" for i in range(self._shard_count)]
 
+    def _get_existing_shard_schemas(self) -> list[str]:
+        expected_prefix = f"{self.db_name}_graph_"
+        try:
+            with self._get_connection() as conn, conn.cursor() as cursor:
+                cursor.execute(
+                    "SELECT schema_name FROM information_schema.schemata WHERE schema_name LIKE %s",
+                    (f"{expected_prefix}%",),
+                )
+                rows = cursor.fetchall()
+            existing: list[str] = []
+            for row in rows:
+                name = row[0]
+                if not isinstance(name, str) or not name.startswith(expected_prefix):
+                    continue
+                suffix = name[len(expected_prefix):]
+                if suffix.isdigit() and int(suffix) < self._shard_count:
+                    existing.append(name)
+            return existing
+        except Exception as e:
+            logger.warning(
+                "Failed to fetch existing shard schemas, fallback to all configured shards: %s",
+                e,
+            )
+            return self._get_all_shard_schemas()
+
     def _ensure_database_exists(self):
         try:
             logger.info(f"Using database '{self.db_name}'")
@@ -336,6 +361,7 @@ class PolarDBGraphDB(BaseGraphDB):
         logger.info(
             "get_memory_count request: memory_type=%s, user_name=%s", memory_type, user_name
         )
+        start_time = time.perf_counter()
         type_param = self.format_param_value(memory_type)
         if user_name:
             tbl = self.get_memory_graph_table_name(user_name)
@@ -359,6 +385,8 @@ class PolarDBGraphDB(BaseGraphDB):
             with self._get_connection() as conn, conn.cursor() as cursor:
                 cursor.execute(query, params)
                 result = cursor.fetchone()
+                elapsed = (time.perf_counter() - start_time) * 1000
+                logger.info("get_memory_count completed in %.2f ms", elapsed)
                 return int(result[0]) if result and result[0] else 0
         except Exception as e:
             logger.error(f"[get_memory_count] Failed: {e}")
@@ -4021,30 +4049,35 @@ class PolarDBGraphDB(BaseGraphDB):
 
     @timed
     def _delete_by_memory_ids(self, memory_ids: list[str]) -> int:
-        target_tables = self._get_all_shard_table_names()
-        if not target_tables:
+        start_time = time.perf_counter()
+        if not memory_ids:
+            return 0
+
+        existing_schemas = self._get_existing_shard_schemas()
+        if not existing_schemas:
+            logger.info(
+                "delete_by_memory_ids skipped: no existing shard schemas found"
+                " (configured_shards=%d)",
+                self._shard_count,
+            )
             return 0
 
         batch_start_time = time.time()
-
-        cte_parts: list[str] = []
+        cte_parts: list[str] = ["ids AS (SELECT unnest(%s::text[])::text AS mid)"]
         count_parts: list[str] = []
-        params: list = []
 
-        for idx, tbl in enumerate(target_tables):
-            schema_raw = tbl.strip('"')
+        for idx, schema_raw in enumerate(existing_schemas):
             cte_name = f"d{idx}"
             cte_parts.append(
                 f"{cte_name} AS ("
-                f'DELETE FROM {tbl}."Memory" WHERE id IN ('
+                f'DELETE FROM "{schema_raw}"."Memory" WHERE id IN ('
                 f"SELECT ag_catalog._make_graph_id("
-                f"'{schema_raw}'::name, 'Memory'::name, "
-                f"unnest(%s::text[])::cstring)"
+                f"'{schema_raw}'::name, 'Memory'::name, mid::cstring) "
+                f"FROM ids"
                 f") RETURNING 1"
                 f")"
             )
             count_parts.append(f"(SELECT count(*) FROM {cte_name})")
-            params.append(memory_ids)
 
         sql = (
             "WITH "
@@ -4053,10 +4086,11 @@ class PolarDBGraphDB(BaseGraphDB):
             + " + ".join(count_parts)
             + " AS total_deleted"
         )
+
         total_deleted = 0
         try:
             with self._get_connection() as conn, conn.cursor() as cursor:
-                cursor.execute(sql, params)
+                cursor.execute(sql, [memory_ids])
                 row = cursor.fetchone()
                 total_deleted = int(row[0]) if row and row[0] is not None else 0
         except Exception as e:
@@ -4065,11 +4099,9 @@ class PolarDBGraphDB(BaseGraphDB):
 
         elapsed_ms = (time.time() - batch_start_time) * 1000.0
         logger.info(
-            "delete_by_memory_ids completed in %.2fms, deleted %d nodes"
-            " (shards=%d, single round-trip)",
+            "delete_by_memory_ids completed in %.2fms, deleted %d nodes",
             elapsed_ms,
             total_deleted,
-            len(target_tables),
         )
         return total_deleted
 
