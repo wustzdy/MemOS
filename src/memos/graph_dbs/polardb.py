@@ -4122,7 +4122,7 @@ class PolarDBGraphDB(BaseGraphDB):
             cube_ids_on_shard = shard_to_cube_ids[tbl]
             cte_name = f"d{idx}"
 
-            params.append([f'"{cid}"' for cid in cube_ids_on_shard])
+            params.append(list(cube_ids_on_shard))
             params.append(list(file_ids))
 
             cte_parts.append(
