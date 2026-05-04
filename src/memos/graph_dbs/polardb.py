@@ -4111,33 +4111,22 @@ class PolarDBGraphDB(BaseGraphDB):
         writable_cube_ids: list[str],
         file_ids: list[str],
     ) -> int:
+
+        batch_start_time = time.time()
         shard_to_cube_ids: dict[str, list[str]] = {}
         for cube_id in writable_cube_ids:
             shard = self.get_memory_graph_table_name(cube_id)
             shard_to_cube_ids.setdefault(shard, []).append(cube_id)
 
         target_tables = list(shard_to_cube_ids.keys())
+        logger.info(f"_delete_by_cube_and_file_ids target_tables:{target_tables}")
         if not target_tables:
             return 0
 
-        logger.info(
-            "_delete_by_cube_and_file_ids routed %d cube_ids to %d shard(s)",
-            len(writable_cube_ids),
-            len(target_tables),
-        )
+        if not file_ids:
+            logger.warning("_delete_by_cube_and_file_ids skipped: file_ids is empty")
+            return 0
 
-        batch_start_time = time.time()
-
-        file_id_clauses = []
-        file_id_params: list = []
-        for file_id in file_ids:
-            file_id_clauses.append(
-                "agtype_in_operator("
-                "agtype_access_operator("
-                "VARIADIC ARRAY[properties, '\"file_ids\"'::agtype]), %s::agtype)"
-            )
-            file_id_params.append(f'"{file_id}"')
-        file_ids_where = f"({' OR '.join(file_id_clauses)})"
 
         cte_parts: list[str] = []
         count_parts: list[str] = []
@@ -4147,39 +4136,31 @@ class PolarDBGraphDB(BaseGraphDB):
             cube_ids_on_shard = shard_to_cube_ids[tbl]
             cte_name = f"d{idx}"
 
-            if len(cube_ids_on_shard) == 1:
-                cube_ids_where = (
-                    "ag_catalog.agtype_access_operator("
-                    "VARIADIC ARRAY[properties, '\"user_name\"'::agtype])::text"
-                    " = %s"
-                )
-                params.append(f'"{cube_ids_on_shard[0]}"')
-            else:
-                cube_ids_where = (
-                    "ag_catalog.agtype_access_operator("
-                    "VARIADIC ARRAY[properties, '\"user_name\"'::agtype])::text"
-                    " = ANY(%s::text[])"
-                )
-                params.append([f'"{cid}"' for cid in cube_ids_on_shard])
-
-            params.extend(file_id_params)
+            params.append([f'"{cid}"' for cid in cube_ids_on_shard])
+            params.append(list(file_ids))
 
             cte_parts.append(
                 f"{cte_name} AS ("
                 f'DELETE FROM {tbl}."Memory" WHERE '
-                f"{cube_ids_where} AND {file_ids_where}"
+                f"ag_catalog.agtype_access_operator("
+                f"VARIADIC ARRAY[properties, '\"user_name\"'::agtype])::text"
+                f" = ANY(%s::text[])"
+                f" AND (ag_catalog.agtype_access_operator("
+                f"VARIADIC ARRAY[properties, '\"file_ids\"'::agtype])::jsonb)"
+                f" ?| %s::text[]"
                 f" RETURNING 1"
                 f")"
             )
             count_parts.append(f"(SELECT count(*) FROM {cte_name})")
 
         sql = (
-            "WITH "
-            + ", ".join(cte_parts)
-            + " SELECT "
-            + " + ".join(count_parts)
-            + " AS total_deleted"
+                "WITH "
+                + ", ".join(cte_parts)
+                + " SELECT "
+                + " + ".join(count_parts)
+                + " AS total_deleted"
         )
+        logger.info(f"delete_by_cube_and_file_ids query sql: {sql},params:{params}")
 
         total_deleted = 0
         try:
@@ -4194,10 +4175,9 @@ class PolarDBGraphDB(BaseGraphDB):
         elapsed_ms = (time.time() - batch_start_time) * 1000.0
         logger.info(
             "delete_by_cube_and_file_ids completed in %.2fms, deleted %d nodes"
-            " (shards=%d, single round-trip)",
+            " (shards=%d, cube_ids=%d, file_ids=%d)",
             elapsed_ms,
             total_deleted,
-            len(target_tables),
         )
         return total_deleted
 
