@@ -2756,7 +2756,7 @@ class PolarDBGraphDB(BaseGraphDB):
         nodes: list[dict[str, Any]],
         user_name: str,
     ) -> None:
-        logger.info(f" add_nodes_batch Processing only first node (total nodes: {len(nodes)})")
+        logger.info(f" add_nodes_batch processing total nodes: {len(nodes)}, user_name:{user_name}")
 
         batch_start_time = time.perf_counter()
         if not nodes:
@@ -2765,10 +2765,10 @@ class PolarDBGraphDB(BaseGraphDB):
 
         effective_user_name = user_name if user_name else self.config.user_name
         schema_raw = self._get_shard_schema_raw(effective_user_name)
-        logger.info(f" add_nodes_batch schema_raw:%s: {schema_raw}")
+        logger.info(f" add_nodes_batch schema_raw: {schema_raw}")
 
         prepared_nodes = []
-        for node_data in nodes[:2]:
+        for node_data in nodes:
             try:
                 id = node_data["id"]
                 memory = node_data["memory"]
@@ -2875,64 +2875,48 @@ class PolarDBGraphDB(BaseGraphDB):
                         if graph_id:
                             node["properties"]["graph_id"] = str(graph_id)
 
-                    prepare_name = f"insert_mem_{embedding_column or 'no_embedding'}_{int(time.time() * 1000000)}"
-                    try:
-                        if embedding_column and any(
-                            node["embedding_vector"] for node in nodes_group
-                        ):
-                            prepare_query = f"""
-                                PREPARE {prepare_name} AS
-                                INSERT INTO {schema_raw}."Memory"(id, properties, {embedding_column})
-                                VALUES (
-                                    ag_catalog._make_graph_id('{schema_raw}'::name, 'Memory'::name, $1::text::cstring),
-                                    $2::text::agtype,
-                                    $3::vector
-                                )
-                            """
-
-                            cursor.execute(prepare_query)
-
-                            for node in nodes_group:
-                                properties_json = json.dumps(node["properties"])
-                                embedding_json = (
-                                    json.dumps(node["embedding_vector"])
-                                    if node["embedding_vector"]
-                                    else None
-                                )
-
-                                cursor.execute(
-                                    f"EXECUTE {prepare_name}(%s, %s, %s)",
-                                    (node["id"], properties_json, embedding_json),
-                                )
-                        else:
-                            prepare_query = f"""
-                                PREPARE {prepare_name} AS
-                                INSERT INTO {schema_raw}."Memory"(id, properties)
-                                VALUES (
-                                    ag_catalog._make_graph_id('{schema_raw}'::name, 'Memory'::name, $1::text::cstring),
-                                    $2::text::agtype
-                                )
-                            """
-                            cursor.execute(prepare_query)
-
-                            for node in nodes_group:
-                                properties_json = json.dumps(node["properties"])
-                                cursor.execute(
-                                    f"EXECUTE {prepare_name}(%s, %s)",
-                                    (node["id"], properties_json),
-                                )
-                    finally:
-                        try:
-                            cursor.execute(f"DEALLOCATE {prepare_name}")
-                        except Exception as dealloc_error:
-                            logger.warning(
-                                f"[add_nodes_batch] Failed to deallocate {prepare_name}: {dealloc_error}"
-                            )
-                    elapsed_time = (time.perf_counter() - batch_start_time) * 1000.0
-                    logger.info(
-                        "add_nodes_batch batch insert completed successfully in took %.1f ms",
-                        elapsed_time,
+                    has_embedding = bool(embedding_column) and any(
+                        node["embedding_vector"] for node in nodes_group
                     )
+
+                    if has_embedding:
+                        cols = f"(id, properties, {embedding_column})"
+                        value_tpl = (
+                            f"(ag_catalog._make_graph_id('{schema_raw}'::name, 'Memory'::name, %s::text::cstring),"
+                            " %s::text::agtype,"
+                            " %s::vector)"
+                        )
+                    else:
+                        cols = "(id, properties)"
+                        value_tpl = (
+                            f"(ag_catalog._make_graph_id('{schema_raw}'::name, 'Memory'::name, %s::text::cstring),"
+                            " %s::text::agtype)"
+                        )
+
+                    values_clause = ",".join([value_tpl] * len(nodes_group))
+                    sql = (
+                        f'INSERT INTO {schema_raw}."Memory"{cols} '
+                        f"VALUES {values_clause}"
+                    )
+
+                    params: list = []
+                    for node in nodes_group:
+                        params.append(node["id"])
+                        params.append(json.dumps(node["properties"]))
+                        if has_embedding:
+                            embedding = node["embedding_vector"]
+                            params.append(
+                                json.dumps(embedding) if embedding else None
+                            )
+                    logger.info(f"ssssssql:{sql}")
+                    cursor.execute(sql, params)
+
+            elapsed_time = (time.perf_counter() - batch_start_time) * 1000.0
+            logger.info(
+                "add_nodes_batch completed in %.1f ms (count=%d)",
+                elapsed_time,
+                len(prepared_nodes),
+            )
 
         except Exception as e:
             logger.error(f"[add_nodes_batch] Failed to add nodes: {e}", exc_info=True)
