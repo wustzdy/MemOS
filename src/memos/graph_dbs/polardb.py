@@ -2756,8 +2756,6 @@ class PolarDBGraphDB(BaseGraphDB):
         nodes: list[dict[str, Any]],
         user_name: str,
     ) -> None:
-        logger.info(f" add_nodes_batch processing total nodes: {len(nodes)}, user_name:{user_name}")
-
         batch_start_time = time.perf_counter()
         if not nodes:
             logger.warning("[add_nodes_batch] Empty nodes list, skipping")
@@ -2765,7 +2763,12 @@ class PolarDBGraphDB(BaseGraphDB):
 
         effective_user_name = user_name if user_name else self.config.user_name
         schema_raw = self._get_shard_schema_raw(effective_user_name)
-        logger.info(f" add_nodes_batch schema_raw: {schema_raw}")
+        logger.info(
+            "add_nodes_batch start count=%d user_name=%s schema=%s",
+            len(nodes),
+            user_name,
+            schema_raw,
+        )
 
         prepared_nodes = []
         for node_data in nodes:
@@ -2908,7 +2911,6 @@ class PolarDBGraphDB(BaseGraphDB):
                             params.append(
                                 json.dumps(embedding) if embedding else None
                             )
-                    logger.info(f"ssssssql:{sql}")
                     cursor.execute(sql, params)
 
             elapsed_time = (time.perf_counter() - batch_start_time) * 1000.0
