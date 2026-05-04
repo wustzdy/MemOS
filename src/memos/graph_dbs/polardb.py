@@ -4160,10 +4160,8 @@ class PolarDBGraphDB(BaseGraphDB):
 
         elapsed_ms = (time.time() - batch_start_time) * 1000.0
         logger.info(
-            "delete_by_cube_and_file_ids completed in %.2fms, deleted %d nodes"
-            " (shards=%d, cube_ids=%d, file_ids=%d)",
+            "delete_by_cube_and_file_ids completed in %.2fms",
             elapsed_ms,
-            total_deleted,
         )
         return total_deleted
 
