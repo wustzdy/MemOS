@@ -380,7 +380,6 @@ class PolarDBGraphDB(BaseGraphDB):
             query = f"SELECT SUM(cnt) FROM ({' UNION ALL '.join(union_parts)}) t"
             params = [type_param] * len(union_parts)
 
-        logger.info("get_memory_count query: query=%s, params=%s", query, params)
         try:
             with self._get_connection() as conn, conn.cursor() as cursor:
                 cursor.execute(query, params)
