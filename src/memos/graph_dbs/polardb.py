@@ -2977,6 +2977,9 @@ class PolarDBGraphDB(BaseGraphDB):
         except Exception:
             return None
 
+    """
+    Deprecated
+    """
     @timed
     def get_neighbors_by_tag(
         self,
@@ -3088,6 +3091,11 @@ class PolarDBGraphDB(BaseGraphDB):
             len(data.get("nodes", [])),
             len(data.get("edges", [])),
         )
+
+        if not user_name:
+            raise ValueError(
+                "import_graph requires user_name && user_name is not null "
+            )
         resolved_user_name = user_name
 
         for node in data.get("nodes", []):
@@ -3180,8 +3188,14 @@ class PolarDBGraphDB(BaseGraphDB):
     def get_edges(
         self, id: str, type: str = "ANY", direction: str = "ANY", user_name: str | None = None
     ) -> list[dict[str, str]]:
+
         start_time = time.perf_counter()
         logger.info(f" get_edges id:{id},type:{type},direction:{direction},user_name:{user_name}")
+        if not user_name:
+            raise ValueError(
+                "get_edges requires user_name && user_name is not null "
+            )
+
         resolved_user_name = user_name
         if direction not in ("OUTGOING", "INCOMING", "ANY"):
             raise ValueError("Invalid direction. Must be 'OUTGOING', 'INCOMING', or 'ANY'.")
@@ -3213,7 +3227,7 @@ class PolarDBGraphDB(BaseGraphDB):
             ]
             query = " UNION ALL ".join(union_parts)
 
-        logger.info(f"get_edges query length:{len(query)}")
+        logger.info(f"get_edges query:{query}")
         try:
             with self._get_connection() as conn, conn.cursor() as cursor:
                 cursor.execute(query)
