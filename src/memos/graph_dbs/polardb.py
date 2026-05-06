@@ -1280,6 +1280,8 @@ class PolarDBGraphDB(BaseGraphDB):
             scope,
             user_name,
         )
+        if not user_name:
+           return []
         resolved_user_name = user_name
 
         where_clauses = []
@@ -1500,11 +1502,12 @@ class PolarDBGraphDB(BaseGraphDB):
 
         start_time = time.perf_counter()
         logger.info(
-            "search_by_fulltext query_words=%s, top_k=%s, scope=%s, user_name=%s",
+            "search_by_fulltext query_words=%s, top_k=%s, scope=%s, user_name=%s,filter=%s",
             query_words,
             top_k,
             scope,
             resolved_user_name,
+            filter,
         )
         where_clauses = []
 
@@ -1545,7 +1548,7 @@ class PolarDBGraphDB(BaseGraphDB):
 
         filter_conditions = self._build_filter_conditions_sql(filter)
         where_clauses.extend(filter_conditions)
-        tsquery_string = " | ".join(query_words)
+        tsquery_string = " & ".join(query_words)
 
         where_clauses.append(f"{tsvector_field} @@ to_tsquery('{tsquery_config}', %s)")
 
