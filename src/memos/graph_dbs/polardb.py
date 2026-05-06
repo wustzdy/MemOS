@@ -2670,7 +2670,11 @@ class PolarDBGraphDB(BaseGraphDB):
     def add_node(self, id: str, memory: str, metadata: dict[str, Any], user_name: str) -> None:
         logger.info(f"[add_node] id: {id}, memory: {memory}, metadata: {metadata}")
 
-        user_name = user_name if user_name else self.config.user_name
+        if not user_name:
+            raise ValueError(
+                "add_node requires user_name && user_name is not null "
+            )
+
         schema_raw = self._get_shard_schema_raw(user_name)
         metadata["user_name"] = user_name
 
@@ -2777,7 +2781,12 @@ class PolarDBGraphDB(BaseGraphDB):
             logger.warning("[add_nodes_batch] Empty nodes list, skipping")
             return
 
-        effective_user_name = user_name if user_name else self.config.user_name
+        if not user_name:
+            raise ValueError(
+                "add_nodes_batch requires user_name && user_name is not null "
+            )
+
+        effective_user_name = user_name
         schema_raw = self._get_shard_schema_raw(effective_user_name)
         logger.info(
             "add_nodes_batch start count=%d user_name=%s schema=%s",
