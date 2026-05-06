@@ -1707,7 +1707,7 @@ class PolarDBGraphDB(BaseGraphDB):
                                properties,
                                timeline,
                                ag_catalog.agtype_access_operator(properties, '"id"'::agtype) AS old_id,
-                               (embedding <=> %s::vector(1024)) AS scope_distance
+                               (embedding <=> %s::halfvec(1024)) AS scope_distance
                         FROM {tbl}."Memory"
                         {where_clause}
                         ORDER BY scope_distance ASC
