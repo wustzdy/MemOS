@@ -2272,14 +2272,18 @@ class PolarDBGraphDB(BaseGraphDB):
         knowledgebase_ids: list | None = None,
         status: str | None = None,
     ) -> list[dict]:
+        start_time = time.perf_counter()
         logger.info(
-            "get_all_memory_items scope=%s, user_name=%s, filter=%s, knowledgebase_ids=%s, status=%s",
+            "get_all_memory_items started scope=%s, user_name=%s, filter=%s,"
+            " knowledgebase_ids=%s, status=%s",
             scope,
             user_name,
             filter,
             knowledgebase_ids,
             status,
         )
+        if not user_name:
+            return []
 
         resolved_user_name = user_name
         if scope not in {"WorkingMemory", "LongTermMemory", "UserMemory", "OuterMemory"}:
@@ -2365,6 +2369,8 @@ class PolarDBGraphDB(BaseGraphDB):
             except Exception as e:
                 logger.warning("get_all_memory_items failed: %s", e, exc_info=True)
 
+            elapsed_ms = (time.perf_counter() - start_time) * 1000
+            logger.info("get_all_memory_items finished in %.2f ms", elapsed_ms)
             return nodes
         else:
             if len(shard_schemas) == 1:
@@ -2401,6 +2407,8 @@ class PolarDBGraphDB(BaseGraphDB):
             except Exception as e:
                 logger.error("get_all_memory_items failed: %s", e, exc_info=True)
 
+            elapsed_ms = (time.perf_counter() - start_time) * 1000
+            logger.info("get_all_memory_items finished in %.2f ms", elapsed_ms)
             return nodes
 
     @timed
