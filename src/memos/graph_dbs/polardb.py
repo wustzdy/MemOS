@@ -266,7 +266,7 @@ class PolarDBGraphDB(BaseGraphDB):
                 name = row[0]
                 if not isinstance(name, str) or not name.startswith(expected_prefix):
                     continue
-                suffix = name[len(expected_prefix):]
+                suffix = name[len(expected_prefix) :]
                 if suffix.isdigit() and int(suffix) < self._shard_count:
                     existing.append(name)
             return existing
@@ -1281,7 +1281,7 @@ class PolarDBGraphDB(BaseGraphDB):
             user_name,
         )
         if not user_name:
-           return []
+            return []
         resolved_user_name = user_name
 
         where_clauses = []
@@ -1392,7 +1392,7 @@ class PolarDBGraphDB(BaseGraphDB):
             filter,
         )
         if not user_name:
-           return []
+            return []
         resolved_user_name = user_name
 
         where_clauses = []
@@ -2671,9 +2671,7 @@ class PolarDBGraphDB(BaseGraphDB):
         logger.info(f"[add_node] id: {id}, memory: {memory}, metadata: {metadata}")
 
         if not user_name:
-            raise ValueError(
-                "add_node requires user_name && user_name is not null "
-            )
+            raise ValueError("add_node requires user_name && user_name is not null ")
 
         schema_raw = self._get_shard_schema_raw(user_name)
         metadata["user_name"] = user_name
@@ -2782,9 +2780,7 @@ class PolarDBGraphDB(BaseGraphDB):
             return
 
         if not user_name:
-            raise ValueError(
-                "add_nodes_batch requires user_name && user_name is not null "
-            )
+            raise ValueError("add_nodes_batch requires user_name && user_name is not null ")
 
         effective_user_name = user_name
         schema_raw = self._get_shard_schema_raw(effective_user_name)
@@ -2922,10 +2918,7 @@ class PolarDBGraphDB(BaseGraphDB):
                         )
 
                     values_clause = ",".join([value_tpl] * len(nodes_group))
-                    sql = (
-                        f'INSERT INTO {schema_raw}."Memory"{cols} '
-                        f"VALUES {values_clause}"
-                    )
+                    sql = f'INSERT INTO {schema_raw}."Memory"{cols} VALUES {values_clause}'
 
                     params: list = []
                     for node in nodes_group:
@@ -2933,9 +2926,7 @@ class PolarDBGraphDB(BaseGraphDB):
                         params.append(json.dumps(node["properties"]))
                         if has_embedding:
                             embedding = node["embedding_vector"]
-                            params.append(
-                                json.dumps(embedding) if embedding else None
-                            )
+                            params.append(json.dumps(embedding) if embedding else None)
                     cursor.execute(sql, params)
 
             elapsed_time = (time.perf_counter() - batch_start_time) * 1000.0
@@ -2980,6 +2971,7 @@ class PolarDBGraphDB(BaseGraphDB):
     """
     Deprecated
     """
+
     @timed
     def get_neighbors_by_tag(
         self,
@@ -3093,9 +3085,7 @@ class PolarDBGraphDB(BaseGraphDB):
         )
 
         if not user_name:
-            raise ValueError(
-                "import_graph requires user_name && user_name is not null "
-            )
+            raise ValueError("import_graph requires user_name && user_name is not null ")
         resolved_user_name = user_name
 
         for node in data.get("nodes", []):
@@ -3188,13 +3178,10 @@ class PolarDBGraphDB(BaseGraphDB):
     def get_edges(
         self, id: str, type: str = "ANY", direction: str = "ANY", user_name: str | None = None
     ) -> list[dict[str, str]]:
-
         start_time = time.perf_counter()
         logger.info(f" get_edges id:{id},type:{type},direction:{direction},user_name:{user_name}")
         if not user_name:
-            raise ValueError(
-                "get_edges requires user_name && user_name is not null "
-            )
+            raise ValueError("get_edges requires user_name && user_name is not null ")
 
         resolved_user_name = user_name
         if direction not in ("OUTGOING", "INCOMING", "ANY"):
@@ -4086,7 +4073,6 @@ class PolarDBGraphDB(BaseGraphDB):
             )
             return 0
 
-        batch_start_time = time.time()
         cte_parts: list[str] = ["ids AS (SELECT unnest(%s::text[])::text AS mid)"]
         count_parts: list[str] = []
 
@@ -4121,7 +4107,7 @@ class PolarDBGraphDB(BaseGraphDB):
             logger.error("delete_by_memory_ids failed: %s", e, exc_info=True)
             raise
 
-        elapsed_ms = (time.time() - batch_start_time) * 1000.0
+        elapsed_ms = (time.perf_counter() - start_time) * 1000.0
         logger.info(
             "delete_by_memory_ids completed in %.2fms, deleted %d nodes",
             elapsed_ms,
@@ -4134,7 +4120,6 @@ class PolarDBGraphDB(BaseGraphDB):
         writable_cube_ids: list[str],
         file_ids: list[str],
     ) -> int:
-
         batch_start_time = time.time()
         shard_to_cube_ids: dict[str, list[str]] = {}
         for cube_id in writable_cube_ids:
@@ -4149,7 +4134,6 @@ class PolarDBGraphDB(BaseGraphDB):
         if not file_ids:
             logger.warning("_delete_by_cube_and_file_ids skipped: file_ids is empty")
             return 0
-
 
         cte_parts: list[str] = []
         count_parts: list[str] = []
@@ -4177,11 +4161,11 @@ class PolarDBGraphDB(BaseGraphDB):
             count_parts.append(f"(SELECT count(*) FROM {cte_name})")
 
         sql = (
-                "WITH "
-                + ", ".join(cte_parts)
-                + " SELECT "
-                + " + ".join(count_parts)
-                + " AS total_deleted"
+            "WITH "
+            + ", ".join(cte_parts)
+            + " SELECT "
+            + " + ".join(count_parts)
+            + " AS total_deleted"
         )
         logger.info(f"delete_by_cube_and_file_ids query sql: {sql},params:{params}")
 
@@ -4201,7 +4185,6 @@ class PolarDBGraphDB(BaseGraphDB):
             elapsed_ms,
         )
         return total_deleted
-
 
     def _delete_by_filter(self, filter: dict) -> int:
         filter_conditions = self._build_filter_conditions_sql(filter)
@@ -4226,10 +4209,7 @@ class PolarDBGraphDB(BaseGraphDB):
             for idx, tbl in enumerate(target_tables):
                 cte_name = f"d{idx}"
                 cte_parts.append(
-                    f"{cte_name} AS ("
-                    f'DELETE FROM {tbl}."Memory" WHERE {where_clause}'
-                    f" RETURNING 1"
-                    f")"
+                    f'{cte_name} AS (DELETE FROM {tbl}."Memory" WHERE {where_clause} RETURNING 1)'
                 )
                 count_parts.append(f"(SELECT count(*) FROM {cte_name})")
             sql = (
@@ -4255,8 +4235,7 @@ class PolarDBGraphDB(BaseGraphDB):
 
         elapsed_ms = (time.time() - batch_start_time) * 1000.0
         logger.info(
-            "delete_by_filter completed in %.2fms, deleted %d nodes"
-            " (shards=%d, single round-trip)",
+            "delete_by_filter completed in %.2fms, deleted %d nodes (shards=%d, single round-trip)",
             elapsed_ms,
             total_deleted,
             len(target_tables),
@@ -4277,8 +4256,10 @@ class PolarDBGraphDB(BaseGraphDB):
             )
             return [shard]
 
-        if isinstance(user_name_value, list) and user_name_value and all(
-            isinstance(v, str) and v for v in user_name_value
+        if (
+            isinstance(user_name_value, list)
+            and user_name_value
+            and all(isinstance(v, str) and v for v in user_name_value)
         ):
             shards = list({self.get_memory_graph_table_name(v) for v in user_name_value})
             logger.info(
