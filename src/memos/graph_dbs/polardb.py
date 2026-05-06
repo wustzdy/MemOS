@@ -1383,10 +1383,11 @@ class PolarDBGraphDB(BaseGraphDB):
         **kwargs,
     ) -> list[dict]:
         logger.info(
-            "search_by_keywords_tfidf query_words=%s, scope=%s, user_name=%s",
+            "search_by_keywords_tfidf query_words=%s, scope=%s, user_name=%s,filter=%s",
             query_words,
             scope,
             user_name,
+            filter,
         )
         resolved_user_name = user_name
 
