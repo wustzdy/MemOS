@@ -4202,7 +4202,7 @@ class PolarDBGraphDB(BaseGraphDB):
                 + " + ".join(count_parts)
                 + " AS total_deleted"
             )
-
+        logger.info("_delete_by_filter sql=%s", sql)
         total_deleted = 0
         try:
             with self._get_connection() as conn, conn.cursor() as cursor:
