@@ -4033,7 +4033,6 @@ class PolarDBGraphDB(BaseGraphDB):
         )
         return 0
 
-    @timed
     def _delete_by_memory_ids(self, memory_ids: list[str]) -> int:
         start_time = time.perf_counter()
         if not memory_ids:
@@ -4091,7 +4090,6 @@ class PolarDBGraphDB(BaseGraphDB):
         )
         return total_deleted
 
-    @timed
     def _delete_by_cube_and_file_ids(
         self,
         writable_cube_ids: list[str],
@@ -4165,7 +4163,7 @@ class PolarDBGraphDB(BaseGraphDB):
         )
         return total_deleted
 
-    @timed
+
     def _delete_by_filter(self, filter: dict) -> int:
         filter_conditions = self._build_filter_conditions_sql(filter)
         if not filter_conditions:
