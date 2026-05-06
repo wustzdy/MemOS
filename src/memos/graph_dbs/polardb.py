@@ -1389,6 +1389,8 @@ class PolarDBGraphDB(BaseGraphDB):
             user_name,
             filter,
         )
+        if not user_name:
+           return []
         resolved_user_name = user_name
 
         where_clauses = []
