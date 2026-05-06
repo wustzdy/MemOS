@@ -1332,17 +1332,18 @@ class PolarDBGraphDB(BaseGraphDB):
         if return_fields:
             select_clause += ", properties"
 
+        like_pattern = f"%{query_word}%"
         if resolved_user_name:
             tbl = self.get_memory_graph_table_name(resolved_user_name)
             query = f'{select_clause} FROM {tbl}."Memory" {where_clause}'
-            params = (query_word,)
+            params = (like_pattern,)
         else:
             union_parts = [
                 f'{select_clause} FROM {tbl}."Memory" {where_clause}'
                 for tbl in self._get_all_shard_table_names()
             ]
             query = " UNION ALL ".join(union_parts)
-            params = tuple(query_word for _ in union_parts)
+            params = tuple(like_pattern for _ in union_parts)
 
         logger.info("search_by_keywords_like query=%s, params=%s", query, params)
         try:
