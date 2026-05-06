@@ -1885,6 +1885,8 @@ class PolarDBGraphDB(BaseGraphDB):
             params,
             user_name,
         )
+        if not user_name:
+            return []
         if not group_fields:
             raise ValueError("group_fields cannot be empty")
 
