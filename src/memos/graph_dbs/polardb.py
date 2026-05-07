@@ -2082,6 +2082,7 @@ class PolarDBGraphDB(BaseGraphDB):
             return filter_obj
 
         filter_for_sql = _extract_special_filter_values(filter)
+        logger.info(f"filter_for_sql:{filter_for_sql}")
 
         total_nodes = 0
         total_edges = 0
@@ -2104,13 +2105,16 @@ class PolarDBGraphDB(BaseGraphDB):
             and extracted_mem_cube_id.strip() != ""
         )
 
+        object_type_value: str | None = None
+        if has_object_type_filter:
+            object_type_value = extracted_object_type.strip().lower()
+
         if resolved_user_name and not has_object_type_filter:
             where_conditions.append(
                 f"ag_catalog.agtype_access_operator(properties, '\"user_name\"'::agtype) = '\"{resolved_user_name}\"'::agtype"
             )
 
         if has_object_type_filter:
-            object_type_value = extracted_object_type.strip().lower()
             escaped_mem_cube_id = extracted_mem_cube_id.replace("'", "''")
             if object_type_value == "user":
                 where_conditions.append(
@@ -2170,8 +2174,14 @@ class PolarDBGraphDB(BaseGraphDB):
 
         select_cols = "id, properties, embedding" if include_embedding else "id, properties"
 
+        single_shard_route_user_name: str | None = None
         if resolved_user_name:
-            tbl = self.get_memory_graph_table_name(resolved_user_name)
+            single_shard_route_user_name = resolved_user_name
+        elif has_object_type_filter and object_type_value == "public":
+            single_shard_route_user_name = extracted_mem_cube_id
+
+        if single_shard_route_user_name:
+            tbl = self.get_memory_graph_table_name(single_shard_route_user_name)
             count_query = f'SELECT COUNT(*) AS total_count FROM {tbl}."Memory" {where_clause}'
             data_query = (
                 f'SELECT {select_cols} FROM {tbl}."Memory"'
@@ -2192,6 +2202,8 @@ class PolarDBGraphDB(BaseGraphDB):
                 f"SELECT {select_cols} FROM ({' UNION ALL '.join(data_parts)}) t"
                 f" {order_clause} {pagination_clause}"
             )
+        # logger.info("export_graph count_query=%s", count_query)
+        # logger.info("export_graph data_query=%s", data_query)
 
         try:
             with self._get_connection() as conn, conn.cursor() as cursor:
