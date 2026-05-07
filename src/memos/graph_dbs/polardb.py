@@ -2202,8 +2202,7 @@ class PolarDBGraphDB(BaseGraphDB):
                 f"SELECT {select_cols} FROM ({' UNION ALL '.join(data_parts)}) t"
                 f" {order_clause} {pagination_clause}"
             )
-        # logger.info("export_graph count_query=%s", count_query)
-        # logger.info("export_graph data_query=%s", data_query)
+        logger.info("export_graph count_query=%s,data_query=%s", count_query, data_query)
 
         try:
             with self._get_connection() as conn, conn.cursor() as cursor:
