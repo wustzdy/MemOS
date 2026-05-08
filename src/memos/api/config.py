@@ -1239,6 +1239,7 @@ class APIConfig:
             "neo4j-community": neo4j_community_config,
             "neo4j": neo4j_config,
             "polardb": polardb_config,
+            "polardb_dual": polardb_config,
             "postgres": postgres_config,
         }
         internet_config = (
