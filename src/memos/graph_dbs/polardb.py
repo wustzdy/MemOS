@@ -2778,9 +2778,9 @@ class PolarDBGraphDB(BaseGraphDB):
 
     @timed
     def add_nodes_batch(
-            self,
-            nodes: list[dict[str, Any]],
-            user_name: str,
+        self,
+        nodes: list[dict[str, Any]],
+        user_name: str,
     ) -> None:
         batch_start_time = time.perf_counter()
         if not nodes:
@@ -2907,7 +2907,7 @@ class PolarDBGraphDB(BaseGraphDB):
                     prepare_name = f"insert_mem_{embedding_column or 'no_embedding'}_{int(time.time() * 1000000)}"
                     try:
                         if embedding_column and any(
-                                node["embedding_vector"] for node in nodes_group
+                            node["embedding_vector"] for node in nodes_group
                         ):
                             prepare_query = f"""
                                 PREPARE {prepare_name} AS
