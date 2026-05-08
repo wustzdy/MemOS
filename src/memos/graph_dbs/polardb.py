@@ -1718,7 +1718,7 @@ class PolarDBGraphDB(BaseGraphDB):
                     WHERE scope_distance < 0.9;
                 """
         vector_str = convert_to_vector(vector)
-        query = query.replace("%s::vector(1024)", f"'{vector_str}'::vector(1024)")
+        query = query.replace("%s::halfvec(1024)", f"'{vector_str}'::halfvec(1024)")
         params = []
 
         query_lines = query.strip().split("\n")
