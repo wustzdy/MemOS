@@ -2778,14 +2778,17 @@ class PolarDBGraphDB(BaseGraphDB):
 
     @timed
     def add_nodes_batch(
-        self,
-        nodes: list[dict[str, Any]],
-        user_name: str,
+            self,
+            nodes: list[dict[str, Any]],
+            user_name: str,
     ) -> None:
         batch_start_time = time.perf_counter()
         if not nodes:
             logger.warning("[add_nodes_batch] Empty nodes list, skipping")
             return
+
+        if not user_name:
+            raise ValueError("add_nodes_batch requires user_name && user_name is not null ")
 
         effective_user_name = user_name
         schema_raw = self._get_shard_schema_raw(effective_user_name)
@@ -2883,19 +2886,19 @@ class PolarDBGraphDB(BaseGraphDB):
                     ids_to_delete = [node["id"] for node in nodes_group]
                     if ids_to_delete:
                         delete_query = f"""
-                            DELETE FROM {schema_raw}."Memory"
-                            WHERE id IN (
-                                SELECT ag_catalog._make_graph_id('{schema_raw}'::name, 'Memory'::name, unnest(%s::text[])::cstring)
-                            )
-                        """
+                                DELETE FROM {schema_raw}."Memory"
+                                WHERE id IN (
+                                    SELECT ag_catalog._make_graph_id('{schema_raw}'::name, 'Memory'::name, unnest(%s::text[])::cstring)
+                                )
+                            """
                         cursor.execute(delete_query, (ids_to_delete,))
 
                     get_graph_ids_query = f"""
-                        SELECT
-                            id_val,
-                            ag_catalog._make_graph_id('{schema_raw}'::name, 'Memory'::name, id_val::text::cstring) as graph_id
-                        FROM unnest(%s::text[]) as id_val
-                    """
+                            SELECT
+                                id_val,
+                                ag_catalog._make_graph_id('{schema_raw}'::name, 'Memory'::name, id_val::text::cstring) as graph_id
+                            FROM unnest(%s::text[]) as id_val
+                        """
                     cursor.execute(get_graph_ids_query, (ids_to_delete,))
                     graph_id_map = {row[0]: row[1] for row in cursor.fetchall()}
 
@@ -2904,65 +2907,44 @@ class PolarDBGraphDB(BaseGraphDB):
                         if graph_id:
                             node["properties"]["graph_id"] = str(graph_id)
 
-                    prepare_name = f"insert_mem_{embedding_column or 'no_embedding'}_{int(time.time() * 1000000)}"
-                    try:
-                        if embedding_column and any(
-                            node["embedding_vector"] for node in nodes_group
-                        ):
-                            prepare_query = f"""
-                                PREPARE {prepare_name} AS
-                                INSERT INTO {schema_raw}."Memory"(id, properties, {embedding_column})
-                                VALUES (
-                                    ag_catalog._make_graph_id('{schema_raw}'::name, 'Memory'::name, $1::text::cstring),
-                                    $2::text::agtype,
-                                    $3::vector
-                                )
-                            """
-
-                            cursor.execute(prepare_query)
-
-                            for node in nodes_group:
-                                properties_json = json.dumps(node["properties"])
-                                embedding_json = (
-                                    json.dumps(node["embedding_vector"])
-                                    if node["embedding_vector"]
-                                    else None
-                                )
-
-                                cursor.execute(
-                                    f"EXECUTE {prepare_name}(%s, %s, %s)",
-                                    (node["id"], properties_json, embedding_json),
-                                )
-                        else:
-                            prepare_query = f"""
-                                PREPARE {prepare_name} AS
-                                INSERT INTO {schema_raw}."Memory"(id, properties)
-                                VALUES (
-                                    ag_catalog._make_graph_id('{schema_raw}'::name, 'Memory'::name, $1::text::cstring),
-                                    $2::text::agtype
-                                )
-                            """
-                            cursor.execute(prepare_query)
-
-                            for node in nodes_group:
-                                properties_json = json.dumps(node["properties"])
-                                cursor.execute(
-                                    f"EXECUTE {prepare_name}(%s, %s)",
-                                    (node["id"], properties_json),
-                                )
-                    finally:
-                        try:
-                            cursor.execute(f"DEALLOCATE {prepare_name}")
-                        except Exception as dealloc_error:
-                            logger.warning(
-                                f"[add_nodes_batch] Failed to deallocate {prepare_name}: {dealloc_error}"
-                            )
-                    elapsed_time = (time.perf_counter() - batch_start_time) * 1000.0
-                    logger.info(
-                        "add_nodes_batch completed in %.1f ms (count=%d)",
-                        elapsed_time,
-                        len(prepared_nodes),
+                    has_embedding = bool(embedding_column) and any(
+                        node["embedding_vector"] for node in nodes_group
                     )
+
+                    if has_embedding:
+                        cols = f"(id, properties, {embedding_column})"
+                        value_tpl = (
+                            f"(ag_catalog._make_graph_id('{schema_raw}'::name, 'Memory'::name, %s::text::cstring),"
+                            " %s::text::agtype,"
+                            " %s::vector)"
+                        )
+                    else:
+                        cols = "(id, properties)"
+                        value_tpl = (
+                            f"(ag_catalog._make_graph_id('{schema_raw}'::name, 'Memory'::name, %s::text::cstring),"
+                            " %s::text::agtype)"
+                        )
+
+                    values_clause = ",".join([value_tpl] * len(nodes_group))
+                    sql = f'INSERT INTO {schema_raw}."Memory"{cols} VALUES {values_clause}'
+
+                    params: list = []
+                    for node in nodes_group:
+                        params.append(node["id"])
+                        params.append(json.dumps(node["properties"]))
+                        if has_embedding:
+                            embedding = node["embedding_vector"]
+                            params.append(json.dumps(embedding) if embedding else None)
+                    cursor.execute(sql, params)
+
+            elapsed_time = (time.perf_counter() - batch_start_time) * 1000.0
+            logger.info(
+                "add_nodes_batch completed in %.1f ms, (count=%d), user_name=%s, schema=%s",
+                elapsed_time,
+                len(prepared_nodes),
+                user_name,
+                schema_raw
+            )
 
         except Exception as e:
             logger.error(f"[add_nodes_batch] Failed to add nodes: {e}", exc_info=True)
