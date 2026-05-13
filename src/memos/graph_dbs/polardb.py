@@ -94,6 +94,7 @@ class PolarDBGraphDB(BaseGraphDB):
             user = config.get("user")
             password = config.get("password")
             maxconn = config.get("maxconn", 10)
+            minconn = config.get("minconn", 1)
             self._connection_wait_timeout = config.get("connection_wait_timeout", 30)
             self._skip_connection_health_check = config.get("skip_connection_health_check", False)
             self._warm_up_on_startup_by_full = config.get("warm_up_on_startup_by_full", False)
@@ -106,6 +107,7 @@ class PolarDBGraphDB(BaseGraphDB):
             user = config.user
             password = config.password
             maxconn = config.maxconn if hasattr(config, "maxconn") else 10
+            minconn = config.minconn if hasattr(config, "minconn") else 1
             self._connection_wait_timeout = getattr(config, "connection_wait_timeout", 30)
             self._skip_connection_health_check = getattr(
                 config, "skip_connection_health_check", False
@@ -117,7 +119,7 @@ class PolarDBGraphDB(BaseGraphDB):
             )
 
         logger.info(
-            f" polardb init db_name: {self.db_name} && maxconn: {maxconn} && connection_wait_timeout: {self._connection_wait_timeout}s"
+            f" polardb init db_name: {self.db_name} && minconn: {minconn} && maxconn: {maxconn} && connection_wait_timeout: {self._connection_wait_timeout}s"
         )
 
         self._shard_count = int(
@@ -130,7 +132,7 @@ class PolarDBGraphDB(BaseGraphDB):
             f'{self.db_name}_graph,{shard_schemas},ag_catalog,"$user",public'
         )
         self.connection_pool = psycopg2.pool.ThreadedConnectionPool(
-            minconn=1,
+            minconn=minconn,
             maxconn=maxconn,
             host=host,
             port=port,
@@ -142,7 +144,6 @@ class PolarDBGraphDB(BaseGraphDB):
             keepalives_interval=15,
             keepalives_count=5,
             keepalives=1,
-            options=f"-c search_path={self._all_shards_search_path}",
         )
 
         self._semaphore = threading.BoundedSemaphore(maxconn)
@@ -194,16 +195,21 @@ class PolarDBGraphDB(BaseGraphDB):
     def _get_connection(self):
         import psycopg2
 
+        t_conn_total_start = time.perf_counter()
+
         timeout = self._connection_wait_timeout
+        t_sem_start = time.perf_counter()
         if timeout is None or timeout <= 0:
             self._semaphore.acquire()
         elif not self._semaphore.acquire(timeout=timeout):
             logger.warning(f"Timeout waiting for connection slot ({timeout}s)")
             raise RuntimeError("Connection pool busy")
+        t_sem_elapsed = (time.perf_counter() - t_sem_start) * 1000.0
 
         conn = None
         broken = False
         try:
+            t_getconn_start = time.perf_counter()
             for attempt in range(2):
                 conn = self.connection_pool.getconn()
                 conn.autocommit = True
@@ -219,8 +225,22 @@ class PolarDBGraphDB(BaseGraphDB):
                     conn = None
             else:
                 raise RuntimeError("Cannot obtain valid DB connection after 2 attempts")
+            t_getconn_elapsed = (time.perf_counter() - t_getconn_start) * 1000.0
+
+            t_set_path_start = time.perf_counter()
             with conn.cursor() as cur:
                 cur.execute(f"SET search_path = {self._all_shards_search_path};")
+            t_set_path_elapsed = (time.perf_counter() - t_set_path_start) * 1000.0
+
+            t_conn_total_elapsed = (time.perf_counter() - t_conn_total_start) * 1000.0
+            logger.info(
+                "_get_connection breakdown: total=%.1f ms "
+                "(semaphore=%.1f, getconn+health_check=%.1f, set_search_path=%.1f)",
+                t_conn_total_elapsed,
+                t_sem_elapsed,
+                t_getconn_elapsed,
+                t_set_path_elapsed,
+            )
             yield conn
         except psycopg2.Error as e:
             broken = True
@@ -938,7 +958,7 @@ class PolarDBGraphDB(BaseGraphDB):
             for _ in union_parts:
                 params.extend(id_params)
 
-        logger.info("get_nodes query=%s, params_count=%d", query, len(params))
+        logger.info("get_nodes query=%s, params_count=%s", query, params)
 
         try:
             with self._get_connection() as conn, conn.cursor() as cursor:
@@ -1659,6 +1679,7 @@ class PolarDBGraphDB(BaseGraphDB):
         tbl = self.get_memory_graph_table_name(user_name)
 
         start_time = time.perf_counter()
+        t_build_query_start = time.perf_counter()
         where_clauses = []
         if scope:
             where_clauses.append(
@@ -1732,14 +1753,28 @@ class PolarDBGraphDB(BaseGraphDB):
             else:
                 pass
 
-        logger.info(" search_by_embedding query: %s", query)
+        t_build_query_elapsed = (time.perf_counter() - t_build_query_start) * 1000.0
+        logger.info("search_by_embedding phase_build_query took %.1f ms", t_build_query_elapsed)
 
+        t_get_conn_start = time.perf_counter()
         with self._get_connection() as conn, conn.cursor() as cursor:
+            t_get_conn_elapsed = (time.perf_counter() - t_get_conn_start) * 1000.0
+            logger.info("search_by_embedding phase_get_connection took %.1f ms", t_get_conn_elapsed)
+
+            t_execute_start = time.perf_counter()
             if params:
                 cursor.execute(query, params)
             else:
                 cursor.execute(query)
             results = cursor.fetchall()
+            t_execute_elapsed = (time.perf_counter() - t_execute_start) * 1000.0
+            logger.info(
+                "search_by_embedding phase_execute_fetchall took %.1f ms, rows=%d",
+                t_execute_elapsed,
+                len(results),
+            )
+
+            t_parse_start = time.perf_counter()
             output = []
             for row in results:
                 if len(row) < 5:
@@ -1758,9 +1793,21 @@ class PolarDBGraphDB(BaseGraphDB):
                         properties = row[1]
                         item.update(self._extract_fields_from_properties(properties, return_fields))
                     output.append(item)
+            t_parse_elapsed = (time.perf_counter() - t_parse_start) * 1000.0
+            logger.info(
+                "search_by_embedding phase_parse_results took %.1f ms, output_count=%d",
+                t_parse_elapsed,
+                len(output),
+            )
             elapsed_time = (time.perf_counter() - start_time) * 1000.0
             logger.info(
-                "search_by_embedding query by embedding completed time took %.1f ms", elapsed_time
+                "search_by_embedding total took %.1f ms "
+                "(build_query=%.1f, get_conn=%.1f, execute=%.1f, parse=%.1f)",
+                elapsed_time,
+                t_build_query_elapsed,
+                t_get_conn_elapsed,
+                t_execute_elapsed,
+                t_parse_elapsed,
             )
             return output[:top_k]
 
@@ -2778,9 +2825,9 @@ class PolarDBGraphDB(BaseGraphDB):
 
     @timed
     def add_nodes_batch(
-            self,
-            nodes: list[dict[str, Any]],
-            user_name: str,
+        self,
+        nodes: list[dict[str, Any]],
+        user_name: str,
     ) -> None:
         batch_start_time = time.perf_counter()
         if not nodes:
@@ -2806,7 +2853,7 @@ class PolarDBGraphDB(BaseGraphDB):
                 memory = node_data["memory"]
                 metadata = node_data.get("metadata", {})
 
-                logger.debug(f"[add_nodes_batch] Processing node id: {id}")
+                logger.debug(f"add_nodes_batch Processing node id: {id}")
 
                 metadata["user_name"] = effective_user_name
 
@@ -2873,6 +2920,8 @@ class PolarDBGraphDB(BaseGraphDB):
             logger.warning("[add_nodes_batch] No valid nodes to insert after preparation")
             return
 
+        t_prepare_elapsed = (time.perf_counter() - batch_start_time) * 1000.0
+
         nodes_by_embedding_column = {}
         for node in prepared_nodes:
             col = node["embedding_column"]
@@ -2881,26 +2930,30 @@ class PolarDBGraphDB(BaseGraphDB):
             nodes_by_embedding_column[col].append(node)
 
         try:
+            t_get_conn_start = time.perf_counter()
             with self._get_connection() as conn, conn.cursor() as cursor:
-                for embedding_column, nodes_group in nodes_by_embedding_column.items():
-                    ids_to_delete = [node["id"] for node in nodes_group]
-                    if ids_to_delete:
-                        delete_query = f"""
-                                DELETE FROM {schema_raw}."Memory"
-                                WHERE id IN (
-                                    SELECT ag_catalog._make_graph_id('{schema_raw}'::name, 'Memory'::name, unnest(%s::text[])::cstring)
-                                )
-                            """
-                        cursor.execute(delete_query, (ids_to_delete,))
+                t_get_conn_elapsed = (time.perf_counter() - t_get_conn_start) * 1000.0
 
-                    get_graph_ids_query = f"""
-                            SELECT
-                                id_val,
-                                ag_catalog._make_graph_id('{schema_raw}'::name, 'Memory'::name, id_val::text::cstring) as graph_id
-                            FROM unnest(%s::text[]) as id_val
-                        """
-                    cursor.execute(get_graph_ids_query, (ids_to_delete,))
+                for embedding_column, nodes_group in nodes_by_embedding_column.items():
+                    ids_list = [node["id"] for node in nodes_group]
+
+                    t_graph_id_start = time.perf_counter()
+                    select_value_tpl = (
+                        f"(%s, ag_catalog._make_graph_id('{schema_raw}'::name,"
+                        f" 'Memory'::name, %s::text::cstring))"
+                    )
+                    select_values_clause = ",".join([select_value_tpl] * len(ids_list))
+                    get_graph_ids_query = (
+                        f"SELECT id_val, graph_id FROM (VALUES {select_values_clause})"
+                        f" AS t(id_val, graph_id)"
+                    )
+                    select_params: list = []
+                    for nid in ids_list:
+                        select_params.append(nid)
+                        select_params.append(nid)
+                    cursor.execute(get_graph_ids_query, select_params)
                     graph_id_map = {row[0]: row[1] for row in cursor.fetchall()}
+                    t_graph_id_elapsed = (time.perf_counter() - t_graph_id_start) * 1000.0
 
                     for node in nodes_group:
                         graph_id = graph_id_map.get(node["id"])
@@ -2918,15 +2971,23 @@ class PolarDBGraphDB(BaseGraphDB):
                             " %s::text::agtype,"
                             " %s::vector)"
                         )
+                        set_clause = (
+                            f"properties = EXCLUDED.properties,"
+                            f" {embedding_column} = EXCLUDED.{embedding_column}"
+                        )
                     else:
                         cols = "(id, properties)"
                         value_tpl = (
                             f"(ag_catalog._make_graph_id('{schema_raw}'::name, 'Memory'::name, %s::text::cstring),"
                             " %s::text::agtype)"
                         )
+                        set_clause = "properties = EXCLUDED.properties"
 
                     values_clause = ",".join([value_tpl] * len(nodes_group))
-                    sql = f'INSERT INTO {schema_raw}."Memory"{cols} VALUES {values_clause}'
+                    sql = (
+                        f'INSERT INTO {schema_raw}."Memory"{cols} VALUES {values_clause}'
+                        f" ON CONFLICT (id) DO UPDATE SET {set_clause}"
+                    )
 
                     params: list = []
                     for node in nodes_group:
@@ -2935,15 +2996,32 @@ class PolarDBGraphDB(BaseGraphDB):
                         if has_embedding:
                             embedding = node["embedding_vector"]
                             params.append(json.dumps(embedding) if embedding else None)
+
+                    t_insert_start = time.perf_counter()
                     cursor.execute(sql, params)
+                    t_insert_elapsed = (time.perf_counter() - t_insert_start) * 1000.0
+
+                    logger.info(
+                        "add_nodes_batch [group=%s, count=%d] get_graph_id=%.1f ms, insert=%.1f ms",
+                        embedding_column,
+                        len(nodes_group),
+                        t_graph_id_elapsed,
+                        t_insert_elapsed,
+                    )
 
             elapsed_time = (time.perf_counter() - batch_start_time) * 1000.0
             logger.info(
-                "add_nodes_batch completed in %.1f ms, (count=%d), user_name=%s, schema=%s",
+                "add_nodes_batch total %.1f ms "
+                "(prepare=%.1f, get_conn=%.1f, get_graph_id=%.1f, insert=%.1f), "
+                "count=%d, user_name=%s, schema=%s",
                 elapsed_time,
+                t_prepare_elapsed,
+                t_get_conn_elapsed,
+                t_graph_id_elapsed,
+                t_insert_elapsed,
                 len(prepared_nodes),
                 user_name,
-                schema_raw
+                schema_raw,
             )
 
         except Exception as e:
