@@ -1706,19 +1706,18 @@ class PolarDBGraphDB(BaseGraphDB):
         return_fields: list[str] | None = None,
         **kwargs,
     ) -> list[dict]:
+        resolved_user_name = user_name
+
         start_time = time.perf_counter()
         logger.info(
-            " search_by_fulltext query_words=%s top_k=%s scope=%s status=%s threshold=%s search_filter=%s user_name=%s knowledgebase_ids=%s filter=%s",
+            "search_by_fulltext query_words=%s, top_k=%s, scope=%s, user_name=%s,filter=%s",
             query_words,
             top_k,
             scope,
-            status,
-            threshold,
-            search_filter,
-            user_name,
-            knowledgebase_ids,
+            resolved_user_name,
             filter,
         )
+        t_build_query_start = time.perf_counter()
         where_clauses = []
 
         if scope:
@@ -1735,9 +1734,8 @@ class PolarDBGraphDB(BaseGraphDB):
             )
 
         user_name_conditions = self._build_user_name_and_kb_ids_conditions_sql(
-            user_name=user_name,
+            user_name=resolved_user_name,
             knowledgebase_ids=knowledgebase_ids,
-            default_user_name=self._get_config_value("user_name"),
         )
 
         if user_name_conditions:
@@ -1758,16 +1756,18 @@ class PolarDBGraphDB(BaseGraphDB):
                     )
 
         filter_conditions = self._build_filter_conditions_sql(filter)
-
         where_clauses.extend(filter_conditions)
-        tsquery_string = " | ".join(query_words)
+        tsquery_string = " & ".join(query_words)
 
         where_clauses.append(f"{tsvector_field} @@ to_tsquery('{tsquery_config}', %s)")
 
-        select_cols = f"""ag_catalog.agtype_access_operator(m.properties, '"id"'::agtype) AS old_id,
-                ts_rank(m.{tsvector_field}, q.fq) AS rank"""
+        select_cols = (
+            f"ag_catalog.agtype_access_operator(m.properties, '\"id\"'::agtype) AS old_id,"
+            f" ts_rank(m.{tsvector_field}, q.fq) AS rank"
+        )
         if return_fields:
             select_cols += ", m.properties"
+
         where_with_q = []
         for w in where_clauses:
             if f"{tsvector_field} @@ to_tsquery(" in w:
@@ -1779,41 +1779,107 @@ class PolarDBGraphDB(BaseGraphDB):
                     .replace("ARRAY[properties,", "ARRAY[m.properties,")
                 )
         where_clause_cte = f"WHERE {' AND '.join(where_with_q)}" if where_with_q else ""
-        query = f"""
-            /*+ Set(max_parallel_workers_per_gather 0) */
-            WITH q AS (SELECT to_tsquery('{tsquery_config}', %s) AS fq)
-            SELECT {select_cols}
-            FROM "{self.db_name}_graph"."Memory" m
-            CROSS JOIN q
-            {where_clause_cte}
-            LIMIT {top_k};
-        """
-        params = [tsquery_string]
-        logger.info("search_by_fulltext query=%s params=%s", query, params)
 
-        with self._get_connection() as conn, conn.cursor() as cursor:
-            cursor.execute(query, params)
-            results = cursor.fetchall()
-            output = []
-            for row in results:
-                oldid = row[0]  # old_id
-                rank = row[1]  # rank score (no memory_text column)
+        if resolved_user_name:
+            tbl = self.get_memory_graph_table_name(resolved_user_name)
+            shard_count = 1
+            query = (
+                f"/*+ Set(max_parallel_workers_per_gather 0) */"
+                f" WITH q AS (SELECT to_tsquery('{tsquery_config}', %s) AS fq)"
+                f" SELECT {select_cols}"
+                f' FROM {tbl}."Memory" m CROSS JOIN q'
+                f" {where_clause_cte}"
+                f" ORDER BY rank DESC"
+                f" LIMIT {top_k}"
+            )
+            params = [tsquery_string]
+        else:
+            shard_selects = []
+            shard_tables = self._get_all_shard_table_names()
+            shard_count = len(shard_tables)
+            for tbl in shard_tables:
+                part = f'SELECT {select_cols} FROM {tbl}."Memory" m CROSS JOIN q {where_clause_cte}'
+                shard_selects.append(part)
+            inner_union = " UNION ALL ".join(shard_selects)
+            query = (
+                f"/*+ Set(max_parallel_workers_per_gather 0) */"
+                f" WITH q AS (SELECT to_tsquery('{tsquery_config}', %s) AS fq)"
+                f" {inner_union}"
+                f" ORDER BY rank DESC"
+                f" LIMIT {top_k}"
+            )
+            params = [tsquery_string]
 
-                id_val = str(oldid)
-                if id_val.startswith('"') and id_val.endswith('"'):
-                    id_val = id_val[1:-1]
-                score_val = float(rank)
+        t_build_query_elapsed = (time.perf_counter() - t_build_query_start) * 1000.0
+        logger.info(
+            "search_by_fulltext phase_build_query took %.1f ms, shard_count=%s, where_count=%d",
+            t_build_query_elapsed,
+            shard_count,
+            len(where_clauses),
+        )
+        logger.info("search_by_fulltext query=%s, params=%s", query, params)
 
-                # Apply threshold filter if specified
-                if threshold is None or score_val >= threshold:
-                    item = {"id": id_val, "score": score_val}
-                    if return_fields:
-                        properties = row[2]  # properties column
-                        item.update(self._extract_fields_from_properties(properties, return_fields))
-                    output.append(item)
-            elapsed = (time.perf_counter() - start_time) * 1000.0
-            logger.info("search_by_fulltext internal took %.1f ms", elapsed)
-            return output[:top_k]
+        try:
+            t_get_conn_start = time.perf_counter()
+            with self._get_connection() as conn:
+                t_get_conn_elapsed = (time.perf_counter() - t_get_conn_start) * 1000.0
+                logger.info(
+                    "search_by_fulltext phase_get_connection took %.1f ms",
+                    t_get_conn_elapsed,
+                )
+
+                with conn.cursor() as cursor:
+                    t_execute_start = time.perf_counter()
+                    cursor.execute(query, params)
+                    results = cursor.fetchall()
+                    t_execute_elapsed = (time.perf_counter() - t_execute_start) * 1000.0
+                    logger.info(
+                        "search_by_fulltext phase_execute_fetchall took %.1f ms, rows=%d",
+                        t_execute_elapsed,
+                        len(results),
+                    )
+
+                t_parse_start = time.perf_counter()
+                output = []
+                for row in results:
+                    oldid = row[0]
+                    rank = row[1]
+
+                    id_val = str(oldid)
+                    if id_val.startswith('"') and id_val.endswith('"'):
+                        id_val = id_val[1:-1]
+                    score_val = float(rank)
+
+                    if threshold is None or score_val >= threshold:
+                        item = {"id": id_val, "score": score_val}
+                        if return_fields:
+                            properties = row[2]
+                            item.update(
+                                self._extract_fields_from_properties(properties, return_fields)
+                            )
+                        output.append(item)
+                t_parse_elapsed = (time.perf_counter() - t_parse_start) * 1000.0
+                logger.info(
+                    "search_by_fulltext phase_parse_results took %.1f ms, output_count=%d",
+                    t_parse_elapsed,
+                    len(output),
+                )
+                elapsed = (time.perf_counter() - start_time) * 1000.0
+                logger.info(
+                    "search_by_fulltext total took %.1f ms "
+                    "(build_query=%.1f, get_conn=%.1f, execute_fetchall=%.1f, parse=%.1f), "
+                    "recalled=%d",
+                    elapsed,
+                    t_build_query_elapsed,
+                    t_get_conn_elapsed,
+                    t_execute_elapsed,
+                    t_parse_elapsed,
+                    len(output),
+                )
+                return output[:top_k]
+        except Exception as e:
+            logger.error("search_by_fulltext failed: %s", e, exc_info=True)
+            raise
 
     @timed
     def search_by_embedding(
